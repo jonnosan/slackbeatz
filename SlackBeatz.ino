@@ -257,6 +257,4 @@ void loop() {
   //burn cycles until we are ready for the next click
   for (; micros() < delayUntil;) {}
 
-
-Serial.println(millis());
 }
