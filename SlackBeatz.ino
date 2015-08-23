@@ -30,6 +30,7 @@ enum PRM_TYPES {
   PRM_TYPE_SCALE,
   PRM_TYPE_CHORD,
   PRM_TYPE_CHORD_STYLE,
+  PRM_TYPE_RIFF_STYLE,
 };
 
 #define PRM_TOGGLE_ON 1
@@ -66,6 +67,8 @@ enum PARAMS {
   PARAM_CHORD_3,
   PARAM_CHORD_4,
   PARAM_CHORD_STYLE,
+  PARAM_RIFF_STYLE,
+  PARAM_RIFF_CH,
   PARAM_EOF  //must be last item
 };
 
@@ -95,6 +98,8 @@ const char * MENU_NAMES[NUM_MENUS] = {
 #define MAX_NOTE 127
 #define DRUM_VELOCITY 100
 #define CHORD_VELOCITY 127
+#define RIFF_VELOCITY 100
+
 #define FILL_BARS 4
 #define bpm param[PARAM_BPM]
 
@@ -130,8 +135,8 @@ const char * SCALE_NAMES[] = {
 
 #define SCALE_LENGTH 14
 const byte  SCALES[2][SCALE_LENGTH] = {
-  {0, 2, 3, 5, 7, 8, 10, 12+0, 12+2, 12+3, 12+5, 12+7, 12+8, 12+10, }, //Minor
-  {0, 2, 4, 5, 7, 9, 11, 12+0, 12+2, 12+4, 12+5, 12+7, 12+9, 12+11}, //Major
+  {0, 2, 3, 5, 7, 8, 10, 12 + 0, 12 + 2, 12 + 3, 12 + 5, 12 + 7, 12 + 8, 12 + 10, }, //Minor
+  {0, 2, 4, 5, 7, 9, 11, 12 + 0, 12 + 2, 12 + 4, 12 + 5, 12 + 7, 12 + 9, 12 + 11}, //Major
 };
 
 
@@ -141,12 +146,24 @@ const byte  SCALES[2][SCALE_LENGTH] = {
 #define CHORD_STYLE_FIFTH 3
 #define CHORD_STYLE_OCTAVE 3
 
+
 const char * CHORD_STYLE_NAMES[MAX_CHORD_STYLE + 1] = {
   "Root",
   "Triad",
   "Fifth",
   "Octave",
 };
+
+#define MAX_RIFF_STYLE 1
+#define RIFF_STYLE_CHUG  0
+#define RIFF_STYLE_ROLLUP  1
+
+
+const char * RIFF_STYLE_NAMES[MAX_RIFF_STYLE + 1] = {
+  "Chug",
+  "RollUp",
+};
+
 
 #define NO_NOTE 0xFF
 const byte CHORD_NOTES[MAX_CHORD_STYLE + 1][3] = {
@@ -204,6 +221,8 @@ byte last_playing_chord_notes[MAX_CHORD_NOTES];
 void setup() {
 
   INIT_MENUS
+
+  //menu items are displayed in the order they are added - you can rearrange order here without messing up presets
   ADD_MENU_ITEM(MENU_PLAY, PARAM_BPM,    PRM_TYPE_NUM,  "BPM     : ", 30, 180, 120);     //beats per minute
   ADD_MENU_ITEM(MENU_DRUMS, PARAM_DRUM_CH, PRM_TYPE_NUM, "Drum Ch : ", 0, 16, 10);
   ADD_MENU_ITEM(MENU_DRUMS, PARAM_BD_FREQ, PRM_TYPE_NUM, "BD Freq : ", 0, STEPS, 4);   //how frequently this drum hit occurs
@@ -218,6 +237,7 @@ void setup() {
   ADD_MENU_ITEM(MENU_DRUMS, PARAM_DRUM_FILL, PRM_TYPE_TOGGLE, "Fill    : ", PRM_TOGGLE_OFF, PRM_TOGGLE_ON, PRM_TOGGLE_ON);
   ADD_MENU_ITEM(MENU_DRUMS, PARAM_SWING, PRM_TYPE_SLIDER,   "Swing   : ", PRM_SLIDER_OFF, PRM_SLIDER_HI, PRM_SLIDER_OFF);
   ADD_MENU_ITEM(MENU_CHORDS, PARAM_CHORD_CH, PRM_TYPE_NUM,    "Cord Ch : ", 0, 16, 1);
+  ADD_MENU_ITEM(MENU_CHORDS, PARAM_RIFF_CH, PRM_TYPE_NUM,    "Riff Ch : ", 0, 16, 8);
   ADD_MENU_ITEM(MENU_CHORDS, PARAM_PROG_ROOT, PRM_TYPE_NUM,   "Root Note: ", 0, MAX_NOTE, 48); //c1
   ADD_MENU_ITEM(MENU_CHORDS, PARAM_SCALE_TYPE, PRM_TYPE_SCALE, "Scale    : ", 0, 1, 0); //minor
   ADD_MENU_ITEM(MENU_CHORDS, PARAM_CHORD_1, PRM_TYPE_CHORD,   "Chord 1  : ", 0, 7, 0); //I
@@ -225,6 +245,7 @@ void setup() {
   ADD_MENU_ITEM(MENU_CHORDS, PARAM_CHORD_3, PRM_TYPE_CHORD,   "Chord 3  : ", 0, 7, 1); //II
   ADD_MENU_ITEM(MENU_CHORDS, PARAM_CHORD_4, PRM_TYPE_CHORD,             "Chord 4  : ", 0, 7, 3); //IV
   ADD_MENU_ITEM(MENU_CHORDS, PARAM_CHORD_STYLE, PRM_TYPE_CHORD_STYLE,   "Style : ", 0, MAX_CHORD_STYLE, CHORD_STYLE_TRIAD);
+  ADD_MENU_ITEM(MENU_CHORDS, PARAM_RIFF_STYLE, PRM_TYPE_RIFF_STYLE,   "Riff : ", 0, MAX_RIFF_STYLE, RIFF_STYLE_ROLLUP);
 
 
   //  Set MIDI baud rate:
@@ -341,6 +362,9 @@ void show_menu() {
       case PRM_TYPE_CHORD_STYLE:
         lcd.print(CHORD_STYLE_NAMES[param[param_number]]);
         break;
+      case PRM_TYPE_RIFF_STYLE:
+        lcd.print(RIFF_STYLE_NAMES[param[param_number]]);
+        break;
 
     }
 
@@ -401,66 +425,40 @@ void start_song() {
 
 void stop_song() {
   midiSerial.write(0xFC);      //MIDI STOP
-  midiSerial.write(0xAF + param[PARAM_DRUM_CH]);    //all notes off
-  midiSerial.write(0x78);
-  midiSerial.write((byte)0);
 
-  midiSerial.write(0xAF + param[PARAM_CHORD_CH]);    //all notes off
-  midiSerial.write(0x78);
-  midiSerial.write((byte)0);
 
+  all_notes_off(param[PARAM_DRUM_CH]);
+  all_notes_off(param[PARAM_CHORD_CH]);
+  all_notes_off(param[PARAM_RIFF_CH]);
 
 }
 
+void all_notes_off(byte channel) {
+  midiSerial.write(0xAF + channel);    //CONTROL
+  midiSerial.write(123);      //all notes off
+  midiSerial.write((byte)0);
+
+}
+
+//stop all other notes this channel, play specified note
+void play_solo_note(byte channel, byte note, byte velocity) {
+  all_notes_off( channel);
+  play_note( channel,  note,  velocity) ;
+}
+
+void play_note(byte channel, byte note, byte velocity) {
+  midiSerial.write(0x8F + channel);    //note on
+  midiSerial.write(note);
+  midiSerial.write(velocity);
+
+}
 
 void do_sequencer_step(int step_number) {
 
-  if (param[PARAM_DRUM_CH] > 0) {
-    if (bd_rhythm[step_number] > 0) {
-      midiSerial.write(0x8F + param[PARAM_DRUM_CH]);    //note on
-      midiSerial.write(bd_rhythm[step_number]);
-      midiSerial.write(DRUM_VELOCITY);
-    }
-
-    if (hh_rhythm[step_number] > 0) {
-      midiSerial.write(0x8F + param[PARAM_DRUM_CH]);    //note on
-      midiSerial.write(hh_rhythm[step_number]);
-      midiSerial.write(DRUM_VELOCITY);
-    }
-
-    if (sd_rhythm[step_number] > 0) {
-      midiSerial.write(0x8F + param[PARAM_DRUM_CH]);    //note on
-      midiSerial.write(sd_rhythm[step_number]);
-      midiSerial.write(DRUM_VELOCITY);
-    }
-  }
-
-
-  //change chords at start of each step
+  //change chords at start of each step, even if not playing on any chord channel
   if (step_number == 0) {
-    byte base_note_number = param[PARAM_CHORD_1 + (bar % 4)];
-    Serial.print("start chord: base ");
-    Serial.println(base_note_number);
 
-    for (byte i = 0; i < MAX_CHORD_NOTES; i++) {
-      byte chord_note = CHORD_NOTES[param[PARAM_CHORD_STYLE]][i];
-      if (chord_note == NO_NOTE) {
-        playing_chord_notes[i] = NO_NOTE;
-      } else {
-        byte note_number = (base_note_number + chord_note) % SCALE_LENGTH;
-
-        playing_chord_notes[i] = SCALES[param[PARAM_SCALE_TYPE]][note_number] + param[PARAM_PROG_ROOT];
-        if (param[PARAM_CHORD_CH] > 0) {
-          midiSerial.write(0x8F + param[PARAM_CHORD_CH]);    //note on
-          midiSerial.write(playing_chord_notes[i]);
-          midiSerial.write(CHORD_VELOCITY);
-        }
-      }
-    }
-  }
-
-  //stop chords at end of each step
-  if (step_number == BEATS_PER_BAR - 1) {
+    //stop all current notes
     for (byte i = 0; i < MAX_CHORD_NOTES; i++) {
       if ((param[PARAM_CHORD_CH] > 0) && (playing_chord_notes[i] != NO_NOTE)) {
         midiSerial.write(0x8F + param[PARAM_CHORD_CH]);    //note on
@@ -468,8 +466,91 @@ void do_sequencer_step(int step_number) {
         midiSerial.write((byte)0);
       }
 
+
+      byte base_note_number = param[PARAM_CHORD_1 + (bar % 4)];
+
+      for (byte i = 0; i < MAX_CHORD_NOTES; i++) {
+        byte chord_note = CHORD_NOTES[param[PARAM_CHORD_STYLE]][i];
+        if (chord_note == NO_NOTE) {
+          playing_chord_notes[i] = NO_NOTE;
+        } else {
+          byte note_number = (base_note_number + chord_note) % SCALE_LENGTH;
+
+          playing_chord_notes[i] = SCALES[param[PARAM_SCALE_TYPE]][note_number] + param[PARAM_PROG_ROOT];
+          if (param[PARAM_CHORD_CH] > 0) {
+            midiSerial.write(0x8F + param[PARAM_CHORD_CH]);    //note on
+            midiSerial.write(playing_chord_notes[i]);
+            midiSerial.write(CHORD_VELOCITY);
+          }
+        }
+      }
     }
   }
+
+  if (param[PARAM_DRUM_CH] > 0) {
+    if (bd_rhythm[step_number] > 0) {
+      play_note(param[PARAM_DRUM_CH], bd_rhythm[step_number], DRUM_VELOCITY + 1);
+    }
+
+    if (hh_rhythm[step_number] > 0) {
+      play_note(param[PARAM_DRUM_CH], hh_rhythm[step_number], DRUM_VELOCITY + 2);
+    }
+
+    if (sd_rhythm[step_number] > 0) {
+      play_note(param[PARAM_DRUM_CH], sd_rhythm[step_number], DRUM_VELOCITY + 3);
+    }
+  }
+
+
+  if (param[PARAM_RIFF_CH] > 0)  {
+    switch (param[PARAM_RIFF_STYLE]) {
+      case RIFF_STYLE_CHUG:
+        //base note every 2nd beat
+        if (step_number % 2 == 0) {
+          play_solo_note(param[PARAM_RIFF_CH], playing_chord_notes[0], RIFF_VELOCITY);
+        }
+        break;
+
+      case RIFF_STYLE_ROLLUP:
+        Serial.print("ROLLUP");
+        Serial.println(step_number);
+
+        byte this_note = NO_NOTE;
+        switch (step_number) {
+          case 0:
+          case 4:
+          case 7:
+            this_note = playing_chord_notes[0];
+            break;
+          case 8:
+            this_note = playing_chord_notes[1];
+            if (this_note == NO_NOTE) {
+              this_note = playing_chord_notes[0];
+              Serial.println("reset 1");
+
+            }
+            break;
+          case 12:
+          case 15:
+            this_note = playing_chord_notes[2];
+            if (this_note == NO_NOTE) {
+              this_note = playing_chord_notes[0];
+              Serial.println("reset 2");
+            }
+            break;
+        }
+        if (this_note != NO_NOTE) {
+          play_solo_note(param[PARAM_RIFF_CH], this_note, RIFF_VELOCITY);
+        }
+        break;
+
+
+    }
+
+  }
+
+
+
 
 }
 
