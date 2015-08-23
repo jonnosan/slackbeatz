@@ -21,12 +21,28 @@ int adc_key_in  = 0;
 #define BTN_NONE   5
 
 
-#define PRM_TYPE_NUM 0
-#define PRM_TYPE_TOGGLE 1
+#define BEATS_PER_BAR  16
+
+enum PRM_TYPES {
+  PRM_TYPE_NUM,
+  PRM_TYPE_TOGGLE,
+  PRM_TYPE_SLIDER,
+  PRM_TYPE_SCALE,
+  PRM_TYPE_CHORD,
+  PRM_TYPE_CHORD_STYLE,
+};
+
 #define PRM_TOGGLE_ON 1
 #define PRM_TOGGLE_OFF 0
 
 #define PARAM_EEPROM_BASE 0
+
+enum PRM_SLIDER {
+  PRM_SLIDER_OFF,
+  PRM_SLIDER_LOW,
+  PRM_SLIDER_MED,
+  PRM_SLIDER_HI
+};
 
 enum PARAMS {
   PARAM_BPM,
@@ -42,16 +58,43 @@ enum PARAMS {
   PARAM_DRUM_CH,
   PARAM_DRUM_FILL,
   PARAM_SWING,
-  PARAM_EOF    //must be last in list
+  PARAM_CHORD_CH,
+  PARAM_PROG_ROOT,
+  PARAM_SCALE_TYPE,
+  PARAM_CHORD_1,
+  PARAM_CHORD_2,
+  PARAM_CHORD_3,
+  PARAM_CHORD_4,
+  PARAM_CHORD_STYLE,
+  PARAM_EOF  //must be last item
 };
+
+
+
+#define MENU_PLAY 0
+#define  MENU_DRUMS 1
+#define  MENU_CHORDS 2
+#define NUM_MENUS 3
+
+const char * MENU_NAMES[NUM_MENUS] = {
+  "PLAY ",
+  "Drum Settings",
+  "Accompaniment",
+};
+
+
+
+
+#define MENU_MAX_SIZE 16
 
 #define BEAT_CHAR_PAUSED_1 0x9A
 #define BEAT_CHAR_PAUSED_2 0xA5
-#define BEAT_CHAR_PLAYING 0x2A
 
-#define STEPS 16
+
+#define STEPS BEATS_PER_BAR
 #define MAX_NOTE 127
 #define DRUM_VELOCITY 100
+#define CHORD_VELOCITY 127
 #define FILL_BARS 4
 #define bpm param[PARAM_BPM]
 
@@ -60,51 +103,129 @@ byte bd_rhythm[STEPS];
 byte sd_rhythm[STEPS];
 byte hh_rhythm[STEPS];
 
-#define MENU_SIZE PARAM_EOF
 
-const char * menu_items[MENU_SIZE];
+signed char  menu_item_index[NUM_MENUS][MENU_MAX_SIZE];
+signed char  menu_size[NUM_MENUS];
+
+const char * param_name[PARAM_EOF];
+byte param_type[PARAM_EOF];
+byte param_min[PARAM_EOF];
+byte param_max[PARAM_EOF];
+byte param_default[PARAM_EOF];
+
+byte param[PARAM_EOF];
 
 
-byte param_type[MENU_SIZE];
-byte param_min[MENU_SIZE];
-byte param_max[MENU_SIZE];
-byte param_default[MENU_SIZE];
+const char * SLIDER_VAL_NAMES[] = {
+  "OFF",
+  "LOW",
+  "MED",
+  "HI"
+};
 
-byte param[MENU_SIZE];
+const char * SCALE_NAMES[] = {
+  "Minor",
+  "Major",
+};
+
+#define SCALE_LENGTH 14
+const byte  SCALES[2][SCALE_LENGTH] = {
+  {0, 2, 3, 5, 7, 8, 10, 12+0, 12+2, 12+3, 12+5, 12+7, 12+8, 12+10, }, //Minor
+  {0, 2, 4, 5, 7, 9, 11, 12+0, 12+2, 12+4, 12+5, 12+7, 12+9, 12+11}, //Major
+};
+
+
+#define MAX_CHORD_STYLE 3
+#define CHORD_STYLE_ROOT  0
+#define CHORD_STYLE_TRIAD 2
+#define CHORD_STYLE_FIFTH 3
+#define CHORD_STYLE_OCTAVE 3
+
+const char * CHORD_STYLE_NAMES[MAX_CHORD_STYLE + 1] = {
+  "Root",
+  "Triad",
+  "Fifth",
+  "Octave",
+};
+
+#define NO_NOTE 0xFF
+const byte CHORD_NOTES[MAX_CHORD_STYLE + 1][3] = {
+  {0, NO_NOTE, NO_NOTE},	      //root only
+  {0, 2, 4},		//root+third+fifth
+  {0, 4, 7},	      //root+fifth+octave
+  {0, 7, NO_NOTE},	      //root+octave
+
+};
+
+
+const char * CHORD_NAMES[] = {
+  "I",
+  "II",
+  "III",
+  "IV",
+  "V",
+  "VI",
+  "VII",
+  "VIII",
+};
+
 
 char * beat_display = "________________";
 
 signed char menu_index = 0;
+signed char param_index = 0; //in current menu, what paramater number is being looked at?
+byte param_number = 0; //absolute paramater number (i.e. not relative to any particular menu)
+byte menu_level = 0;
 bool  playing = false;
 byte tick = 0;            // 24 clock ticks per quarter note
 byte beat = 0;            // where in this
 int bar = 0;
 int last_button;
 int repeat_count;
+#define MAX_CHORD_NOTES 3
 
-#define ADD_MENU_ITEM(__idx,__prm_type,__name,__min,__max,__default) \
-  menu_items[__idx]=__name;\
-  param_type[__idx]=__prm_type;\
-  param_min[__idx]=__min;\
-  param_max[__idx]=__max;\
-  param_default[__idx]=__default;
+byte playing_chord_notes[MAX_CHORD_NOTES];
+byte last_playing_chord_notes[MAX_CHORD_NOTES];
+
+
+#define INIT_MENUS \
+  for(int __i=0;__i<NUM_MENUS;__i++) {menu_size[__i]=0;};
+
+#define ADD_MENU_ITEM(__menu_idx,__param_idx,__prm_type,__name,__min,__max,__default) \
+  menu_item_index[__menu_idx][menu_size[__menu_idx]]=__param_idx; \
+  menu_size[__menu_idx]++; \
+  param_name[__param_idx] = __name; \
+  param_type[__param_idx] = __prm_type; \
+  param_min[__param_idx] = __min; \
+  param_max[__param_idx] = __max; \
+  param_default[__param_idx] = __default;
 
 
 void setup() {
 
-  ADD_MENU_ITEM(PARAM_BPM,    PRM_TYPE_NUM, "BPM      : ", 30, 180, 120);      //beats per minute
-  ADD_MENU_ITEM(PARAM_BD_FREQ, PRM_TYPE_NUM, "BD FREQ : ", 0, STEPS, 4);    //how frequently this drum hit occurs
-  ADD_MENU_ITEM(PARAM_SD_FREQ, PRM_TYPE_NUM, "SD FREQ : ", 0, STEPS, 7);
-  ADD_MENU_ITEM(PARAM_HH_FREQ, PRM_TYPE_NUM, "HH FREQ : ", 0, STEPS, 11);
-  ADD_MENU_ITEM(PARAM_BD_NOTE, PRM_TYPE_NUM, "BD NOTE : ", 0, MAX_NOTE, 36); //MIDI note sent for 'bass drum' hits
-  ADD_MENU_ITEM(PARAM_SD_NOTE, PRM_TYPE_NUM, "SD NOTE : ", 0, MAX_NOTE, 38); //MIDI note sent for 'snare drum' hits
-  ADD_MENU_ITEM(PARAM_HH_NOTE, PRM_TYPE_NUM, "HH NOTE : ", 0, MAX_NOTE, 42); //MIDI note sent for 'high hat' hits
-  ADD_MENU_ITEM(PARAM_BD_OFST, PRM_TYPE_NUM, "BD OFST : ", 0, STEPS - 1, 0); //offset from first step of sequence when distributing drum hits
-  ADD_MENU_ITEM(PARAM_SD_OFST, PRM_TYPE_NUM, "SD OFST : ", 0, STEPS - 1, 0);
-  ADD_MENU_ITEM(PARAM_HH_OFST, PRM_TYPE_NUM, "HH OFST : ", 0, STEPS - 1, 0);
-  ADD_MENU_ITEM(PARAM_DRUM_CH, PRM_TYPE_NUM, "DRUM CH : ", 1, 16, 10);
-  ADD_MENU_ITEM(PARAM_DRUM_FILL, PRM_TYPE_TOGGLE, "FILL    : ", 0, 1, 0);
-  ADD_MENU_ITEM(PARAM_SWING, PRM_TYPE_NUM,   "SWING % : ", 30, 70, 50);
+  INIT_MENUS
+  ADD_MENU_ITEM(MENU_PLAY, PARAM_BPM,    PRM_TYPE_NUM,  "BPM     : ", 30, 180, 120);     //beats per minute
+  ADD_MENU_ITEM(MENU_DRUMS, PARAM_DRUM_CH, PRM_TYPE_NUM, "Drum Ch : ", 0, 16, 10);
+  ADD_MENU_ITEM(MENU_DRUMS, PARAM_BD_FREQ, PRM_TYPE_NUM, "BD Freq : ", 0, STEPS, 4);   //how frequently this drum hit occurs
+  ADD_MENU_ITEM(MENU_DRUMS, PARAM_SD_FREQ, PRM_TYPE_NUM, "SD Freq : ", 0, STEPS, 7);
+  ADD_MENU_ITEM(MENU_DRUMS, PARAM_HH_FREQ, PRM_TYPE_NUM, "HH Freq : ", 0, STEPS, 11);
+  ADD_MENU_ITEM(MENU_DRUMS, PARAM_BD_NOTE, PRM_TYPE_NUM, "BD Note : ", 0, MAX_NOTE, 36); //MIDI note sent for 'bass drum' hits
+  ADD_MENU_ITEM(MENU_DRUMS, PARAM_SD_NOTE, PRM_TYPE_NUM, "SD Note : ", 0, MAX_NOTE, 38); //MIDI note sent for 'snare drum' hits
+  ADD_MENU_ITEM(MENU_DRUMS, PARAM_HH_NOTE, PRM_TYPE_NUM, "HH Note : ", 0, MAX_NOTE, 42); //MIDI note sent for 'high hat' hits
+  ADD_MENU_ITEM(MENU_DRUMS, PARAM_BD_OFST, PRM_TYPE_NUM, "BD Ofst : ", 0, STEPS - 1, 0); //offset from first step of sequence when distributing drum hits
+  ADD_MENU_ITEM(MENU_DRUMS, PARAM_SD_OFST, PRM_TYPE_NUM, "SD Ofst : ", 0, STEPS - 1, 0);
+  ADD_MENU_ITEM(MENU_DRUMS, PARAM_HH_OFST, PRM_TYPE_NUM, "HH Ofst : ", 0, STEPS - 1, 0);
+  ADD_MENU_ITEM(MENU_DRUMS, PARAM_DRUM_FILL, PRM_TYPE_TOGGLE, "Fill    : ", PRM_TOGGLE_OFF, PRM_TOGGLE_ON, PRM_TOGGLE_ON);
+  ADD_MENU_ITEM(MENU_DRUMS, PARAM_SWING, PRM_TYPE_SLIDER,   "Swing   : ", PRM_SLIDER_OFF, PRM_SLIDER_HI, PRM_SLIDER_OFF);
+  ADD_MENU_ITEM(MENU_CHORDS, PARAM_CHORD_CH, PRM_TYPE_NUM,    "Cord Ch : ", 0, 16, 1);
+  ADD_MENU_ITEM(MENU_CHORDS, PARAM_PROG_ROOT, PRM_TYPE_NUM,   "Root Note: ", 0, MAX_NOTE, 48); //c1
+  ADD_MENU_ITEM(MENU_CHORDS, PARAM_SCALE_TYPE, PRM_TYPE_SCALE, "Scale    : ", 0, 1, 0); //minor
+  ADD_MENU_ITEM(MENU_CHORDS, PARAM_CHORD_1, PRM_TYPE_CHORD,   "Chord 1  : ", 0, 7, 0); //I
+  ADD_MENU_ITEM(MENU_CHORDS, PARAM_CHORD_2, PRM_TYPE_CHORD,   "Chord 2  : ", 0, 7, 5); //VI
+  ADD_MENU_ITEM(MENU_CHORDS, PARAM_CHORD_3, PRM_TYPE_CHORD,   "Chord 3  : ", 0, 7, 1); //II
+  ADD_MENU_ITEM(MENU_CHORDS, PARAM_CHORD_4, PRM_TYPE_CHORD,             "Chord 4  : ", 0, 7, 3); //IV
+  ADD_MENU_ITEM(MENU_CHORDS, PARAM_CHORD_STYLE, PRM_TYPE_CHORD_STYLE,   "Style : ", 0, MAX_CHORD_STYLE, CHORD_STYLE_TRIAD);
+
 
   //  Set MIDI baud rate:
   midiSerial.begin(31250);
@@ -156,6 +277,9 @@ void setup() {
   //debug output on UART
   Serial.begin(9600);
 
+
+  stop_song();    //send a 'stop' in case we got reset while we were playing
+
   show_menu();
 
 }
@@ -182,25 +306,50 @@ int read_LCD_buttons() {              // read the buttons
 
 void show_menu() {
   lcd.setCursor(0, 0);
-  lcd.print(menu_items[menu_index]);
-  switch (param_type[menu_index]) {
-    case PRM_TYPE_NUM:
-      lcd.print(param[menu_index]);
-      break;
-    case PRM_TYPE_TOGGLE:
-      if (param[menu_index] == PRM_TOGGLE_ON) {
-        lcd.print("ON");    //overwrite any remaining digits
-      } else {
-        lcd.print("OFF");    //overwrite any remaining digits
 
-      }
-      break;
+  if (menu_level == 0) {
+    if (menu_index == 0) {
+      lcd.print(playing ? "Stop" : "Start");
+      lcd.print(" - BPM: ");
+      lcd.print(param[PARAM_BPM]);
+
+    } else {
+      lcd.print(MENU_NAMES[menu_index]);
+    }
+  }  else {
+    lcd.print(param_name[param_number]);
+    switch (param_type[param_number]) {
+      case PRM_TYPE_NUM:
+        lcd.print(param[param_number]);
+        break;
+      case PRM_TYPE_TOGGLE:
+        if (param[param_number] == PRM_TOGGLE_ON) {
+          lcd.print("ON");
+        } else {
+          lcd.print("OFF");
+        };
+        break;
+      case PRM_TYPE_SLIDER:
+        lcd.print(SLIDER_VAL_NAMES[param[param_number]]);
+        break;
+      case PRM_TYPE_SCALE:
+        lcd.print(SCALE_NAMES[param[param_number]]);
+        break;
+      case PRM_TYPE_CHORD:
+        lcd.print(CHORD_NAMES[param[param_number]]);
+        break;
+      case PRM_TYPE_CHORD_STYLE:
+        lcd.print(CHORD_STYLE_NAMES[param[param_number]]);
+        break;
+
+    }
+
   }
-  lcd.print("  ");    //overwrite any remaining chars on this line
+  lcd.print("            ");    //overwrite any remaining chars on this line
   lcd.setCursor(0, 1);
   lcd.print(beat_display);
-}
 
+}
 void screen_wipe(char c, int d) {
   lcd.setCursor(0, 0);
   for (int i = 0; i < 2; i++) {
@@ -237,25 +386,96 @@ void distribute_notes(byte * rhythm, byte note, int pulses, int steps, int offse
 }
 
 
+void start_song() {
+  tick = 0;
+  beat = 0;
+  bar = 0;
+  midiSerial.write(0xFA);      //MIDI START
+  for (byte i = 0; i < MAX_CHORD_NOTES; i++) {
+    playing_chord_notes[i] = NO_NOTE;
+    last_playing_chord_notes[i] = NO_NOTE;
+  }
+
+}
+
+
+void stop_song() {
+  midiSerial.write(0xFC);      //MIDI STOP
+  midiSerial.write(0xAF + param[PARAM_DRUM_CH]);    //all notes off
+  midiSerial.write(0x78);
+  midiSerial.write((byte)0);
+
+  midiSerial.write(0xAF + param[PARAM_CHORD_CH]);    //all notes off
+  midiSerial.write(0x78);
+  midiSerial.write((byte)0);
+
+
+}
+
+
 void do_sequencer_step(int step_number) {
-  if (bd_rhythm[step_number] > 0) {
-    midiSerial.write(0x8F + param[PARAM_DRUM_CH]);    //note on
-    midiSerial.write(bd_rhythm[step_number]);
-    midiSerial.write(DRUM_VELOCITY);
+
+  if (param[PARAM_DRUM_CH] > 0) {
+    if (bd_rhythm[step_number] > 0) {
+      midiSerial.write(0x8F + param[PARAM_DRUM_CH]);    //note on
+      midiSerial.write(bd_rhythm[step_number]);
+      midiSerial.write(DRUM_VELOCITY);
+    }
+
+    if (hh_rhythm[step_number] > 0) {
+      midiSerial.write(0x8F + param[PARAM_DRUM_CH]);    //note on
+      midiSerial.write(hh_rhythm[step_number]);
+      midiSerial.write(DRUM_VELOCITY);
+    }
+
+    if (sd_rhythm[step_number] > 0) {
+      midiSerial.write(0x8F + param[PARAM_DRUM_CH]);    //note on
+      midiSerial.write(sd_rhythm[step_number]);
+      midiSerial.write(DRUM_VELOCITY);
+    }
   }
 
-  if (hh_rhythm[step_number] > 0) {
-    midiSerial.write(0x8F + param[PARAM_DRUM_CH]);    //note on
-    midiSerial.write(hh_rhythm[step_number]);
-    midiSerial.write(DRUM_VELOCITY);
+
+  //change chords at start of each step
+  if (step_number == 0) {
+    byte base_note_number = param[PARAM_CHORD_1 + (bar % 4)];
+    Serial.print("start chord: base ");
+    Serial.println(base_note_number);
+
+    for (byte i = 0; i < MAX_CHORD_NOTES; i++) {
+      byte chord_note = CHORD_NOTES[param[PARAM_CHORD_STYLE]][i];
+      if (chord_note == NO_NOTE) {
+        playing_chord_notes[i] = NO_NOTE;
+      } else {
+        byte note_number = (base_note_number + chord_note) % SCALE_LENGTH;
+
+        playing_chord_notes[i] = SCALES[param[PARAM_SCALE_TYPE]][note_number] + param[PARAM_PROG_ROOT];
+        if (param[PARAM_CHORD_CH] > 0) {
+          midiSerial.write(0x8F + param[PARAM_CHORD_CH]);    //note on
+          midiSerial.write(playing_chord_notes[i]);
+          midiSerial.write(CHORD_VELOCITY);
+        }
+      }
+    }
   }
 
-  if (sd_rhythm[step_number] > 0) {
-    midiSerial.write(0x8F + param[PARAM_DRUM_CH]);    //note on
-    midiSerial.write(sd_rhythm[step_number]);
-    midiSerial.write(DRUM_VELOCITY);
+  //stop chords at end of each step
+  if (step_number == BEATS_PER_BAR - 1) {
+    for (byte i = 0; i < MAX_CHORD_NOTES; i++) {
+      if ((param[PARAM_CHORD_CH] > 0) && (playing_chord_notes[i] != NO_NOTE)) {
+        midiSerial.write(0x8F + param[PARAM_CHORD_CH]);    //note on
+        midiSerial.write(playing_chord_notes[i]);
+        midiSerial.write((byte)0);
+      }
+
+    }
   }
 
+}
+
+//does the current 'tick' represent a move to the next 'beat' for current 'swing' setting?
+bool tick_is_full_beat() {
+  return ((tick == 0) || (tick == 6 + param[PARAM_SWING]) || (tick == 12) || (tick == 18 + param[PARAM_SWING]));
 }
 
 void loop() {
@@ -265,7 +485,7 @@ void loop() {
   unsigned long delayUntil;
   loopStart = micros();
 
-  beat_display[beat] = playing ? BEAT_CHAR_PLAYING : ((tick > 11) ? BEAT_CHAR_PAUSED_1 : BEAT_CHAR_PAUSED_2);
+  beat_display[beat] = playing ? ('1' + (bar % 4)) : ((tick > 11) ? BEAT_CHAR_PAUSED_1 : BEAT_CHAR_PAUSED_2);
   show_menu();
   beat_display[beat] = '_';
 
@@ -280,111 +500,173 @@ void loop() {
   if (param[PARAM_DRUM_FILL] && ((bar % FILL_BARS) == FILL_BARS - 1)) {
     //do a fill by swapping around drum parts
 
-    distribute_notes(bd_rhythm, param[PARAM_BD_NOTE], STEPS-param[PARAM_BD_FREQ], STEPS, param[PARAM_BD_OFST]);
-    distribute_notes(sd_rhythm, param[PARAM_HH_NOTE], param[PARAM_SD_FREQ], STEPS, param[PARAM_SD_OFST]);
-    distribute_notes(hh_rhythm, param[PARAM_SD_NOTE], param[PARAM_HH_FREQ], STEPS, param[PARAM_HH_OFST]);
+    distribute_notes(bd_rhythm, param[PARAM_BD_NOTE], STEPS - param[PARAM_BD_FREQ], STEPS, param[PARAM_BD_OFST]);
+    distribute_notes(sd_rhythm, param[PARAM_HH_NOTE], 2 + param[PARAM_SD_FREQ] % STEPS, STEPS, param[PARAM_SD_OFST]);
+    distribute_notes(hh_rhythm, param[PARAM_SD_NOTE], 2 + param[PARAM_HH_FREQ] % STEPS, STEPS, param[PARAM_HH_OFST]);
 
   } else {
     distribute_notes(bd_rhythm, param[PARAM_BD_NOTE], param[PARAM_BD_FREQ], STEPS, param[PARAM_BD_OFST]);
     distribute_notes(sd_rhythm, param[PARAM_SD_NOTE], param[PARAM_SD_FREQ], STEPS, param[PARAM_SD_OFST]);
     distribute_notes(hh_rhythm, param[PARAM_HH_NOTE], param[PARAM_HH_FREQ], STEPS, param[PARAM_HH_OFST]);
-
   }
 
-  // depending on which button was pushed, we perform an action
-  switch (lcd_key) {
+  //longpressing select writes paramaters to EEPROM
+  if ((lcd_key == BTN_SELECT) && (repeat_count > bpm / 2)) {
+    screen_wipe('#', 20);
+    for (int i = 0; i < PARAM_EOF; i++) {
+      EEPROM.update(PARAM_EEPROM_BASE + i, param[i]);
+    }
+    repeat_count = 0;
+    //           delay(500);
+    screen_wipe(' ', 20);
+  }
 
 
-    case BTN_RIGHT: {
-        if ((repeat_count == 0) || (repeat_count > bpm / 2)) {
-          if (param[menu_index] < param_max[menu_index]) {
-            param[menu_index]++;
+  // depending on which screen we are on and which button was pushed, we perform an action
+  if (menu_level == 0) {// we are at the 'top' level
+
+    switch (lcd_key) {
+
+      case BTN_UP: {
+          if (repeat_count == 0) {
+            menu_index--;
+            if (menu_index < 0) {
+              menu_index = 0;
+            }
           }
+          break;
+        }
+      case BTN_DOWN: {
+          if (repeat_count == 0) {
+            menu_index++;
+            if (menu_index >= NUM_MENUS) {
+              menu_index = NUM_MENUS - 1;
+            }
+
+          }
+          break;
+        }
+      case BTN_SELECT: {
+          if (repeat_count == 0) {
+
+            //on 'PLAY' menu, select means start/stop. otherwise it means go to a submenu
+            if (menu_index == 0) {
+
+              playing = !playing;
+              if (playing) {
+                start_song();
+              } else {
+                stop_song();
+              }
+            } else { //not 'PLAY' menu, so go to submenu
+              menu_level = 1;
+              param_index = 0; //in current menu, what paramater number is being looked at?
+              param_number = menu_item_index[menu_index][param_index];
+
+            }
+
+          }
+
         }
         break;
 
-      }
-    case BTN_LEFT: {
-        if ((repeat_count == 0) || (repeat_count > bpm / 2)) {
-          if (param[menu_index] > param_min[menu_index]) {
-            param[menu_index]--;
+      //in top level mode, left and right always alter BPM
+      case BTN_RIGHT: {
+          if ((repeat_count == 0) || (repeat_count > bpm / 2)) {
+            if (param[PARAM_BPM] < param_max[PARAM_BPM]) {
+              param[PARAM_BPM]++;
+            }
           }
-        }
-        break;
-      }
 
-    case BTN_UP: {
-        if (repeat_count == 0) {
-          menu_index--;
-          if (menu_index < 0) {
+          break;
+
+        }
+      case BTN_LEFT: {
+          if ((repeat_count == 0) || (repeat_count > bpm / 2)) {
+            if (param[PARAM_BPM] > param_min[PARAM_BPM]) {
+              param[PARAM_BPM]--;
+            }
+          }
+          break;
+        }
+
+    }
+
+  } else {   //we are in an individual menu
+
+    switch (lcd_key) {
+
+
+      case BTN_RIGHT: {
+          if ((repeat_count == 0) || (repeat_count > bpm / 2)) {
+            if (param[param_number] < param_max[param_number]) {
+              param[param_number]++;
+            }
+          }
+
+          break;
+
+        }
+      case BTN_LEFT: {
+          if ((repeat_count == 0) || (repeat_count > bpm / 2)) {
+            if (param[param_number] > param_min[param_number]) {
+              param[param_number]--;
+            }
+          }
+          break;
+        }
+
+      case BTN_UP: {
+          if (repeat_count == 0) {
+            param_index--;
+            if (param_index < 0) {
+              param_index = 0;
+            }
+          }
+          param_number = menu_item_index[menu_index][param_index];
+          break;
+        }
+      case BTN_DOWN: {
+          if (repeat_count == 0) {
+            param_index++;
+            if (param_index >= menu_size[menu_index]) {
+              param_index = menu_size[menu_index] - 1;
+            }
+          }
+          param_number = menu_item_index[menu_index][param_index];
+          break;
+        }
+
+
+      //pressing SELECT inside a param menu goes back to top level menu
+      case BTN_SELECT: {
+          if (repeat_count == 0) {
             menu_index = 0;
+            menu_level = 0;
           }
-        }
-        break;
-      }
-    case BTN_DOWN: {
-        if (repeat_count == 0) {
-          menu_index++;
-          if (menu_index >= PARAM_EOF) {
-            menu_index = PARAM_EOF - 1;
-          }
-        }
-        break;
-      }
-
-
-    //pressing SELECT once toggles play on/off
-    case BTN_SELECT: {
-        if (repeat_count == 0) {
-          playing = !playing;
-          if (playing) {
-            tick = 0;
-            beat = 0;
-            bar = 0;
-            midiSerial.write(0xFA);      //MIDI START
-          } else {
-            midiSerial.write(0xFC);      //MIDI STOP
-          }
+          break;
         }
 
-        //longpressing select writes paramaters to EEPROM
-        if (repeat_count > bpm / 2) {
-          screen_wipe('#', 20);
-          for (int i = 0; i < PARAM_EOF; i++) {
-            EEPROM.update(PARAM_EEPROM_BASE + i, param[i]);
-          }
-          repeat_count = 0;
-          //           delay(500);
-          screen_wipe(' ', 20);
-        }
+    }
 
-        break;
-      }
 
   }
-
   last_button = lcd_key;
-
-
   midiSerial.write(0xF8);      //MIDI CLOCK TICK
   tick++;
   if (tick == 24) {
     tick = 0;
   }
-  if ((playing) && (tick % 6 == 0)) {
+  if ((playing) && (tick_is_full_beat())) {
     do_sequencer_step(beat);
     beat++;
-    if (beat == 16) {
+    if (beat == BEATS_PER_BAR) {
       beat = 0;
       bar++;
     }
   }
 
-  if (beat % 2 == 0) {
-    delayUntil = loopStart + (600000L * 2 * param[PARAM_SWING] / (24L * bpm));
-  } else {
-    delayUntil = loopStart + (600000L * 2 * (100 - param[PARAM_SWING]) / (24L * bpm));
-  }
+  delayUntil = loopStart + (60000000L / (24L * bpm));
 
   //burn cycles until we are ready for the next click
   for (; micros() < delayUntil;) {}
