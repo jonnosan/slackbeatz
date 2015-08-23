@@ -128,23 +128,43 @@ const char * SLIDER_VAL_NAMES[] = {
   "HI"
 };
 
-const char * SCALE_NAMES[] = {
-  "Minor",
-  "Major",
-};
 
 #define SCALE_LENGTH 14
-const byte  SCALES[2][SCALE_LENGTH] = {
+#define MAX_SCALE 3
+const byte  SCALES[MAX_SCALE+1][SCALE_LENGTH] = {
   {0, 2, 3, 5, 7, 8, 10, 12 + 0, 12 + 2, 12 + 3, 12 + 5, 12 + 7, 12 + 8, 12 + 10, }, //Minor
   {0, 2, 4, 5, 7, 9, 11, 12 + 0, 12 + 2, 12 + 4, 12 + 5, 12 + 7, 12 + 9, 12 + 11}, //Major
+  {0, 3, 5, 7, 10, 12 + 0, 12 + 3, 12 + 5, 12 + 7, 12 + 10, 24+0,24+3,24+5,24+7}, //Minor pentatonic
+  {0, 4, 5, 7, 10, 12 + 0, 12 + 4, 12 + 5, 12 + 7, 12 + 10, 24+0,24+4,24+5,24+7}, //Major pentatonic
+
+};
+const char * SCALE_NAMES[MAX_SCALE+1] = {
+  "Minor",
+  "Major",
+  "Pent Min",
+  "Pent Maj",
+  
 };
 
 
-#define MAX_CHORD_STYLE 3
+
+#define MAX_CHORD_STYLE 4
 #define CHORD_STYLE_ROOT  0
-#define CHORD_STYLE_TRIAD 2
-#define CHORD_STYLE_FIFTH 3
+#define CHORD_STYLE_TRIAD 1
+#define CHORD_STYLE_FIFTH 2
 #define CHORD_STYLE_OCTAVE 3
+#define CHORD_STYLE_SIXTH 4
+
+#define NO_NOTE 0xFF
+#define MAX_CHORD_NOTES 4
+
+const byte CHORD_NOTES[MAX_CHORD_STYLE + 1][MAX_CHORD_NOTES] = {
+  {0, NO_NOTE, NO_NOTE, NO_NOTE},	     //root only
+  {0, 2, 4, NO_NOTE},		//root+third+fifth
+  {0, 4, 7, NO_NOTE},	     //root+fifth+octave
+  {0, 7, NO_NOTE, NO_NOTE},	     //root+octave
+  {0, 2, 4, 5},	    //root+octave
+};
 
 
 const char * CHORD_STYLE_NAMES[MAX_CHORD_STYLE + 1] = {
@@ -152,27 +172,27 @@ const char * CHORD_STYLE_NAMES[MAX_CHORD_STYLE + 1] = {
   "Triad",
   "Fifth",
   "Octave",
+  "Sixth",
 };
 
-#define MAX_RIFF_STYLE 1
+#define MAX_RIFF_STYLE 5
 #define RIFF_STYLE_CHUG  0
-#define RIFF_STYLE_ROLLUP  1
-
+#define RIFF_STYLE_ROLL  1
+#define RIFF_STYLE_CHUGUP  2
+#define RIFF_STYLE_ROLLUP  3
+#define RIFF_STYLE_FASTUP  4
+#define RIFF_STYLE_BOUNCE  5
 
 const char * RIFF_STYLE_NAMES[MAX_RIFF_STYLE + 1] = {
   "Chug",
+  "Roll",
+  "ChugUp",
   "RollUp",
+  "FastUp",
+  "Bounce",
 };
 
 
-#define NO_NOTE 0xFF
-const byte CHORD_NOTES[MAX_CHORD_STYLE + 1][3] = {
-  {0, NO_NOTE, NO_NOTE},	      //root only
-  {0, 2, 4},		//root+third+fifth
-  {0, 4, 7},	      //root+fifth+octave
-  {0, 7, NO_NOTE},	      //root+octave
-
-};
 
 
 const char * CHORD_NAMES[] = {
@@ -199,8 +219,8 @@ byte beat = 0;            // where in this
 int bar = 0;
 int last_button;
 int repeat_count;
-#define MAX_CHORD_NOTES 3
-
+byte riff_index;
+byte riff_direction;
 byte playing_chord_notes[MAX_CHORD_NOTES];
 byte last_playing_chord_notes[MAX_CHORD_NOTES];
 
@@ -223,7 +243,8 @@ void setup() {
   INIT_MENUS
 
   //menu items are displayed in the order they are added - you can rearrange order here without messing up presets
-  ADD_MENU_ITEM(MENU_PLAY, PARAM_BPM,    PRM_TYPE_NUM,  "BPM     : ", 30, 180, 120);     //beats per minute
+  ADD_MENU_ITEM(MENU_PLAY, PARAM_BPM,    PRM_TYPE_NUM,  "BPM     : ", 30, 180, 120);     //beats per minute - not actually displayed but this entry is needed to set min/max/default
+  
   ADD_MENU_ITEM(MENU_DRUMS, PARAM_DRUM_CH, PRM_TYPE_NUM, "Drum Ch : ", 0, 16, 10);
   ADD_MENU_ITEM(MENU_DRUMS, PARAM_BD_FREQ, PRM_TYPE_NUM, "BD Freq : ", 0, STEPS, 4);   //how frequently this drum hit occurs
   ADD_MENU_ITEM(MENU_DRUMS, PARAM_SD_FREQ, PRM_TYPE_NUM, "SD Freq : ", 0, STEPS, 7);
@@ -236,16 +257,18 @@ void setup() {
   ADD_MENU_ITEM(MENU_DRUMS, PARAM_HH_OFST, PRM_TYPE_NUM, "HH Ofst : ", 0, STEPS - 1, 0);
   ADD_MENU_ITEM(MENU_DRUMS, PARAM_DRUM_FILL, PRM_TYPE_TOGGLE, "Fill    : ", PRM_TOGGLE_OFF, PRM_TOGGLE_ON, PRM_TOGGLE_ON);
   ADD_MENU_ITEM(MENU_DRUMS, PARAM_SWING, PRM_TYPE_SLIDER,   "Swing   : ", PRM_SLIDER_OFF, PRM_SLIDER_HI, PRM_SLIDER_OFF);
+  
+  
   ADD_MENU_ITEM(MENU_CHORDS, PARAM_CHORD_CH, PRM_TYPE_NUM,    "Cord Ch : ", 0, 16, 1);
   ADD_MENU_ITEM(MENU_CHORDS, PARAM_RIFF_CH, PRM_TYPE_NUM,    "Riff Ch : ", 0, 16, 8);
-  ADD_MENU_ITEM(MENU_CHORDS, PARAM_PROG_ROOT, PRM_TYPE_NUM,   "Root Note: ", 0, MAX_NOTE, 48); //c1
-  ADD_MENU_ITEM(MENU_CHORDS, PARAM_SCALE_TYPE, PRM_TYPE_SCALE, "Scale    : ", 0, 1, 0); //minor
-  ADD_MENU_ITEM(MENU_CHORDS, PARAM_CHORD_1, PRM_TYPE_CHORD,   "Chord 1  : ", 0, 7, 0); //I
-  ADD_MENU_ITEM(MENU_CHORDS, PARAM_CHORD_2, PRM_TYPE_CHORD,   "Chord 2  : ", 0, 7, 5); //VI
-  ADD_MENU_ITEM(MENU_CHORDS, PARAM_CHORD_3, PRM_TYPE_CHORD,   "Chord 3  : ", 0, 7, 1); //II
-  ADD_MENU_ITEM(MENU_CHORDS, PARAM_CHORD_4, PRM_TYPE_CHORD,             "Chord 4  : ", 0, 7, 3); //IV
   ADD_MENU_ITEM(MENU_CHORDS, PARAM_CHORD_STYLE, PRM_TYPE_CHORD_STYLE,   "Style : ", 0, MAX_CHORD_STYLE, CHORD_STYLE_TRIAD);
   ADD_MENU_ITEM(MENU_CHORDS, PARAM_RIFF_STYLE, PRM_TYPE_RIFF_STYLE,   "Riff : ", 0, MAX_RIFF_STYLE, RIFF_STYLE_ROLLUP);
+  ADD_MENU_ITEM(MENU_CHORDS, PARAM_SCALE_TYPE, PRM_TYPE_SCALE, "Scale : ", 0, MAX_SCALE, 0); //minor
+  ADD_MENU_ITEM(MENU_CHORDS, PARAM_CHORD_1, PRM_TYPE_CHORD,   "Chord 1 : ", 0, 7, 0); //I
+  ADD_MENU_ITEM(MENU_CHORDS, PARAM_CHORD_2, PRM_TYPE_CHORD,   "Chord 2 : ", 0, 7, 5); //VI
+  ADD_MENU_ITEM(MENU_CHORDS, PARAM_CHORD_3, PRM_TYPE_CHORD,   "Chord 3 : ", 0, 7, 1); //II
+  ADD_MENU_ITEM(MENU_CHORDS, PARAM_CHORD_4, PRM_TYPE_CHORD,             "Chord 4  : ", 0, 7, 3); //IV
+  ADD_MENU_ITEM(MENU_CHORDS, PARAM_PROG_ROOT, PRM_TYPE_NUM,   "Root Note: ", 0, MAX_NOTE, 48); //c1
 
 
   //  Set MIDI baud rate:
@@ -458,6 +481,8 @@ void do_sequencer_step(int step_number) {
   //change chords at start of each step, even if not playing on any chord channel
   if (step_number == 0) {
 
+    riff_index = 0;
+    riff_direction=1;
     //stop all current notes
     for (byte i = 0; i < MAX_CHORD_NOTES; i++) {
       if ((param[PARAM_CHORD_CH] > 0) && (playing_chord_notes[i] != NO_NOTE)) {
@@ -503,19 +528,31 @@ void do_sequencer_step(int step_number) {
 
 
   if (param[PARAM_RIFF_CH] > 0)  {
+    byte this_note = NO_NOTE;
+
     switch (param[PARAM_RIFF_STYLE]) {
       case RIFF_STYLE_CHUG:
         //base note every 2nd beat
         if (step_number % 2 == 0) {
-          play_solo_note(param[PARAM_RIFF_CH], playing_chord_notes[0], RIFF_VELOCITY);
+          this_note = playing_chord_notes[0];
         }
         break;
 
-      case RIFF_STYLE_ROLLUP:
-        Serial.print("ROLLUP");
-        Serial.println(step_number);
+      case RIFF_STYLE_CHUGUP:
+        //base note every 2nd beat
+        if (step_number % 2 == 0) {
+          this_note = playing_chord_notes[(step_number >> 2) % MAX_CHORD_NOTES];
+          if (this_note == NO_NOTE) {
+            this_note = playing_chord_notes[0];
 
-        byte this_note = NO_NOTE;
+          }
+
+        }
+        break;
+
+
+      case RIFF_STYLE_ROLLUP:
+      case RIFF_STYLE_ROLL:
         switch (step_number) {
           case 0:
           case 4:
@@ -524,27 +561,61 @@ void do_sequencer_step(int step_number) {
             break;
           case 8:
             this_note = playing_chord_notes[1];
-            if (this_note == NO_NOTE) {
+            if ((this_note == NO_NOTE) || (param[PARAM_RIFF_STYLE] == RIFF_STYLE_ROLL)) {
               this_note = playing_chord_notes[0];
-              Serial.println("reset 1");
 
             }
             break;
           case 12:
           case 15:
             this_note = playing_chord_notes[2];
-            if (this_note == NO_NOTE) {
+            if ((this_note == NO_NOTE) || (param[PARAM_RIFF_STYLE] == RIFF_STYLE_ROLL)) {
               this_note = playing_chord_notes[0];
-              Serial.println("reset 2");
             }
             break;
         }
-        if (this_note != NO_NOTE) {
-          play_solo_note(param[PARAM_RIFF_CH], this_note, RIFF_VELOCITY);
+        break;
+
+      case RIFF_STYLE_FASTUP:
+        //ascending note every beat
+        this_note = playing_chord_notes[riff_index];
+        riff_index++;
+        if (riff_index >= MAX_CHORD_NOTES) {
+          riff_index = 0;
+        }
+        if (this_note == NO_NOTE) {
+          riff_index = 0;
+          this_note = playing_chord_notes[riff_index];
+        }
+        break;
+
+   case RIFF_STYLE_BOUNCE:
+        //ascending/descending note every beat
+        if (riff_index>=MAX_CHORD_NOTES)  {
+          riff_index=0;
+          riff_direction=1;          
+        }
+        
+        this_note = playing_chord_notes[riff_index];
+        riff_index+=riff_direction;
+        if (riff_index==0)  {
+          riff_direction=1;
+        }
+        if ((riff_index >= MAX_CHORD_NOTES)) {
+          riff_index--;
+          riff_direction=0xFF; //-1 as unsigned byte
+        }
+        if (this_note == NO_NOTE) {
+          riff_index--;
+          riff_direction=0xFF; //-1 as unsigned byte          
+          this_note = playing_chord_notes[0];
         }
         break;
 
 
+    }
+    if (this_note != NO_NOTE) {
+      play_solo_note(param[PARAM_RIFF_CH], this_note, RIFF_VELOCITY);
     }
 
   }
