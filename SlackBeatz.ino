@@ -76,6 +76,11 @@ enum PARAMS {
   PARAM_RIFF_OFST2,
   PARAM_RIFF_OFST3,
   PARAM_RIFF_OFST4,
+  PARAM_RIFF_FOLLOW_CHORDS,
+  PARAM_RIFF_NOTE_1,
+  PARAM_RIFF_NOTE_2,
+  PARAM_RIFF_NOTE_3,
+  PARAM_RIFF_NOTE_4,  
   PARAM_EOF  //must be last item
 };
 
@@ -211,11 +216,9 @@ byte beat = 0;            // where in this
 int bar = 0;
 int last_button;
 int repeat_count;
-byte riff_index;
-byte riff_direction;
 byte playing_chord_notes[MAX_CHORD_NOTES];
 byte last_playing_chord_notes[MAX_CHORD_NOTES];
-
+byte last_solo_note=0;
 
 #define INIT_MENUS \
   for(int __i=0;__i<NUM_MENUS;__i++) {menu_size[__i]=0;};
@@ -261,16 +264,27 @@ void setup() {
   ADD_MENU_ITEM(MENU_CHORDS, PARAM_CHORD_4, PRM_TYPE_CHORD,             "Chord 4: ", 0, 7, 3); //IV
   ADD_MENU_ITEM(MENU_CHORDS, PARAM_PROG_ROOT, PRM_TYPE_NUM,   "Root Note: ", 0, MAX_NOTE, 48); //c1
 
-  ADD_MENU_ITEM(MENU_RIFF, PARAM_RIFF_CH, PRM_TYPE_NUM,    "Riff Ch: ", 0, 16, 8);
-  ADD_MENU_ITEM(MENU_RIFF, PARAM_RIFF_FREQ1, PRM_TYPE_NUM,   "Riff Freq 1: ", 0, STEPS, 8);
-  ADD_MENU_ITEM(MENU_RIFF, PARAM_RIFF_FREQ2, PRM_TYPE_NUM,   "Riff Freq 2: ", 0, STEPS, 15);
-  ADD_MENU_ITEM(MENU_RIFF, PARAM_RIFF_FREQ3, PRM_TYPE_NUM,   "Riff Freq 3: ", 0, STEPS, 2);
-  ADD_MENU_ITEM(MENU_RIFF, PARAM_RIFF_FREQ4, PRM_TYPE_NUM,   "Riff Freq 4: ", 0, STEPS, 11);
+  ADD_MENU_ITEM(MENU_RIFF, PARAM_RIFF_CH, PRM_TYPE_NUM,    "Riff Ch:", 0, 16, 8);
+  
+  ADD_MENU_ITEM(MENU_RIFF, PARAM_RIFF_FOLLOW_CHORDS, PRM_TYPE_TOGGLE,    "Track Chords:", PRM_TOGGLE_OFF, PRM_TOGGLE_ON, PRM_TOGGLE_ON);
+  
+  ADD_MENU_ITEM(MENU_RIFF, PARAM_RIFF_NOTE_1, PRM_TYPE_CHORD,   "Riff Note 1:", 0, 7, 0);
+  ADD_MENU_ITEM(MENU_RIFF, PARAM_RIFF_FREQ1, PRM_TYPE_NUM,   "Riff Freq 1:", 0, STEPS, 8);
+  ADD_MENU_ITEM(MENU_RIFF, PARAM_RIFF_OFST1, PRM_TYPE_NUM,   "Riff Ofst 1:", 0, STEPS - 1, 0);
+  
+  ADD_MENU_ITEM(MENU_RIFF, PARAM_RIFF_NOTE_2, PRM_TYPE_CHORD,   "Riff Note 2:", 0, 7, 5);
+  ADD_MENU_ITEM(MENU_RIFF, PARAM_RIFF_FREQ2, PRM_TYPE_NUM,   "Riff Freq 2:", 0, STEPS, 4);
+  ADD_MENU_ITEM(MENU_RIFF, PARAM_RIFF_OFST2, PRM_TYPE_NUM,   "Riff Ofst 2:", 0, STEPS - 1, 1);
+  
+  ADD_MENU_ITEM(MENU_RIFF, PARAM_RIFF_NOTE_3, PRM_TYPE_CHORD,   "Riff Note 2:", 0, 7, 7);
+  ADD_MENU_ITEM(MENU_RIFF, PARAM_RIFF_FREQ3, PRM_TYPE_NUM,   "Riff Freq 3:", 0, STEPS, 4);
+  ADD_MENU_ITEM(MENU_RIFF, PARAM_RIFF_OFST3, PRM_TYPE_NUM,   "Riff Ofst 3:", 0, STEPS - 1, 2);
+  
+  ADD_MENU_ITEM(MENU_RIFF, PARAM_RIFF_NOTE_4, PRM_TYPE_CHORD,   "Riff Note 4:", 0, 7, 5);
+  ADD_MENU_ITEM(MENU_RIFF, PARAM_RIFF_FREQ4, PRM_TYPE_NUM,   "Riff Freq 4:", 0, STEPS, 4);
+  ADD_MENU_ITEM(MENU_RIFF, PARAM_RIFF_OFST4, PRM_TYPE_NUM,   "Riff Ofst 4:", 0, STEPS - 1, 3);
 
-  ADD_MENU_ITEM(MENU_RIFF, PARAM_RIFF_OFST1, PRM_TYPE_NUM,   "Riff Ofst 1: ", 0, STEPS - 1, 0);
-  ADD_MENU_ITEM(MENU_RIFF, PARAM_RIFF_OFST2, PRM_TYPE_NUM,   "Riff Ofst 2: ", 0, STEPS - 1, 0);
-  ADD_MENU_ITEM(MENU_RIFF, PARAM_RIFF_OFST3, PRM_TYPE_NUM,   "Riff Ofst 3: ", 0, STEPS - 1, 0);
-  ADD_MENU_ITEM(MENU_RIFF, PARAM_RIFF_OFST4, PRM_TYPE_NUM,   "Riff Ofst 4: ", 0, STEPS - 1, 0);
+  
 
   //  Set MIDI baud rate:
   midiSerial.begin(31250);
@@ -449,7 +463,7 @@ void start_song() {
 void stop_song() {
   midiSerial.write(0xFC);      //MIDI STOP
 
-
+  play_note( param[PARAM_RIFF_CH],  last_solo_note, 0) ;
   all_notes_off(param[PARAM_DRUM_CH]);
   all_notes_off(param[PARAM_CHORD_CH]);
   all_notes_off(param[PARAM_RIFF_CH]);
@@ -465,7 +479,8 @@ void all_notes_off(byte channel) {
 
 //stop all other notes this channel, play specified note
 void play_solo_note(byte channel, byte note, byte velocity) {
-  all_notes_off( channel);
+  play_note( channel,  last_solo_note, 0) ;
+  last_solo_note=note;
   play_note( channel,  note,  velocity) ;
 }
 
@@ -481,8 +496,6 @@ void do_sequencer_step(int step_number) {
   //change chords at start of each step, even if not playing on any chord channel
   if (step_number == 0) {
 
-    riff_index = 0;
-    riff_direction = 1;
     //stop all current notes
     for (byte i = 0; i < MAX_CHORD_NOTES; i++) {
       if ((param[PARAM_CHORD_CH] > 0) && (playing_chord_notes[i] != NO_NOTE)) {
@@ -515,10 +528,12 @@ void do_sequencer_step(int step_number) {
 
   distribute_notes(riff_rhythm, 0, 0, STEPS, 0, true); //to reset it
 
-  for (int i = MAX_CHORD_NOTES - 1; i >= 0; i--) {
-    if (playing_chord_notes[i] != NO_NOTE) {
-      distribute_notes(riff_rhythm, playing_chord_notes[i], param[PARAM_RIFF_FREQ1 + i], STEPS, param[PARAM_RIFF_OFST1 + i], false);
-    }
+  for (int i = 3; i >= 0; i--) {
+   
+
+    byte root_note_number=(param[PARAM_RIFF_FOLLOW_CHORDS] ? param[PARAM_CHORD_1 + (bar % 4)] : 0 );
+    byte this_note = SCALES[param[PARAM_SCALE_TYPE]][(param[PARAM_RIFF_NOTE_1+i]+root_note_number) % SCALE_LENGTH] + param[PARAM_PROG_ROOT];
+     distribute_notes(riff_rhythm, this_note, param[PARAM_RIFF_FREQ1 + i], STEPS, param[PARAM_RIFF_OFST1 + i], false);
   }
 
 
