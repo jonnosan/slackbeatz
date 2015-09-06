@@ -31,6 +31,7 @@ enum PRM_TYPES {
   PRM_TYPE_CHORD,
   PRM_TYPE_CHORD_STYLE,
   PRM_TYPE_RIFF_STYLE,
+  PRM_TYPE_POWER_OF_2
 };
 
 #define PRM_TOGGLE_ON 1
@@ -56,7 +57,7 @@ enum PARAMS {
   PARAM_BD_OFST,
   PARAM_SD_OFST,
   PARAM_HH_OFST,
-  PARAM_DRUM_CH,
+  PARAM_BD_CH,
   PARAM_DRUM_FILL,
   PARAM_SWING,
   PARAM_CHORD_CH,
@@ -80,7 +81,11 @@ enum PARAMS {
   PARAM_RIFF_NOTE_1,
   PARAM_RIFF_NOTE_2,
   PARAM_RIFF_NOTE_3,
-  PARAM_RIFF_NOTE_4,  
+  PARAM_RIFF_NOTE_4,
+  PARAM_RIFF_QQN_PER_STEP,
+  PARAM_RIFF_STD_ORDER,
+  PARAM_SD_CH,
+  PARAM_HH_CH,  
   PARAM_EOF  //must be last item
 };
 
@@ -143,6 +148,7 @@ const char * SLIDER_VAL_NAMES[] = {
 };
 
 
+
 #define SCALE_LENGTH 14
 #define MAX_SCALE 3
 const byte  SCALES[MAX_SCALE + 1][SCALE_LENGTH] = {
@@ -157,7 +163,6 @@ const char * SCALE_NAMES[MAX_SCALE + 1] = {
   "Major",
   "Pent Min",
   "Pent Maj",
-
 };
 
 
@@ -203,6 +208,14 @@ const char * CHORD_NAMES[] = {
   "VIII",
 };
 
+const char * POWERS_OF_2[] = {
+  "1",  //2**0
+  "2", //2**1
+  "4", //2**2
+  "8", //2**3
+  "16", //2**4
+};
+
 
 char * beat_display = "________________";
 
@@ -218,7 +231,7 @@ int last_button;
 int repeat_count;
 byte playing_chord_notes[MAX_CHORD_NOTES];
 byte last_playing_chord_notes[MAX_CHORD_NOTES];
-byte last_solo_note=0;
+byte last_solo_note = 0;
 
 #define INIT_MENUS \
   for(int __i=0;__i<NUM_MENUS;__i++) {menu_size[__i]=0;};
@@ -240,15 +253,17 @@ void setup() {
   //menu items are displayed in the order they are added - you can rearrange order here without messing up presets
   ADD_MENU_ITEM(MENU_PLAY, PARAM_BPM,    PRM_TYPE_NUM,  "BPM     : ", 30, 180, 120);     //beats per minute - not actually displayed but this entry is needed to set min/max/default
 
-  ADD_MENU_ITEM(MENU_DRUMS, PARAM_DRUM_CH, PRM_TYPE_NUM, "Drum Ch : ", 0, 16, 10);
+  ADD_MENU_ITEM(MENU_DRUMS, PARAM_BD_CH, PRM_TYPE_NUM,   "BD Ch   : ", 0, 16, 10);
   ADD_MENU_ITEM(MENU_DRUMS, PARAM_BD_FREQ, PRM_TYPE_NUM, "BD Freq : ", 0, STEPS, 4);   //how frequently this drum hit occurs
-  ADD_MENU_ITEM(MENU_DRUMS, PARAM_SD_FREQ, PRM_TYPE_NUM, "SD Freq : ", 0, STEPS, 7);
-  ADD_MENU_ITEM(MENU_DRUMS, PARAM_HH_FREQ, PRM_TYPE_NUM, "HH Freq : ", 0, STEPS, 11);
   ADD_MENU_ITEM(MENU_DRUMS, PARAM_BD_NOTE, PRM_TYPE_NUM, "BD Note : ", 0, MAX_NOTE, 36); //MIDI note sent for 'bass drum' hits
+  ADD_MENU_ITEM(MENU_DRUMS, PARAM_BD_OFST, PRM_TYPE_NUM, "BD Ofst : ", 0, STEPS - 1, 0); //offset from first step of sequence when distributing drum hits  
+  ADD_MENU_ITEM(MENU_DRUMS, PARAM_SD_CH,   PRM_TYPE_NUM, "SD Ch   : ", 0, 16, 10);
+  ADD_MENU_ITEM(MENU_DRUMS, PARAM_SD_FREQ, PRM_TYPE_NUM, "SD Freq : ", 0, STEPS, 7);
   ADD_MENU_ITEM(MENU_DRUMS, PARAM_SD_NOTE, PRM_TYPE_NUM, "SD Note : ", 0, MAX_NOTE, 38); //MIDI note sent for 'snare drum' hits
+  ADD_MENU_ITEM(MENU_DRUMS, PARAM_SD_OFST, PRM_TYPE_NUM, "SD Ofst : ", 0, STEPS - 1, 0);  
+  ADD_MENU_ITEM(MENU_DRUMS, PARAM_HH_CH,   PRM_TYPE_NUM, "HH Ch   : ", 0, 16, 10);    
+  ADD_MENU_ITEM(MENU_DRUMS, PARAM_HH_FREQ, PRM_TYPE_NUM, "HH Freq : ", 0, STEPS, 11);
   ADD_MENU_ITEM(MENU_DRUMS, PARAM_HH_NOTE, PRM_TYPE_NUM, "HH Note : ", 0, MAX_NOTE, 42); //MIDI note sent for 'high hat' hits
-  ADD_MENU_ITEM(MENU_DRUMS, PARAM_BD_OFST, PRM_TYPE_NUM, "BD Ofst : ", 0, STEPS - 1, 0); //offset from first step of sequence when distributing drum hits
-  ADD_MENU_ITEM(MENU_DRUMS, PARAM_SD_OFST, PRM_TYPE_NUM, "SD Ofst : ", 0, STEPS - 1, 0);
   ADD_MENU_ITEM(MENU_DRUMS, PARAM_HH_OFST, PRM_TYPE_NUM, "HH Ofst : ", 0, STEPS - 1, 0);
   ADD_MENU_ITEM(MENU_DRUMS, PARAM_DRUM_FILL, PRM_TYPE_TOGGLE, "Fill    : ", PRM_TOGGLE_OFF, PRM_TOGGLE_ON, PRM_TOGGLE_ON);
   ADD_MENU_ITEM(MENU_DRUMS, PARAM_SWING, PRM_TYPE_SLIDER,   "Swing   : ", PRM_SLIDER_OFF, PRM_SLIDER_HI, PRM_SLIDER_OFF);
@@ -265,26 +280,30 @@ void setup() {
   ADD_MENU_ITEM(MENU_CHORDS, PARAM_PROG_ROOT, PRM_TYPE_NUM,   "Root Note: ", 0, MAX_NOTE, 48); //c1
 
   ADD_MENU_ITEM(MENU_RIFF, PARAM_RIFF_CH, PRM_TYPE_NUM,    "Riff Ch:", 0, 16, 8);
-  
+
   ADD_MENU_ITEM(MENU_RIFF, PARAM_RIFF_FOLLOW_CHORDS, PRM_TYPE_TOGGLE,    "Track Chords:", PRM_TOGGLE_OFF, PRM_TOGGLE_ON, PRM_TOGGLE_ON);
+
+  ADD_MENU_ITEM(MENU_RIFF, PARAM_RIFF_QQN_PER_STEP, PRM_TYPE_POWER_OF_2,    "16ths/Step:", 0, 4, 0);
+
+  ADD_MENU_ITEM(MENU_RIFF, PARAM_RIFF_STD_ORDER, PRM_TYPE_TOGGLE,    "Std Order:", PRM_TOGGLE_OFF, PRM_TOGGLE_ON, PRM_TOGGLE_ON);
   
   ADD_MENU_ITEM(MENU_RIFF, PARAM_RIFF_NOTE_1, PRM_TYPE_CHORD,   "Riff Note 1:", 0, 7, 0);
   ADD_MENU_ITEM(MENU_RIFF, PARAM_RIFF_FREQ1, PRM_TYPE_NUM,   "Riff Freq 1:", 0, STEPS, 8);
   ADD_MENU_ITEM(MENU_RIFF, PARAM_RIFF_OFST1, PRM_TYPE_NUM,   "Riff Ofst 1:", 0, STEPS - 1, 0);
-  
+
   ADD_MENU_ITEM(MENU_RIFF, PARAM_RIFF_NOTE_2, PRM_TYPE_CHORD,   "Riff Note 2:", 0, 7, 5);
   ADD_MENU_ITEM(MENU_RIFF, PARAM_RIFF_FREQ2, PRM_TYPE_NUM,   "Riff Freq 2:", 0, STEPS, 4);
   ADD_MENU_ITEM(MENU_RIFF, PARAM_RIFF_OFST2, PRM_TYPE_NUM,   "Riff Ofst 2:", 0, STEPS - 1, 1);
-  
-  ADD_MENU_ITEM(MENU_RIFF, PARAM_RIFF_NOTE_3, PRM_TYPE_CHORD,   "Riff Note 2:", 0, 7, 7);
+
+  ADD_MENU_ITEM(MENU_RIFF, PARAM_RIFF_NOTE_3, PRM_TYPE_CHORD,   "Riff Note 3:", 0, 7, 7);
   ADD_MENU_ITEM(MENU_RIFF, PARAM_RIFF_FREQ3, PRM_TYPE_NUM,   "Riff Freq 3:", 0, STEPS, 4);
   ADD_MENU_ITEM(MENU_RIFF, PARAM_RIFF_OFST3, PRM_TYPE_NUM,   "Riff Ofst 3:", 0, STEPS - 1, 2);
-  
+
   ADD_MENU_ITEM(MENU_RIFF, PARAM_RIFF_NOTE_4, PRM_TYPE_CHORD,   "Riff Note 4:", 0, 7, 5);
   ADD_MENU_ITEM(MENU_RIFF, PARAM_RIFF_FREQ4, PRM_TYPE_NUM,   "Riff Freq 4:", 0, STEPS, 4);
   ADD_MENU_ITEM(MENU_RIFF, PARAM_RIFF_OFST4, PRM_TYPE_NUM,   "Riff Ofst 4:", 0, STEPS - 1, 3);
 
-  
+
 
   //  Set MIDI baud rate:
   midiSerial.begin(31250);
@@ -401,6 +420,10 @@ void show_menu() {
         lcd.print(CHORD_STYLE_NAMES[param[param_number]]);
         break;
 
+      case PRM_TYPE_POWER_OF_2:
+        lcd.print(POWERS_OF_2[param[param_number]]);
+        break;
+
     }
 
   }
@@ -464,7 +487,9 @@ void stop_song() {
   midiSerial.write(0xFC);      //MIDI STOP
 
   play_note( param[PARAM_RIFF_CH],  last_solo_note, 0) ;
-  all_notes_off(param[PARAM_DRUM_CH]);
+  all_notes_off(param[PARAM_BD_CH]);
+  all_notes_off(param[PARAM_SD_CH]);
+  all_notes_off(param[PARAM_HH_CH]);  
   all_notes_off(param[PARAM_CHORD_CH]);
   all_notes_off(param[PARAM_RIFF_CH]);
 
@@ -480,7 +505,7 @@ void all_notes_off(byte channel) {
 //stop all other notes this channel, play specified note
 void play_solo_note(byte channel, byte note, byte velocity) {
   play_note( channel,  last_solo_note, 0) ;
-  last_solo_note=note;
+  last_solo_note = note;
   play_note( channel,  note,  velocity) ;
 }
 
@@ -528,33 +553,41 @@ void do_sequencer_step(int step_number) {
 
   distribute_notes(riff_rhythm, 0, 0, STEPS, 0, true); //to reset it
 
-  for (int i = 3; i >= 0; i--) {
-   
-
-    byte root_note_number=(param[PARAM_RIFF_FOLLOW_CHORDS] ? param[PARAM_CHORD_1 + (bar % 4)] : 0 );
-    byte this_note = SCALES[param[PARAM_SCALE_TYPE]][(param[PARAM_RIFF_NOTE_1+i]+root_note_number) % SCALE_LENGTH] + param[PARAM_PROG_ROOT];
-     distribute_notes(riff_rhythm, this_note, param[PARAM_RIFF_FREQ1 + i], STEPS, param[PARAM_RIFF_OFST1 + i], false);
+  for (signed char i =  3; i >= 0; i--) {
+    byte j= ( param[PARAM_RIFF_STD_ORDER]==PRM_TOGGLE_ON) ? i : 3-i;
+    byte root_note_number = (param[PARAM_RIFF_FOLLOW_CHORDS] ? param[PARAM_CHORD_1 + (bar % 4)] : 0 );
+    byte this_note = SCALES[param[PARAM_SCALE_TYPE]][(param[PARAM_RIFF_NOTE_1 + j] + root_note_number) % SCALE_LENGTH] + param[PARAM_PROG_ROOT];
+    distribute_notes(riff_rhythm, this_note, param[PARAM_RIFF_FREQ1 + j], STEPS, param[PARAM_RIFF_OFST1 + j], false);
   }
 
 
   if (param[PARAM_RIFF_CH] > 0) {
-    if (riff_rhythm[step_number] > 0) {
-      play_solo_note(param[PARAM_RIFF_CH], riff_rhythm[step_number], RIFF_VELOCITY);
+
+
+    int absolute_step_number = (bar % STEPS) * STEPS + step_number;
+    if (step_number % (1 << param[PARAM_RIFF_QQN_PER_STEP]) == 0){
+      byte riff_step_number = (absolute_step_number / (1 << param[PARAM_RIFF_QQN_PER_STEP])) % STEPS;
+
+      if (riff_rhythm[riff_step_number] > 0) {
+        play_solo_note(param[PARAM_RIFF_CH], riff_rhythm[riff_step_number], RIFF_VELOCITY);
+      }
     }
   }
 
 
-  if (param[PARAM_DRUM_CH] > 0) {
+  if (param[PARAM_BD_CH] > 0) {
     if (bd_rhythm[step_number] > 0) {
-      play_note(param[PARAM_DRUM_CH], bd_rhythm[step_number], DRUM_VELOCITY);
+      play_note(param[PARAM_BD_CH], bd_rhythm[step_number], DRUM_VELOCITY);
     }
-
+  }
+  if (param[PARAM_HH_CH] > 0) {  
     if (hh_rhythm[step_number] > 0) {
-      play_note(param[PARAM_DRUM_CH], hh_rhythm[step_number], DRUM_VELOCITY);
+      play_note(param[PARAM_HH_CH], hh_rhythm[step_number], DRUM_VELOCITY);
     }
-
+  }
+    if (param[PARAM_SD_CH] > 0) {
     if (sd_rhythm[step_number] > 0) {
-      play_note(param[PARAM_DRUM_CH], sd_rhythm[step_number], DRUM_VELOCITY);
+      play_note(param[PARAM_SD_CH], sd_rhythm[step_number], DRUM_VELOCITY);
     }
 
   }
@@ -759,5 +792,5 @@ void loop() {
 
   //burn cycles until we are ready for the next click
   for (; micros() < delayUntil;) {}
-  Serial.println(tick);
+  //  Serial.println(tick);
 }
