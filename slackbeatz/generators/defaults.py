@@ -80,7 +80,8 @@ STYLE_BASE_OCTAVE: dict[tuple[str, str], int] = {
     ("melody", "dub_techno"):   1,
     ("melody", "drum_and_bass"): 1,
     ("melody", "garage"):        0,
-    ("melody", "lofi"):          1,    # Rhodes mid-register
+    ("melody", "lofi"):          0,    # Rhodes mid-register C4-C5
+
 
     ("chords", "euclid"):       0,
     ("chords", "deep_techno"):  0,

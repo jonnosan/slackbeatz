@@ -47,9 +47,11 @@ from slackbeatz.theory.keys import parse_key
 from slackbeatz.theory.scales import scale_note
 
 
-# Pentatonic minor degrees (slackbeatz uses scale-degree offsets, so
-# these are the indices into the scale array, not literal semitones).
-_DEGREES = (0, 2, 3, 4, 6)
+# Pentatonic minor degrees — restricted to the five notes within one
+# octave so the melody stays in C4-C5 range rather than wrapping up
+# into Rhodes EP's tinkling top register. minor_pentatonic has 5
+# notes (indices 0..4); index 5+ wraps with an octave bump.
+_DEGREES = (0, 1, 2, 3, 4)
 
 
 @register_generator("melody", "lofi")

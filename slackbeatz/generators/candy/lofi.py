@@ -72,16 +72,20 @@ class CandyLofi(Generator):
             pitch = 96  # C7 — very thin, percussive
 
         if crackle > 0:
-            # Random scatter — roll per 32nd-note position.
+            # Vinyl crackle is CONSTANT background texture in real lofi
+            # tracks — not the once-every-few-bars sparseness we had.
+            # Roll per 32nd-note position at probability = crackle/2,
+            # so the default 0.4 density gives ~20% of 32nds = a few
+            # ticks per bar = audible-but-not-foreground vinyl noise.
             sixteenth = ctx.ppq // 4
             n_thirtysecond = total_ticks // (sixteenth // 2)
             for k in range(n_thirtysecond):
-                if ctx.rng.random() >= crackle * 0.05:  # 5% of crackle knob
+                if ctx.rng.random() >= crackle * 0.5:
                     continue
                 tick = k * (sixteenth // 2)
                 if tick >= total_ticks:
                     break
-                vel = ctx.rng.randint(8, 25)  # very quiet
+                vel = ctx.rng.randint(8, 25)  # very quiet — just texture
                 yield Note(
                     tick=tick, duration=10,
                     channel=inst.channel, pitch=pitch, velocity=vel,
