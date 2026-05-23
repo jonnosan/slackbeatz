@@ -31,6 +31,7 @@ from slackbeatz.generators.defaults import (
     base_vel_for,
     macro_knobs,
     polyrhythm_for,
+    stutter_for,
     vel_jitter_for,
 )
 from slackbeatz.generators.registry import register_generator
@@ -117,6 +118,10 @@ class RhythmEuclid(Generator):
         # phrase_lift, 2*phrase_lift, …) gets a small velocity bump so
         # the listener feels the start of each 4/8/16-bar phrase.
         phrase_lift = self.knob_int("phrase_lift", 0)
+        # Stutter on section transitions: 4 × 32nd-note retrigger of
+        # this drum's note in the last 16th of the last bar, fires only
+        # when the next part is a drop AND the random roll succeeds.
+        stutter = stutter_for(self)
 
         step_ticks = step_duration(ctx.ppq)
         swing_offset = int(step_ticks * swing * 0.5)
@@ -217,6 +222,23 @@ class RhythmEuclid(Generator):
                         tick=tick, duration=dur,
                         channel=inst.channel, pitch=inst.note, velocity=poly_vel,
                     )
+
+        # Stutter retrigger before a drop section: 4 × 32nd notes
+        # of the gen's drum, decaying velocity, on the last 16th of
+        # the last bar. Only fires when ctx.next_role == "drop" and
+        # the stutter knob roll succeeds.
+        if stutter > 0 and ctx.next_role == "drop" and ctx.rng.random() < stutter:
+            last_bar_start = (ctx.bars - 1) * ctx.ticks_per_bar
+            last_16th_start = last_bar_start + (ctx.steps_per_bar - 1) * step_ticks
+            thirty_second = step_ticks // 2
+            for i in range(4):
+                tick = last_16th_start + i * thirty_second
+                # Decaying velocity for the retrigger run.
+                vel = max(1, min(127, base_vel - 5 * i))
+                yield Note(
+                    tick=tick, duration=max(1, thirty_second - 4),
+                    channel=inst.channel, pitch=inst.note, velocity=vel,
+                )
 
 
 def _fill_pattern(name: str, style: str, steps_per_bar: int) -> list[bool]:

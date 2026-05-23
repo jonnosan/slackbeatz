@@ -12,6 +12,7 @@ from slackbeatz.engine.event import Event, Note
 from slackbeatz.generators._shared import (
     apply_gate_jitter,
     build_chord,
+    drop_sweep_events,
     evolution_multiplier,
     expression_ramp,
     is_build_part,
@@ -23,6 +24,7 @@ from slackbeatz.generators.base import Generator
 from slackbeatz.generators.defaults import (
     base_octave_for,
     base_vel_for,
+    drop_intensity_for,
     gate_for,
     gate_jitter_for,
     inversion_for,
@@ -126,3 +128,9 @@ class ChordsDeepTechno(Generator):
         # 80 → 127) — it should feel restrained, not climactic.
         if is_build_part(ctx):
             yield from expression_ramp(ctx, inst.channel, start=75, end=110)
+
+        # Drop automation: coordinated CC sweep (filter+reverb+volume)
+        # across the last 4 bars of this part if the next part is a drop.
+        drop_intensity = drop_intensity_for(self)
+        if drop_intensity > 0 and ctx.next_role == "drop":
+            yield from drop_sweep_events(ctx, inst.channel, drop_intensity)

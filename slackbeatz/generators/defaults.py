@@ -411,6 +411,24 @@ def mistakes_for(gen: Generator) -> float:
     return float(v) if isinstance(v, (int, float)) else 0.0
 
 
+def drop_intensity_for(gen: Generator) -> float:
+    """``drop_intensity=N`` — automated drop-sweep intensity (0..1).
+    When the *next* part is a drop, emits coordinated CC sweeps
+    across the current part's final 4 bars (filter cutoff opens,
+    reverb send increases, volume rises) so the drop feels like an
+    arrival. Default 0 = no automation."""
+    v = gen.knobs.get("drop_intensity", 0.0)
+    return float(v) if isinstance(v, (int, float)) else 0.0
+
+
+def stutter_for(gen: Generator) -> float:
+    """``stutter=N`` — probability (0..1) of stutter retrigger on the
+    last 16th of the last bar before a drop section. Retrigger emits
+    4 × 32nd notes at decaying velocity. DJ-effect for free."""
+    v = gen.knobs.get("stutter", 0.0)
+    return float(v) if isinstance(v, (int, float)) else 0.0
+
+
 def scale_for(gen, ctx, fallback: str = "minor") -> str:
     """Resolve which scale this gen should draw from (issue #22).
 

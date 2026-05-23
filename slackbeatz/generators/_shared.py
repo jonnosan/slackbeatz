@@ -609,6 +609,44 @@ def tension_velocity_boost(degree: int, tension_dyn: float, base_vel: int) -> in
     return int(round(factor * base_vel * 0.25))
 
 
+def drop_sweep_events(
+    ctx,
+    channel: int,
+    drop_intensity: float,
+    *,
+    bars_of_sweep: int = 4,
+):
+    """Yield a coordinated CC ramp across the last *bars_of_sweep*
+    bars of the current part — used when the next part is a drop.
+
+    Three CCs are ramped together for the "arrival" feel:
+
+    * CC 74 (filter cutoff): 60 → up to 127 (opens the filter)
+    * CC 91 (reverb send):   40 → 40 + 40*drop_intensity (wetter)
+    * CC 7  (volume):        100 → 127 (louder)
+
+    16 CC events spread evenly across the sweep window. Caller is
+    responsible for only calling this when ``ctx.next_role`` indicates
+    a drop is coming and ``drop_intensity > 0``.
+    """
+    from slackbeatz.engine.event import CC
+
+    total_ticks = ctx.bars * ctx.ticks_per_bar
+    sweep_ticks = bars_of_sweep * ctx.ticks_per_bar
+    sweep_start = max(0, total_ticks - sweep_ticks)
+
+    n_events = 16
+    for i in range(n_events):
+        frac = i / max(1, n_events - 1)
+        tick = sweep_start + int(sweep_ticks * frac)
+        cc74 = int(60 + (50 + 17 * drop_intensity) * frac)
+        cc91 = int(40 + 40 * drop_intensity * frac)
+        cc7 = int(100 + 27 * frac)
+        yield CC(tick=tick, channel=channel, controller=74, value=max(0, min(127, cc74)))
+        yield CC(tick=tick, channel=channel, controller=91, value=max(0, min(127, cc91)))
+        yield CC(tick=tick, channel=channel, controller=7, value=max(0, min(127, cc7)))
+
+
 def apply_mistake(
     pitch: int,
     tick: int,

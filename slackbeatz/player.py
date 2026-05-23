@@ -70,6 +70,7 @@ KNOB_SPECS: dict[str, list[tuple[str, float, float, float, str]]] = {
         ("fill_every",    0,    16,    4,    "int"),
         ("phrase_lift",   0,    16,    0,    "int"),
         ("mistakes",      0.0,  0.1,   0.0,  "float"),
+        ("stutter",       0.0,  1.0,   0.0,  "float"),
     ],
     "drums": [
         ("humanize",      0,    10,    2,    "int"),
@@ -113,6 +114,9 @@ KNOB_SPECS: dict[str, list[tuple[str, float, float, float, str]]] = {
         # the user can see the legal values.
         ("bars_per_chord", 1,    32,    4,    "int"),
         ("inversion",     0,    3,     0,    "int"),
+        ("tension_dyn",   0.0,  1.0,   0.0,  "float"),
+        ("drop_intensity", 0.0,  1.0,   0.0,  "float"),
+        ("phrase_lift",   0,    16,    0,    "int"),
     ],
     "candy": [
         ("intensity",     0.0,  1.5,   1.0,  "float"),
