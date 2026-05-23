@@ -49,6 +49,55 @@ def _known_styles() -> list[str]:
 KNOWN_STYLES = _known_styles()
 
 
+def _rewrite_song_tempo(sb_src: str, new_tempo: int) -> str:
+    """Replace the song block's ``tempo N`` line with *new_tempo*.
+
+    The DSL only accepts ``tempo`` at indent-level-1 inside a ``song``
+    block (it's part of the song-attribute section before ``gen`` /
+    ``part`` lines). We do a simple line-walk: enter "song mode" on
+    the ``song "..."`` opener, replace the first ``tempo`` line we see
+    inside, exit on the next un-indented non-blank line. If no tempo
+    line is found, append one to the song block.
+    """
+    lines = sb_src.splitlines(keepends=True)
+    out: list[str] = []
+    in_song = False
+    song_indent: int | None = None
+    replaced = False
+    song_block_end_idx: int | None = None
+    for i, line in enumerate(lines):
+        stripped = line.lstrip()
+        leading = len(line) - len(stripped)
+        if not stripped or stripped.startswith("#"):
+            out.append(line)
+            continue
+        if not in_song and stripped.startswith("song"):
+            in_song = True
+            song_indent = leading
+            out.append(line)
+            continue
+        if in_song and not replaced and stripped.startswith("tempo"):
+            assert song_indent is not None
+            indent_str = " " * (song_indent + 2)
+            out.append(f"{indent_str}tempo {new_tempo}\n")
+            replaced = True
+            continue
+        # End of song-attribute block: first line at the song indent.
+        if in_song and leading <= (song_indent or 0):
+            if not replaced and song_block_end_idx is None:
+                song_block_end_idx = len(out)
+            in_song = False
+        out.append(line)
+    # If we exited the song block without finding a tempo line, inject one.
+    if in_song and not replaced and song_indent is not None:
+        indent_str = " " * (song_indent + 2)
+        out.append(f"{indent_str}tempo {new_tempo}\n")
+    elif not replaced and song_block_end_idx is not None and song_indent is not None:
+        indent_str = " " * (song_indent + 2)
+        out.insert(song_block_end_idx, f"{indent_str}tempo {new_tempo}\n")
+    return "".join(out)
+
+
 class Player:
     """Thread-safe holder for the currently-loaded song + playback thread.
 
@@ -304,6 +353,84 @@ class Player:
             return (
                 f"preserve position {'on' if self.preserve_position else 'off'}"
             )
+
+    # ------------------------------------------------------------------
+    # Save current state to a .sb file
+    # ------------------------------------------------------------------
+
+    def save_state(self, path) -> str:
+        """Write a ``.sb`` file capturing the current source + overrides.
+
+        Phrase-composed sessions re-run ``compose_from_text`` with the
+        current ``seed_offset / style_override / tempo_override`` and
+        write the result. File-loaded sessions copy the source and
+        rewrite its ``tempo`` line if a tempo override is active.
+
+        Mute / solo / per-channel program overrides set via the GUI do
+        not round-trip yet — those live on the synth side, not in the
+        song. The returned status message says so when relevant so
+        users don't think their mute set is being silently lost.
+        """
+        with self._lock:
+            if self.current_phrase is None and self.current_song_path is None:
+                return "error: no song loaded"
+            out = Path(path).expanduser()
+            try:
+                content = self._serialize_current_state()
+            except Exception as e:  # noqa: BLE001 — surface to caller
+                return f"error: {e}"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(content)
+            warnings: list[str] = []
+            if self._user_mutes:
+                warnings.append(
+                    f"mute set {sorted(self._user_mutes)} not saved"
+                )
+            if self._solo:
+                warnings.append(
+                    f"solo set {sorted(self._solo)} not saved"
+                )
+            warn_suffix = f"  (note: {'; '.join(warnings)})" if warnings else ""
+            return f"wrote {out} ({self._params_summary()}){warn_suffix}"
+
+    def _serialize_current_state(self) -> str:
+        """Build the ``.sb`` text reflecting the current source +
+        compose overrides + tempo override."""
+        if self.current_phrase is not None:
+            sb = compose_from_text(
+                self.current_phrase,
+                seed_offset=self.seed_offset,
+                style_override=self.style_override,
+                tempo_override=self.tempo_override,
+            )
+            return self._with_state_header(sb)
+        assert self.current_song_path is not None
+        src = self.current_song_path.read_text()
+        if self.tempo_override is not None:
+            src = _rewrite_song_tempo(src, int(self.tempo_override))
+        return self._with_state_header(src)
+
+    def _with_state_header(self, sb: str) -> str:
+        """Prepend a comment header documenting the override chain so
+        the saved file is self-explanatory when re-opened months later."""
+        from datetime import datetime
+
+        bits: list[str] = []
+        if self.current_phrase is not None:
+            bits.append(f"phrase: {self.current_phrase!r}")
+        if self.style_override:
+            bits.append(f"style_override={self.style_override}")
+        if self.tempo_override is not None:
+            bits.append(f"tempo_override={self.tempo_override}")
+        if self.seed_offset:
+            bits.append(f"seed_offset={self.seed_offset}")
+        if not bits:
+            bits.append("no overrides")
+        header = (
+            f"# Saved by slackbeatz on {datetime.now().isoformat(timespec='seconds')}.\n"
+            f"# State: {', '.join(bits)}\n\n"
+        )
+        return header + sb.lstrip()
 
     def stop(self) -> str:
         """Stop the playback thread, send all-notes-off, return."""

@@ -227,6 +227,28 @@ def run_tweak_gui(
             command=lambda: (player.reset_overrides(), _refresh_nowplaying()),
         ).pack(side="left", padx=2)
 
+        def _on_save():
+            # Native macOS file picker. The dialog blocks the main
+            # thread; player.save_state acquires its own lock so a
+            # concurrent slider movement / phrase load just queues.
+            from tkinter import filedialog
+            initial = (
+                f"{player.title.lower().replace(' ', '_')}.sb"
+                if player.title else "song.sb"
+            )
+            path = filedialog.asksaveasfilename(
+                title="Save current state as…",
+                defaultextension=".sb",
+                initialfile=initial,
+                filetypes=[("Slackbeatz songs", "*.sb"), ("All files", "*.*")],
+            )
+            if path:
+                status = player.save_state(path)
+                print(status)  # also goes to the REPL terminal
+        ttk.Button(
+            button_row, text="💾 Save", width=8, command=_on_save,
+        ).pack(side="left", padx=2)
+
         # Tempo slider — None / auto when the slider is at its left edge.
         ttk.Separator(transport, orient="horizontal").pack(fill="x", padx=10, pady=8)
         tempo_row = ttk.Frame(transport); tempo_row.pack(fill="x", padx=10, pady=2)

@@ -659,6 +659,7 @@ def _repl_input_loop(
                     "  /loop on|off        loop the current song on end\n"
                     "  /preserve on|off    keep current bar across param changes\n"
                     "  /reset              clear style/tempo/seed overrides\n"
+                    "  /save PATH.sb       export current state to a .sb file\n"
                     "  /mute N             mute channel N (1-16)\n"
                     "  /unmute N | all     unmute channel(s)\n"
                     "  /solo N             toggle solo on channel N (additive)\n"
@@ -793,6 +794,10 @@ def _handle_transport_command(line: str, player) -> str | None:
         if arg.lower() in ("off", "false", "0"):
             return player.set_preserve_position(False)
         return "usage: /preserve on|off"
+    if cmd == "/save":
+        if not arg:
+            return "usage: /save <path.sb>"
+        return player.save_state(arg)
     return None
 
 
