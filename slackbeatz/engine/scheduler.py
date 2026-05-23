@@ -339,9 +339,48 @@ class Scheduler:
         self.clock.open()
         try:
             self.clock.start()
+            # Send GM program_change up front so the destination synth
+            # picks the right patch per channel — without this every
+            # pitched channel stays on whatever default it powered up on
+            # (typically GM Acoustic Grand Piano), and a deep_techno bass
+            # at A1 sounds like a faint piano thump rather than a synth
+            # bass. The midifile renderer already emits these; the
+            # realtime scheduler used to skip them.
+            for msg in _initial_program_changes(self.song):
+                self.sink.send(msg)
             for abs_tick, msg in events:
                 self.clock.wait_until(abs_tick)
                 self.sink.send(msg)
         finally:
             self.clock.close()
             self.sink.close()
+
+
+def _initial_program_changes(song: ResolvedSong) -> list[mido.Message]:
+    """One ``program_change`` per pitched channel, picked from the gen's
+    ``(type, style)`` GM default. Drum channels (rhythm/drums gens) are
+    skipped — those auto-route to the GM percussion bank on ch 10.
+
+    If two gens share a channel (e.g. two bass gens both on ch 2), the
+    first one's program wins — declaring a per-gen ``program=N`` knob
+    lets the user disambiguate.
+    """
+    # Local import: avoid a top-of-module circular import with midifile.py.
+    from slackbeatz.engine.midifile import _program_for_gen
+
+    seen: set[int] = set()
+    out: list[mido.Message] = []
+    for gen in song.gens.values():
+        if gen.instrument is None:
+            continue
+        channel = gen.instrument.channel - 1
+        if channel in seen:
+            continue
+        prog = _program_for_gen(gen)
+        if prog is None:
+            continue
+        out.append(
+            mido.Message("program_change", channel=channel, program=prog)
+        )
+        seen.add(channel)
+    return out
