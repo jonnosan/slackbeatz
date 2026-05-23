@@ -82,7 +82,7 @@ class MelodyPsytrance(Generator):
             if not call_response_active(self.handle, pair, bar):
                 continue
             evo_mult = evolution_multiplier(bar, ctx.bars, macro["evolution"], direction)
-            bar_start = bar * 4 * ctx.ppq
+            bar_start = bar * ctx.ticks_per_bar
             rotation = bar // 4
             motif = [
                 _MOTIF_DEGREES[(i + rotation) % len(_MOTIF_DEGREES)]

@@ -100,7 +100,7 @@ class RhythmEuclid(Generator):
         # main 4/16 (or whatever base) pattern — classic 3-against-4
         # cross-rhythm. Skipped silently when polyrhythm=0.
         if polyrhythm > 0:
-            poly_pattern = euclid(polyrhythm, 16, 0)
+            poly_pattern = euclid(polyrhythm, ctx.steps_per_bar, 0)
             poly_vel_scale = 0.65  # softer than primary
         else:
             poly_pattern = None
@@ -112,9 +112,9 @@ class RhythmEuclid(Generator):
             if should_mute_bar(ctx.rng, macro["mute_prob"]):
                 continue
             bar_pulses = drift_pulses(pulses, macro["density_drift"], ctx.rng)
-            pattern = euclid(bar_pulses, 16, offset)
+            pattern = euclid(bar_pulses, ctx.steps_per_bar, offset)
             evo_mult = evolution_multiplier(bar, ctx.bars, macro["evolution"], direction) * ctx.tension
-            bar_start = bar * 4 * ctx.ppq
+            bar_start = bar * ctx.ticks_per_bar
             for step, hit in enumerate(pattern):
                 if not hit:
                     continue

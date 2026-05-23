@@ -19,9 +19,16 @@ PPQ = 480
 """Pulses per quarter note — the engine's internal tick resolution."""
 
 
-def bars_to_ticks(bars: int, ppq: int = PPQ) -> int:
-    """Ticks per bar (4/4 only in v1)."""
-    return bars * 4 * ppq
+def bars_to_ticks(bars: int, ppq: int = PPQ, meter=None) -> int:
+    """Ticks for *bars* bars.
+
+    Default meter is 4/4 (matching the historical behaviour); pass a
+    :class:`slackbeatz.theory.meter.Meter` to compute lengths for
+    non-4/4 time signatures.
+    """
+    if meter is None:
+        return bars * 4 * ppq
+    return bars * meter.ticks_per_bar(ppq)
 
 
 def tick_to_seconds(tick: int, bpm: float, ppq: int = PPQ) -> float:

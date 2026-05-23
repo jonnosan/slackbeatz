@@ -55,7 +55,7 @@ class MelodyDeepTechno(Generator):
         scale = scale_for(self, ctx, fallback="dorian")
 
         tonic, _ = parse_key(ctx.key)
-        ticks_per_bar = 4 * ctx.ppq
+        ticks_per_bar = ctx.ticks_per_bar
 
         last_deg: int | None = None
         for bar in range(ctx.bars):

@@ -81,7 +81,7 @@ class ChordsDubTechno(Generator):
                 continue
             chord_root = prog.degree_at_bar(bar)
             evo_mult = evolution_multiplier(bar, ctx.bars, macro["evolution"], direction)
-            bar_start = bar * 4 * ctx.ppq
+            bar_start = bar * ctx.ticks_per_bar
             for step in _OFFBEAT_STEPS:
                 tick = bar_start + step_to_ticks(step, ctx.ppq)
                 jitter = ctx.rng.randint(-4, 4)

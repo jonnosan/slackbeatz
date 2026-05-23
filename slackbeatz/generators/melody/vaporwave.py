@@ -78,7 +78,7 @@ class MelodyVaporwave(Generator):
         tonic, _ = parse_key(ctx.key)
         prog = ChordProgression("i-VII-VI-V", bars_per_chord=4)
 
-        ticks_per_bar = 4 * ctx.ppq
+        ticks_per_bar = ctx.ticks_per_bar
         ppq = ctx.ppq
 
         # CC 1 LFO across the whole part — one full cycle per chord (4 bars)

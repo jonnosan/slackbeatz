@@ -54,7 +54,7 @@ class BassDubTechno(Generator):
 
         tonic, _ = parse_key(ctx.key)
         prog = ChordProgression("i-iv", bars_per_chord=8)
-        ticks_per_bar = 4 * ctx.ppq
+        ticks_per_bar = ctx.ticks_per_bar
 
         bar = 0
         while bar < ctx.bars:

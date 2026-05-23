@@ -47,6 +47,11 @@ _GM_PROGRAM_DEFAULTS: dict[tuple[str, str], int] = {
     # Dub techno: 92 Pad 5 (Bowed) — a warm sustained drone that sits
     # under the chord stabs without competing for attention.
     ("bass", "dub_techno"):   92,
+    # Drum'n'bass: 39 Synth Bass 2 — the warm sub-bass voice that
+    # sits low under the breakbeat.
+    ("bass", "drum_and_bass"): 39,
+    # Garage: 38 Synth Bass 1 — punchy sub-bass.
+    ("bass", "garage"):       38,
 
     # Melody: Saw Lead (81) for euclid / Square Lead (80) for psytrance —
     # bright, cuts through. Deep techno wants Pad 1 new age (88).
@@ -58,6 +63,8 @@ _GM_PROGRAM_DEFAULTS: dict[tuple[str, str], int] = {
     ("melody", "vaporwave"):    66,
     ("melody", "acid"):         87,
     ("melody", "dub_techno"):   88,   # Pad 1 — distant lead
+    ("melody", "drum_and_bass"): 88,  # Pad 1 — sparse atmospheric lead
+    ("melody", "garage"):       53,   # Voice Aahs — vocal-stab feel
 
     # Chords / pads: Warm Pad (89) for euclid, Pad 4 choir (91) for
     # deep_techno, Pad 6 Metallic (94) for psytrance, Electric Piano 1
@@ -70,6 +77,10 @@ _GM_PROGRAM_DEFAULTS: dict[tuple[str, str], int] = {
     ("chords", "acid"):         18,
     # Dub techno: 90 Pad 3 (Polysynth) — the iconic chord-stab voice.
     ("chords", "dub_techno"):   90,
+    # Drum'n'bass: 89 Warm Pad — atmospheric lush voicings.
+    ("chords", "drum_and_bass"): 89,
+    # Garage: 5 Electric Piano 2 (Wurli) — jazzy R&B-flavoured stabs.
+    ("chords", "garage"):        5,
 
     # Candy: FX 5 brightness (100) for euclid sweeps, FX 7 echoes (102)
     # for deep_techno LFO modulation, FX 8 sci-fi (103) for psytrance
@@ -81,6 +92,8 @@ _GM_PROGRAM_DEFAULTS: dict[tuple[str, str], int] = {
     ("candy", "vaporwave"):    14,
     ("candy", "acid"):        100,
     ("candy", "dub_techno"):  99,    # FX 4 atmosphere — slow textural drone
+    ("candy", "drum_and_bass"): 102,  # FX 7 Echoes — atmospheric texture
+    ("candy", "garage"):       100,   # FX 5 Brightness — short stabs
 
     # rhythm / drums live on the GM percussion channel (MIDI ch 10);
     # FluidSynth auto-routes to the drum-kit bank there, no program

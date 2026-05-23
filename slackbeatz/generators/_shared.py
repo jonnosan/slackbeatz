@@ -398,6 +398,16 @@ PROGRESSIONS: dict[str, list[int]] = {
     "i-v":        [0, 4],
     # Vaporwave: classic descending minor — bass walks 1, b7, b6, 5
     "i-VII-VI-V": [0, 6, 5, 4],
+    # Jazz / standards: the ii-V-I cadence (degrees in a major key)
+    "ii-V-I":     [1, 4, 0],
+    # The pop progression (I, V, vi, IV) — most-used in modern music
+    "I-V-vi-IV":  [0, 4, 5, 3],
+    # 12-bar blues — 12 chords spanning 12 bars (one per bar). Used
+    # with bars_per_chord=1 for the canonical feel.
+    "12-bar":     [0, 0, 0, 0, 3, 3, 0, 0, 4, 3, 0, 0],
+    # Andalusian cadence (different voicing of i-VII-VI-V; widely used
+    # in flamenco / metal). Kept distinct so users can pick by name.
+    "andalusian": [0, 6, 5, 4],
 }
 
 

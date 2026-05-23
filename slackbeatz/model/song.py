@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 
 from slackbeatz.dsl.ast import KnobValue
 from slackbeatz.setup.model import Instrument, Kit, Setup
+from slackbeatz.theory.meter import Meter, COMMON_TIME
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,7 @@ class ResolvedGen:
     knobs: dict[str, KnobValue]
     instrument: Instrument | None = None  # for rhythm + pitched types
     kit: Kit | None = None  # for drums type
+    meter: Meter | None = None  # polymeter override; None = inherit part
 
     @property
     def seed_override(self) -> int | None:
@@ -48,6 +50,7 @@ class ResolvedPart:
     transpose_prob: float = 0.0  # per-arrangement-instance roll
     bars_max: int | None = None   # issue #21: upper bound for bars=N..M
     tension: float | None = None  # issue #14: explicit override; else derive
+    meter: Meter = COMMON_TIME    # 4/4 unless set on the part or song
     gen_handles: list[str] = field(default_factory=list)
 
 
@@ -64,3 +67,4 @@ class ResolvedSong:
     parts: dict[str, ResolvedPart]
     arrangement: list[str]  # flat list of part names (groups + *N expanded)
     scale_override: str | None = None  # song-level `scale <name>`, optional
+    meter: Meter = COMMON_TIME  # song-level default time signature

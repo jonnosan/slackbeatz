@@ -34,7 +34,7 @@ class CandyDubTechno(Generator):
         # 32-bar LFO — even slower than deep_techno's 8-bar cycle.
         cycle_bars = self.knob_int("cycle", 32)
 
-        ticks_per_bar = 4 * ctx.ppq
+        ticks_per_bar = ctx.ticks_per_bar
         total_ticks = ctx.bars * ticks_per_bar
         events_per_bar = 16
         step_ticks = ticks_per_bar // events_per_bar

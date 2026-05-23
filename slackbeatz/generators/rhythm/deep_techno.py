@@ -75,7 +75,7 @@ class RhythmDeepTechno(Generator):
         direction = pick_evolution_direction(ctx.rng, macro["evolution"])
         polyrhythm = polyrhythm_for(self)
         # Issue #12: optional secondary euclid layer (cross-rhythm). 0 = off.
-        poly_pattern = euclid(polyrhythm, 16, 0) if polyrhythm > 0 else None
+        poly_pattern = euclid(polyrhythm, ctx.steps_per_bar, 0) if polyrhythm > 0 else None
         step_ticks = step_duration(ctx.ppq)
         dur = max(1, step_ticks // 2)
 
@@ -86,9 +86,9 @@ class RhythmDeepTechno(Generator):
             if name == "clap" and ctx.rng.random() > 0.3:
                 continue
             bar_pulses = drift_pulses(pulses, macro["density_drift"], ctx.rng)
-            pattern = euclid(bar_pulses, 16, offset)
+            pattern = euclid(bar_pulses, ctx.steps_per_bar, offset)
             evo_mult = evolution_multiplier(bar, ctx.bars, macro["evolution"], direction) * ctx.tension
-            bar_start = bar * 4 * ctx.ppq
+            bar_start = bar * ctx.ticks_per_bar
             for step, hit in enumerate(pattern):
                 if not hit:
                     continue

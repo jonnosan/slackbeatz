@@ -34,6 +34,9 @@ STYLE_BASE_VEL: dict[tuple[str, str], int] = {
     ("bass", "vaporwave"):    75,
     ("bass", "acid"):        105,
     ("bass", "dub_techno"):   70,   # sustained drone, soft
+    ("bass", "drum_and_bass"): 100,  # punchy sub-bass
+    ("bass", "garage"):       105,   # punchy sub
+
     # melody
     ("melody", "euclid"):       90,
     ("melody", "deep_techno"):  75,
@@ -41,6 +44,8 @@ STYLE_BASE_VEL: dict[tuple[str, str], int] = {
     ("melody", "vaporwave"):    75,
     ("melody", "acid"):         85,
     ("melody", "dub_techno"):   65,   # near-silent
+    ("melody", "drum_and_bass"): 78,
+    ("melody", "garage"):        92,   # vocal-stab punch
     # chords
     ("chords", "euclid"):       85,
     ("chords", "deep_techno"):  70,
@@ -48,6 +53,8 @@ STYLE_BASE_VEL: dict[tuple[str, str], int] = {
     ("chords", "vaporwave"):    70,
     ("chords", "acid"):         78,
     ("chords", "dub_techno"):   95,   # the chord stab is the centerpiece — punch
+    ("chords", "drum_and_bass"): 78,  # lush pads
+    ("chords", "garage"):        90,  # punchy stabs
 }
 
 # Octave offset (added to the style's natural register).
@@ -58,18 +65,24 @@ STYLE_BASE_OCTAVE: dict[tuple[str, str], int] = {
     ("bass", "vaporwave"):   -1,
     ("bass", "acid"):         0,   # TB-303 sits high for the lead-bass feel
     ("bass", "dub_techno"): -1,
+    ("bass", "drum_and_bass"): -2,    # ultra-low sub
+    ("bass", "garage"):       -1,
     ("melody", "euclid"):       0,
     ("melody", "deep_techno"):  0,
     ("melody", "psytrance"):    1,
     ("melody", "vaporwave"):    1,
     ("melody", "acid"):         0,
     ("melody", "dub_techno"):   1,
+    ("melody", "drum_and_bass"): 1,
+    ("melody", "garage"):        0,
     ("chords", "euclid"):       0,
     ("chords", "deep_techno"):  0,
     ("chords", "psytrance"):    0,
     ("chords", "vaporwave"):    0,
     ("chords", "acid"):         0,
     ("chords", "dub_techno"):   0,
+    ("chords", "drum_and_bass"): 0,
+    ("chords", "garage"):       0,
 }
 
 # Note-length ratio (1.0 = full step length; lower = staccato).
@@ -80,18 +93,24 @@ STYLE_GATE: dict[tuple[str, str], float] = {
     ("bass", "vaporwave"):   0.90,
     ("bass", "acid"):        0.55,   # mid — the 303 envelope is per-note
     ("bass", "dub_techno"):  0.98,   # sustained drone, long
+    ("bass", "drum_and_bass"): 0.95,
+    ("bass", "garage"):       0.55,
     ("melody", "euclid"):       0.60,
     ("melody", "deep_techno"):  0.95,
     ("melody", "psytrance"):    0.50,
     ("melody", "vaporwave"):    0.85,
     ("melody", "acid"):         0.40,
     ("melody", "dub_techno"):   0.90,
+    ("melody", "drum_and_bass"): 0.75,
+    ("melody", "garage"):       0.25,   # short stabs
     ("chords", "euclid"):       0.95,
     ("chords", "deep_techno"):  0.98,
     ("chords", "psytrance"):    0.90,
     ("chords", "vaporwave"):    0.96,
     ("chords", "acid"):         0.30,   # short organ stabs in acid house
     ("chords", "dub_techno"):   0.18,   # signature short stab — punch then fade
+    ("chords", "drum_and_bass"): 0.92,  # sustained pad
+    ("chords", "garage"):       0.30,   # short stab
 }
 
 # Sidechain ducking depth on bass gens. 1.0 = off.
@@ -102,6 +121,8 @@ BASS_DUCK: dict[str, float] = {
     "vaporwave":   1.00,
     "acid":        0.50,
     "dub_techno":  0.75,   # gentle duck — bass is more drone than punch
+    "drum_and_bass": 0.80,
+    "garage":        0.55,  # noticeable pump
 }
 
 # Per-style velocity jitter range (±N) for rhythm/drums humanisation.
@@ -112,6 +133,8 @@ STYLE_VEL_JITTER: dict[str, int] = {
     "vaporwave":   4,
     "acid":        4,   # acid is tight
     "dub_techno":  4,   # dub techno wants smooth dynamics
+    "drum_and_bass": 7,
+    "garage":      6,
 }
 
 
@@ -127,18 +150,24 @@ STYLE_SCALE: dict[tuple[str, str], str] = {
     ("bass",   "vaporwave"):    "minor",
     ("bass",   "acid"):         "minor",
     ("bass",   "dub_techno"):   "dorian",
+    ("bass",   "drum_and_bass"): "dorian",
+    ("bass",   "garage"):       "minor",
     ("melody", "euclid"):       "minor",
     ("melody", "deep_techno"):  "dorian",
     ("melody", "psytrance"):    "phrygian",
     ("melody", "vaporwave"):    "dorian",
     ("melody", "acid"):         "minor",
     ("melody", "dub_techno"):   "dorian",
+    ("melody", "drum_and_bass"): "dorian",
+    ("melody", "garage"):       "minor_pentatonic",
     ("chords", "euclid"):       "minor",
     ("chords", "deep_techno"):  "minor",  # chord roots are scale degrees, not modes
     ("chords", "psytrance"):    "phrygian",
     ("chords", "vaporwave"):    "minor",
     ("chords", "acid"):         "minor",
     ("chords", "dub_techno"):   "dorian",
+    ("chords", "drum_and_bass"): "dorian",
+    ("chords", "garage"):       "minor",
 }
 
 

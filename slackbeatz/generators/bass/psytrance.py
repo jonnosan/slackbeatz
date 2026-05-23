@@ -70,7 +70,7 @@ class BassPsytrance(Generator):
         b2 = transposed_pitch(root_raw + 1, ctx.transpose_semitones)
 
         step_ticks = step_duration(ctx.ppq)
-        ticks_per_bar = 4 * ctx.ppq
+        ticks_per_bar = ctx.ticks_per_bar
         dur = max(1, int(step_ticks * gate))
 
         # Gallop: pulses on every 16th *except* the first 16th of each beat.

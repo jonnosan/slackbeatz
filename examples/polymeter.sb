@@ -1,0 +1,32 @@
+# polymeter.sb — demo of gen-level meter override.
+#
+# The part is in 4/4, so drums run on a 16-step bar — kick on 1, snare
+# on 2 & 4, hats on 8ths. The BASS however has meter=3/4, so it loops
+# its 12-step pattern against the drums. They line up perfectly every
+# LCM(16, 12) = 48 steps = 3 bars of 4/4 (= 4 bars of 3/4), giving a
+# slowly-evolving phase relationship classic to Steve Reich and live
+# polymeter performances.
+#
+# Best heard with the kick as anchor; the bass drifts in and out of
+# alignment with each kick.
+
+song "Polymeter"
+  setup "gm"
+  tempo 120
+  key   Am
+
+gen kick    rhythm euclid humanize=2
+gen snare   rhythm euclid
+gen hats    rhythm euclid swing=0.05
+# Bass at 3/4 against the part's 4/4 — polymeter.
+gen sub     bass   euclid inst=bass meter=3/4
+gen pad     chords euclid inst=pad
+
+part main 12
+  kick
+  snare
+  hats
+  sub
+  pad
+
+play main main

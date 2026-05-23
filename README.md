@@ -24,6 +24,8 @@ Pre-rendered audio for each bundled example lives under [`examples/rendered/`](e
 | `mall` | `vaporwave` | [.mid](examples/rendered/mall.mid) | [.mp3](examples/rendered/mall.mp3) |
 | `phuture` | `acid` (Phuture / Acid Trax inspired) | [.mid](examples/rendered/phuture.mid) | [.mp3](examples/rendered/phuture.mp3) |
 | `basic` | `dub_techno` (Basic Channel inspired) | [.mid](examples/rendered/basic.mid) | [.mp3](examples/rendered/basic.mp3) |
+| `jungle` | `drum_and_bass` (170 bpm, Amen-break) | [.mid](examples/rendered/jungle.mid) | [.mp3](examples/rendered/jungle.mp3) |
+| `polymeter` | polymeter demo — drums in 4/4 over bass in 3/4 | [.mid](examples/rendered/polymeter.mid) | [.mp3](examples/rendered/polymeter.mp3) |
 
 The MP3s are rendered through **GeneralUser GS** (free GM soundfont, ~30 MB, auto-downloaded on first use) with per-channel GM program selection — bass = Synth Bass, lead = Saw Lead / Square Lead, pad = Warm Pad, candy = FX patches — picked per `(type, style)` so each style sits in a recognisably different timbral space. It's still a GM rendering, not production audio: plug a real synth in for that.
 
@@ -171,6 +173,28 @@ Part-level knobs (on the `part <name> <bars>` line):
 
 `role=transition` (or `role=fill`) marks a short transitional part — drums gens force-fill every bar; candy gens trigger their sweep behaviour.
 
+### Time signatures + polymeter
+
+Set the time signature at the song level (`meter 3/4`) or per-part (`part odd 8 meter=5/4`). The engine operates on a 16th-note grid so the step count per bar scales with the meter: 4/4 = 16 steps, 3/4 = 12, 5/4 = 20, 7/8 = 14, 6/8 = 12. Supported denominators: 1, 2, 4, 8, 16.
+
+**Polymeter** — set `meter=N/M` on a single `gen` to make it loop at a different meter than the part. The gen drifts in and out of phase against other gens, realigning at the LCM:
+
+```text
+song "Polymeter"
+  tempo 120
+  key Am
+
+gen kick rhythm euclid             # uses part meter
+gen sub  bass   euclid meter=3/4   # this one loops at 3/4
+
+part main 12                       # part is 4/4 (the default)
+  kick
+  sub
+play main
+```
+
+Drums see 16-step bars; the bass loops a 12-step bar against them. They realign every LCM(16, 12) = 48 steps = 3 bars of 4/4 = 4 bars of 3/4.
+
 Song-level (under the `song "..."` block):
 
 | Attribute | What it does |
@@ -220,6 +244,8 @@ That integer is then mixed with the part name and generator handle (deterministi
 | `vaporwave` | 70–80 bpm, half-time kick, descending i-VII-VI-V on Rhodes electric piano, Tenor Sax leads, periodic tubular-bell glints |
 | `acid` | Phuture / Acid Trax — TB-303-style 16th-note bass with octave jumps, continuous CC 74 filter sweep + CC 71 resonance climb, pitch-bend wobble, sparse 909 drums, occasional organ stab |
 | `dub_techno` | Basic Channel / Maurizio — soft 4/4 kick + closed hat, off-beat chord stab on every 8th (the signature "chk-chk-chk-chk"), sustained warm-pad bass drone, slow CC 74 + CC 91 modulation. No fills |
+| `drum_and_bass` | 170 bpm Amen-break flavoured kit, snare ghost notes, sub-bass drone, lush 9th-chord pads |
+| `garage` | UK 2-step (130 bpm) — kick on 1, snare/clap on beat 3 (not 2 & 4), shuffled hats, syncopated sub-bass, Wurli stab chords |
 
 New styles are added by writing one small class per type (six in total) and registering them via `@register_generator("type", "newstyle")`.
 

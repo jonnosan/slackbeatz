@@ -93,12 +93,12 @@ class MelodyEuclid(Generator):
                 degree, pulses, offset = _RIFF_SLOTS[slot_idx]
                 # Light random perturbation per bar so the riff breathes.
                 pulses_eff = max(0, min(16, pulses + ctx.rng.choice([-1, 0, 0, 1])))
-                pat = euclid(pulses_eff, 16, offset)
+                pat = euclid(pulses_eff, ctx.steps_per_bar, offset)
                 for s, hit in enumerate(pat):
                     if hit:
                         bar_pattern[s] = (degree + chord_root_deg) % 7
 
-            bar_start = bar * 4 * ctx.ppq
+            bar_start = bar * ctx.ticks_per_bar
             for step, deg in sorted(bar_pattern.items()):
                 pitch = transposed_pitch(
                     scale_note(deg, tonic, scale, 4 + octave_off),

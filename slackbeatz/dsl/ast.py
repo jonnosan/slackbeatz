@@ -101,6 +101,7 @@ class SongAST:
     key: str | None = None
     seed: int | None = None
     scale: str | None = None  # song-wide scale override (e.g. "dorian")
+    meter: str | None = None  # time signature, e.g. "3/4"
     gens: list[GenDecl] = field(default_factory=list)
     parts: list[PartDecl] = field(default_factory=list)
     play: PlayLine | None = None

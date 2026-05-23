@@ -15,6 +15,8 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass, field
 
+from slackbeatz.theory.meter import Meter, COMMON_TIME
+
 
 @dataclass
 class PartContext:
@@ -48,3 +50,23 @@ class PartContext:
     # apply that ramp themselves via `evolution`, drop=1.0,
     # break/outro=0.5).
     tension: float = 1.0
+    # Time signature for this part (Phase 1 of composition iteration).
+    # Default 4/4. Gens use the derived helpers below in place of the
+    # old hardcoded `16` / `4 * ctx.ppq`.
+    meter: Meter = COMMON_TIME
+
+    @property
+    def steps_per_bar(self) -> int:
+        """16th-note steps in one bar — meter-aware replacement for the
+        previously-hardcoded ``16``."""
+        return self.meter.steps_per_bar
+
+    @property
+    def beats_per_bar(self) -> int:
+        return self.meter.beats_per_bar
+
+    @property
+    def ticks_per_bar(self) -> int:
+        """Ticks in one bar at this part's PPQ + meter — meter-aware
+        replacement for ``4 * ctx.ppq``."""
+        return self.meter.ticks_per_bar(self.ppq)

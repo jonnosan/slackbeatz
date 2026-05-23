@@ -61,8 +61,8 @@ class DrumsDeepTechno(Generator):
             kick_pat = euclid(drift_pulses(_KICK[0], drift, ctx.rng), 16, _KICK[1])
             hat_pat = euclid(drift_pulses(_HAT[0], drift, ctx.rng), 16, _HAT[1])
             evo_mult = evolution_multiplier(bar, ctx.bars, macro["evolution"], direction) * ctx.tension
-            bar_start = bar * 4 * ctx.ppq
-            for step in range(16):
+            bar_start = bar * ctx.ticks_per_bar
+            for step in range(ctx.steps_per_bar):
                 tick = bar_start + step_to_ticks(step, ctx.ppq)
                 if kick_pat[step]:
                     yield from _emit(kit.drum_notes.get("kick"), kit.channel,
@@ -82,7 +82,7 @@ class DrumsDeepTechno(Generator):
         if ctx.next_role == "drop":
             ohat_note = kit.drum_notes.get("ohat")
             if ohat_note is not None:
-                total = ctx.bars * 4 * ctx.ppq
+                total = ctx.bars * ctx.ticks_per_bar
                 tick = total - step_ticks
                 yield Note(
                     tick=tick, duration=step_ticks,

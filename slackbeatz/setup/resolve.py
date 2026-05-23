@@ -25,6 +25,7 @@ from slackbeatz.dsl.ast import GenDecl, PartDecl, SongAST
 from slackbeatz.dsl.parser import expand_arrangement
 from slackbeatz.drums.presets import preset_map
 from slackbeatz.model.song import ResolvedGen, ResolvedPart, ResolvedSong
+from slackbeatz.theory.meter import COMMON_TIME, Meter
 
 from .model import Instrument, Kit, Setup
 
@@ -62,6 +63,17 @@ def _resolve_gen(gen: GenDecl, setup: Setup) -> ResolvedGen:
     kit_override = knobs.pop("kit", None)
     raw_ch = knobs.pop("ch", None)
     raw_note = knobs.pop("note", None)
+    # Polymeter: gen-level meter override pops out of the knob dict so
+    # it doesn't end up in the algorithm's raw `knobs` view.
+    meter_raw = knobs.pop("meter", None)
+    gen_meter: Meter | None = None
+    if meter_raw is not None:
+        if not isinstance(meter_raw, str):
+            raise ResolveError(gen.line, f"gen {gen.handle!r}: meter must be N/M")
+        try:
+            gen_meter = Meter.parse(meter_raw)
+        except ValueError as e:
+            raise ResolveError(gen.line, f"gen {gen.handle!r}: {e}") from None
 
     # Drums type: bind to a Kit.
     if gen.type_ == "drums":
@@ -93,6 +105,7 @@ def _resolve_gen(gen: GenDecl, setup: Setup) -> ResolvedGen:
             knobs=knobs,
             instrument=None,
             kit=kit,
+            meter=gen_meter,
         )
 
     # Non-drums: bind to an Instrument.
@@ -153,6 +166,7 @@ def _resolve_gen(gen: GenDecl, setup: Setup) -> ResolvedGen:
         knobs=knobs,
         instrument=inst,
         kit=None,
+        meter=gen_meter,
     )
 
 
@@ -160,6 +174,7 @@ def _resolve_part(
     part: PartDecl,
     song_tempo: int,
     song_key: str,
+    song_meter: Meter,
     known_gen_handles: set[str],
 ) -> ResolvedPart:
     knobs = dict(part.knobs)
@@ -171,6 +186,7 @@ def _resolve_part(
     transpose_prob_raw = knobs.pop("transpose_prob", None)
     bars_max_raw = knobs.pop("bars_max", None)  # synthetic from `bars=N..M`
     tension_raw = knobs.pop("tension", None)  # issue #14
+    meter_raw = knobs.pop("meter", None)  # time signature override
 
     if tempo_raw is None:
         tempo = song_tempo
@@ -235,6 +251,17 @@ def _resolve_part(
                 part.line, f"part {part.name!r}: tension must be 0..1, got {tension}",
             )
 
+    # Meter: explicit `meter=N/M` on the part wins; else inherit from song.
+    if meter_raw is None:
+        meter = song_meter
+    else:
+        if not isinstance(meter_raw, str):
+            raise ResolveError(part.line, f"part {part.name!r}: meter must be N/M")
+        try:
+            meter = Meter.parse(meter_raw)
+        except ValueError as e:
+            raise ResolveError(part.line, f"part {part.name!r}: {e}") from None
+
     return ResolvedPart(
         name=part.name,
         bars=part.bars,
@@ -246,6 +273,7 @@ def _resolve_part(
         transpose_prob=transpose_prob,
         bars_max=bars_max,
         tension=tension,
+        meter=meter,
         gen_handles=list(part.gens),
     )
 
@@ -268,6 +296,14 @@ def resolve_song(
         raise ResolveError(song.line, f"song tempo {tempo} out of 1..999")
     key = song.key if song.key is not None else _DEFAULT_KEY
     base_seed = song.seed if song.seed is not None else cli_seed
+    # Song-level meter — parsed from "N/M" string, default 4/4.
+    if song.meter is None:
+        song_meter = COMMON_TIME
+    else:
+        try:
+            song_meter = Meter.parse(song.meter)
+        except ValueError as e:
+            raise ResolveError(song.line, str(e)) from None
 
     # Gens — duplicates rejected.
     gens: dict[str, ResolvedGen] = {}
@@ -281,7 +317,7 @@ def resolve_song(
     for p in song.parts:
         if p.name in parts:
             raise ResolveError(p.line, f"duplicate part name {p.name!r}")
-        parts[p.name] = _resolve_part(p, tempo, key, set(gens))
+        parts[p.name] = _resolve_part(p, tempo, key, song_meter, set(gens))
 
     # Arrangement — must exist and reference only declared parts.
     if song.play is None:
@@ -305,4 +341,5 @@ def resolve_song(
         parts=parts,
         arrangement=arrangement,
         scale_override=song.scale,
+        meter=song_meter,
     )

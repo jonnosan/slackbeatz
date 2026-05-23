@@ -47,7 +47,7 @@ class CandyEuclid(Generator):
         density = self.knob_float("density", 0.5)
         controller = self.knob_int("cc", 74)
 
-        ticks_per_bar = 4 * ctx.ppq
+        ticks_per_bar = ctx.ticks_per_bar
         total_ticks = ctx.bars * ticks_per_bar
         # Ramp over the last min(4, bars) bars.
         ramp_bars = min(4, ctx.bars)

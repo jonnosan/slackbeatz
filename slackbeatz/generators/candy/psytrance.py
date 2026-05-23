@@ -41,7 +41,7 @@ class CandyPsytrance(Generator):
         cc_num = self.knob_int("cc", 74)
         resonance_knob = self.knob_int("resonance", 110)
 
-        ticks_per_bar = 4 * ctx.ppq
+        ticks_per_bar = ctx.ticks_per_bar
         total_ticks = ctx.bars * ticks_per_bar
         # Ramp over the *whole* part (or up to 8 bars).
         ramp_bars = min(8, ctx.bars)

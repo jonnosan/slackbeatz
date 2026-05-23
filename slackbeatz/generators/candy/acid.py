@@ -34,7 +34,7 @@ class CandyAcid(Generator):
 
         intensity = self.knob_float("intensity", 1.0)
         cc_num = self.knob_int("cc", 74)
-        ticks_per_bar = 4 * ctx.ppq
+        ticks_per_bar = ctx.ticks_per_bar
         total_ticks = ctx.bars * ticks_per_bar
         # Short ramp — last 2 bars only.
         ramp_bars = min(2, ctx.bars)

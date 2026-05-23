@@ -62,10 +62,10 @@ class BassEuclid(Generator):
         )
 
         pulses = 8
-        pattern = euclid(pulses, 16, 0)
+        pattern = euclid(pulses, ctx.steps_per_bar, 0)
 
         step_ticks = step_duration(ctx.ppq)
-        ticks_per_bar = 4 * ctx.ppq
+        ticks_per_bar = ctx.ticks_per_bar
         base_dur = max(1, int(step_ticks * 2 * gate))  # 8th note long * gate
 
         for bar in range(ctx.bars):

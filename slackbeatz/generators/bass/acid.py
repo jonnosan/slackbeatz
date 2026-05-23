@@ -90,7 +90,7 @@ class BassAcid(Generator):
         oct_pitch = transposed_pitch(root_raw + 12, ctx.transpose_semitones)
 
         step_ticks = step_duration(ctx.ppq)
-        ticks_per_bar = 4 * ctx.ppq
+        ticks_per_bar = ctx.ticks_per_bar
         total_ticks = ctx.bars * ticks_per_bar
         dur = max(1, int(step_ticks * gate))
 
@@ -129,7 +129,7 @@ class BassAcid(Generator):
                 continue
             evo_mult = evolution_multiplier(bar, ctx.bars, macro["evolution"], direction)
             bar_start = bar * ticks_per_bar
-            for step in range(16):
+            for step in range(ctx.steps_per_bar):
                 if ctx.rng.random() >= _PLAY_PROB:
                     continue
                 tick = bar_start + step_to_ticks(step, ctx.ppq)

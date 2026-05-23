@@ -59,7 +59,7 @@ class BassVaporwave(Generator):
         tonic, _ = parse_key(ctx.key)
         prog = ChordProgression("i-VII-VI-V", bars_per_chord=4)
 
-        ticks_per_bar = 4 * ctx.ppq
+        ticks_per_bar = ctx.ticks_per_bar
         half_chord_ticks = 2 * ticks_per_bar  # half of a 4-bar chord
         dur = max(1, int(half_chord_ticks * gate))
 

@@ -67,7 +67,7 @@ class BassDeepTechno(Generator):
         root = transposed_pitch(root_raw, ctx.transpose_semitones)
         fifth = transposed_pitch(root_raw + 7, ctx.transpose_semitones)
 
-        ticks_per_bar = 4 * ctx.ppq
+        ticks_per_bar = ctx.ticks_per_bar
         # Two-bar cell: root for 2 bars, fifth for 2 bars.
         cell_ticks = 2 * ticks_per_bar
         dur = max(1, int(cell_ticks * gate))

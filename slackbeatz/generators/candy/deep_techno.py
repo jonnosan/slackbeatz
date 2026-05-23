@@ -34,7 +34,7 @@ class CandyDeepTechno(Generator):
         # Slow LFO: one full cycle every 8 bars by default.
         cycle_bars = self.knob_int("cycle", 8)
 
-        ticks_per_bar = 4 * ctx.ppq
+        ticks_per_bar = ctx.ticks_per_bar
         total_ticks = ctx.bars * ticks_per_bar
         # 32 CC events per bar (every 16th note) — smooth enough for a slow LFO.
         events_per_bar = 32

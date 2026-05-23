@@ -76,14 +76,15 @@ def build_tempo_map(song: ResolvedSong) -> TempoMap:
     """Walk the arrangement and build a contiguous tempo map.
 
     Honours per-arrangement-instance bar counts when the part was
-    declared with a ``bars=N..M`` range (issue #21).
+    declared with a ``bars=N..M`` range (issue #21) and per-part time
+    signatures (Phase 1 — non-4/4 meters use ``meter.ticks_per_bar``).
     """
     segments: list[TempoSegment] = []
     cursor = 0
     for idx, part_name in enumerate(song.arrangement):
         part = song.parts[part_name]
         bars = _bars_for(song, idx, part_name)
-        length = bars_to_ticks(bars)
+        length = bars_to_ticks(bars, meter=part.meter)
         if segments and segments[-1].bpm == part.tempo:
             # Coalesce adjacent same-tempo segments.
             last = segments.pop()
@@ -190,8 +191,16 @@ def _build_context(
     seed = resolved_seed_for(song, part_name, gen_handle)
     scale_override = part.scale_override or song.scale_override
     transpose_semitones = _transposition_for(song, arrangement_index, part_name)
-    bars = _bars_for(song, arrangement_index, part_name)
+    part_bars = _bars_for(song, arrangement_index, part_name)
     tension = _tension_for(part)
+    # Polymeter: if the gen has its own meter, recompute how many of
+    # *its* bars fit into the part's total duration. Other gens in the
+    # same part still see the part's meter, so the patterns drift in
+    # and out of phase naturally — the defining feature of polymeter.
+    gen = song.gens[gen_handle]
+    gen_meter = gen.meter if gen.meter is not None else part.meter
+    part_total_ticks = part_bars * part.meter.ticks_per_bar(PPQ)
+    bars = part_total_ticks // gen_meter.ticks_per_bar(PPQ)
     return PartContext(
         name=part.name,
         role=part.role,
@@ -207,6 +216,7 @@ def _build_context(
         scale_override=scale_override,
         transpose_semitones=transpose_semitones,
         tension=tension,
+        meter=gen_meter,
     )
 
 
@@ -284,7 +294,7 @@ def render_events(song: ResolvedSong) -> list[tuple[int, mido.Message]]:
                             ),
                         )
                     )
-        cursor += bars_to_ticks(bars)
+        cursor += bars_to_ticks(bars, meter=part.meter)
     timed.sort(key=lambda t: (t[0], t[1]))
     return [(tick, msg) for tick, _key, msg in timed]
 

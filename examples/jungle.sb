@@ -1,0 +1,40 @@
+# jungle.sb — drum'n'bass demo (170 bpm).
+#
+# Amen-break-style drums + sub-bass drone + lush jazzy pads. The
+# drum kit is the foreground; the bass and pad sit underneath.
+
+song "Jungle"
+  setup "gm"
+  tempo 170
+  key   Am
+
+gen kick    rhythm drum_and_bass humanize=3 accent=8
+gen snare   rhythm drum_and_bass humanize=4 drop_prob=0.05
+gen hats    rhythm drum_and_bass humanize=3 drop_prob=0.08
+gen sub     bass   drum_and_bass inst=bass
+gen lead    melody drum_and_bass inst=lead motif_memory=3
+gen pad     chords drum_and_bass inst=pad arp_prob=0.1
+gen tex     candy  drum_and_bass inst=riser
+
+part intro 8
+  pad
+  tex
+
+part main 32
+  kick
+  snare
+  hats
+  sub
+  pad
+  tex
+
+part main2 32 transpose_prob=0.4
+  kick
+  snare
+  hats
+  sub
+  lead
+  pad
+  tex
+
+play intro main main2 main main2

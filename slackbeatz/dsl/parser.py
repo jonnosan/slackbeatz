@@ -53,15 +53,18 @@ _GEN_KNOBS = frozenset(
      #   voice_lead    (chords nearest-tone snapping)
      #   polyrhythm    (rhythm secondary euclid layer)
      #   pair          (melody call-and-response handle)
-     "passing_tones", "voice_lead", "polyrhythm", "pair"}
+     "passing_tones", "voice_lead", "polyrhythm", "pair",
+     # Round 6 — meter override for polymeter (per-gen meter):
+     "meter"}
 )
 # Part-level knobs:
 #   transpose_prob — per-instance roll for transposition (issue #10)
 #   scale          — single-part scale override (issue #22)
 #   tension        — part-level energy scalar (issue #14); default
 #                    auto-derived from role if not set
+#   meter          — time signature for the part (overrides song)
 _PART_KNOBS = frozenset(
-    {"tempo", "key", "role", "seed", "transpose_prob", "scale", "tension"}
+    {"tempo", "key", "role", "seed", "transpose_prob", "scale", "tension", "meter"}
 )
 _INST_KNOBS = frozenset({"ch", "note"})
 _KIT_KNOBS = frozenset({"ch", "preset"})
@@ -367,6 +370,10 @@ class _Parser:
             if len(toks) != 2:
                 raise ParseError(ln.line_no, "expected: scale <name>")
             self.file.song.scale = toks[1]
+        elif kw == "meter":
+            if len(toks) != 2:
+                raise ParseError(ln.line_no, "expected: meter <N/M>")
+            self.file.song.meter = toks[1]
         else:
             raise ParseError(ln.line_no, f"unknown song attribute {kw!r}")
 

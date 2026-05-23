@@ -51,7 +51,7 @@ class MelodyAcid(Generator):
         scale = scale_for(self, ctx, fallback="minor")
 
         tonic, _ = parse_key(ctx.key)
-        ticks_per_bar = 4 * ctx.ppq
+        ticks_per_bar = ctx.ticks_per_bar
         ppq = ctx.ppq
 
         # One stab note every 8 bars on a random scale degree from

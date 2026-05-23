@@ -94,7 +94,7 @@ class DrumsEuclid(Generator):
             if should_mute_bar(ctx.rng, macro["mute_prob"]):
                 continue
             evo_mult = evolution_multiplier(bar, ctx.bars, macro["evolution"], direction) * ctx.tension
-            bar_start = bar * 4 * ctx.ppq
+            bar_start = bar * ctx.ticks_per_bar
             is_fill = is_transition or is_fill_bar(bar, group=4)
             is_last_bar = bar == ctx.bars - 1
 
@@ -114,7 +114,7 @@ class DrumsEuclid(Generator):
             if is_fill:
                 fill = ctx.rng.choice(_FILL_BANK)
                 for role, (pulses, offset) in fill.items():
-                    pat = euclid(pulses, 16, offset)
+                    pat = euclid(pulses, ctx.steps_per_bar, offset)
                     if role == "snare":
                         snare_pat = pat
                     elif role == "hat":
@@ -127,9 +127,9 @@ class DrumsEuclid(Generator):
             # Big fill into a drop: pile on snare + open hat all over.
             if is_last_bar and big_fill:
                 snare_pat = euclid(fill_perturb(8, ctx.rng, bump=4), 16, 2)
-                ohat_pat = euclid(3, 16, 10)
+                ohat_pat = euclid(3, ctx.steps_per_bar, 10)
 
-            for step in range(16):
+            for step in range(ctx.steps_per_bar):
                 tick = bar_start + step_to_ticks(step, ctx.ppq)
                 if step % 2 == 1:
                     tick += swing_offset

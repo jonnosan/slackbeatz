@@ -47,7 +47,7 @@ class ChordsAcid(Generator):
         direction = pick_evolution_direction(ctx.rng, macro["evolution"])
 
         tonic, _ = parse_key(ctx.key)
-        ticks_per_bar = 4 * ctx.ppq
+        ticks_per_bar = ctx.ticks_per_bar
 
         # Skip the entire part with mute_prob — pads in acid house are
         # an occasional event rather than a constant presence.

@@ -54,7 +54,7 @@ class MelodyDubTechno(Generator):
         scale = scale_for(self, ctx, fallback="dorian")
 
         tonic, _ = parse_key(ctx.key)
-        ticks_per_bar = 4 * ctx.ppq
+        ticks_per_bar = ctx.ticks_per_bar
 
         for bar in range(0, ctx.bars, 8):
             if should_mute_bar(ctx.rng, macro["mute_prob"]):
@@ -68,7 +68,7 @@ class MelodyDubTechno(Generator):
             evo_mult = evolution_multiplier(bar, ctx.bars, macro["evolution"], direction)
             jitter = ctx.rng.randint(-3, 3)
             vel = max(1, min(127, int(round(base_vel * intensity * evo_mult * ctx.tension)) + jitter))
-            base_dur = int(4 * ctx.ppq * gate)  # long sustain — 4 quarters
+            base_dur = int(ctx.ticks_per_bar * gate)  # long sustain — 4 quarters
             dur = max(1, apply_gate_jitter(base_dur, gate_jitter, ctx.rng))
             yield Note(
                 tick=tick, duration=dur,
