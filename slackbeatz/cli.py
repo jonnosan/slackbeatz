@@ -410,6 +410,64 @@ def _spawn_fluidsynth(soundfont: Path, *, gain: float, reverb: float) -> tuple[s
     return None, None, "fluidsynth started but didn't expose a MIDI port"
 
 
+def _handle_tweak_command(line: str, fs_stdin) -> str | None:
+    """If *line* is a recognised /tweak command, send the matching
+    FluidSynth shell command and return a one-line status string.
+    Returns ``None`` if the line isn't a tweak — the caller should
+    treat it as a compose phrase.
+
+    Supported (the subset most useful at the prompt):
+
+        /gain N             master gain
+        /reverb N           reverb room-size
+        /reverb on|off      reverb on/off
+        /chorus N           chorus depth
+        /chorus on|off      chorus on/off
+    """
+    parts = line.split()
+    cmd = parts[0]
+    if cmd not in ("/gain", "/reverb", "/chorus"):
+        return None
+    if len(parts) != 2:
+        return f"usage: {cmd} <value>"
+
+    arg = parts[1]
+    on_off = arg.lower() in ("on", "off")
+    if on_off:
+        value: float | int = 1 if arg.lower() == "on" else 0
+    else:
+        try:
+            value = float(arg)
+        except ValueError:
+            return f"usage: {cmd} <number> or {cmd} on|off"
+
+    def send(text: str) -> None:
+        try:
+            fs_stdin.write((text + "\n").encode("utf-8"))
+            fs_stdin.flush()
+        except (BrokenPipeError, OSError):
+            pass
+
+    if cmd == "/gain":
+        if on_off:
+            return f"usage: /gain <number 0–2>"
+        send(f"gain {value:.2f}")
+        return f"gain → {value:.2f}"
+    if cmd == "/reverb":
+        if on_off:
+            send(f"set synth.reverb.active {value}")
+            return f"reverb {'on' if value else 'off'}"
+        send(f"set synth.reverb.room-size {value:.2f}")
+        return f"reverb room-size → {value:.2f}"
+    if cmd == "/chorus":
+        if on_off:
+            send(f"set synth.chorus.active {value}")
+            return f"chorus {'on' if value else 'off'}"
+        send(f"set synth.chorus.depth {value:.1f}")
+        return f"chorus depth → {value:.1f}"
+    return None  # unreachable
+
+
 def cmd_repl(args) -> int:
     """Interactive REPL: each line of input becomes a song, played to
     completion (or interrupted with Ctrl+C). One FluidSynth lives for
@@ -459,7 +517,11 @@ def cmd_repl(args) -> int:
                     initial_reverb_room=args.reverb,
                 )
             except Exception as exc:  # noqa: BLE001
-                print(f"\n(gui error: {exc})", file=sys.stderr)
+                print(
+                    f"\n(gui unavailable — falling back to /gain /reverb /chorus "
+                    f"REPL commands)\n  {exc}",
+                    file=sys.stderr,
+                )
 
         threading.Thread(target=_gui_thread, daemon=True).start()
 
@@ -476,9 +538,14 @@ def cmd_repl(args) -> int:
             if line in ("/quit", "/exit"):
                 break
             if line == "/help":
-                print("  <phrase>     compose + play that phrase")
-                print("  /seed N      set seed offset (variation knob)")
-                print("  /quit        end session")
+                print("  <phrase>            compose + play that phrase")
+                print("  /seed N             set seed offset (variation knob)")
+                print("  /gain N             master gain (0–2; default 0.6)")
+                print("  /reverb N           reverb room size (0–1)")
+                print("  /reverb on|off      enable / disable reverb")
+                print("  /chorus N           chorus depth (0–50)")
+                print("  /chorus on|off      enable / disable chorus")
+                print("  /quit               end session")
                 continue
             if line.startswith("/seed"):
                 parts = line.split()
@@ -487,6 +554,13 @@ def cmd_repl(args) -> int:
                     print(f"  seed offset → {seed_offset}")
                 else:
                     print("  usage: /seed <integer>")
+                continue
+            # Inline FluidSynth shell commands — let users tweak the synth
+            # without a GUI. We send these to fs_proc.stdin which is the
+            # same channel the Tk window writes to.
+            tweak_handled = _handle_tweak_command(line, fs_proc.stdin)
+            if tweak_handled is not None:
+                print(f"  {tweak_handled}")
                 continue
             # Everything else: compose + play.
             try:

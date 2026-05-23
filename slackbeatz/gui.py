@@ -60,7 +60,23 @@ def run_tweak_gui(
         or hits Cmd-W). The caller typically uses this to terminate the
         FluidSynth subprocess.
     """
-    import tkinter as tk
+    try:
+        import tkinter as tk
+    except ImportError as e:
+        # The Homebrew python@3.x formulas don't bundle Tk — `import
+        # tkinter` raises ModuleNotFoundError: No module named '_tkinter'.
+        # macOS users typically need `brew install python-tk@3.12` (or
+        # the version matching their venv); the official python.org
+        # installer includes Tk natively.
+        import sys
+        py_minor = f"{sys.version_info.major}.{sys.version_info.minor}"
+        raise RuntimeError(
+            f"Tk is unavailable in this Python build ({e}). "
+            f"On macOS, install Tk for your Python via:\n"
+            f"  brew install python-tk@{py_minor}\n"
+            f"Or use the REPL's inline /tweak commands instead "
+            f"(see /help in `slackbeatz repl`)."
+        ) from e
 
     def send(cmd: str) -> None:
         try:
