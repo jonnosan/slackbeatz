@@ -95,7 +95,16 @@ _GEN_KNOBS = frozenset(
 #                    auto-derived from role if not set
 #   meter          — time signature for the part (overrides song)
 _PART_KNOBS = frozenset(
-    {"tempo", "key", "role", "seed", "transpose_prob", "scale", "tension", "meter"}
+    {"tempo", "key", "role", "seed", "transpose_prob", "scale", "tension",
+     "meter",
+     # Round 9 — named modulation between parts. modulate_to=NAME
+     # resolves to a concrete key relative to the song's key. Names:
+     #   relative_major / relative_minor
+     #   parallel_major / parallel_minor
+     #   dominant (up P5), subdominant (up P4)
+     #   fifth_up / fifth_down (M5)
+     #   whole_up / whole_down (whole step)
+     "modulate_to"}
 )
 _INST_KNOBS = frozenset({"ch", "note"})
 _KIT_KNOBS = frozenset({"ch", "preset"})

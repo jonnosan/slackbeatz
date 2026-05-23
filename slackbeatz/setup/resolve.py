@@ -170,6 +170,68 @@ def _resolve_gen(gen: GenDecl, setup: Setup) -> ResolvedGen:
     )
 
 
+_MODULATION_OFFSETS: dict[str, int] = {
+    # Named modulations expressed as a semitone offset to apply to the
+    # current tonic. Mode (minor / major suffix) is handled separately.
+    "dominant":        7,    # up a perfect 5th
+    "subdominant":     5,    # up a perfect 4th
+    "fifth_up":        7,
+    "fifth_down":     -7,
+    "whole_up":        2,
+    "whole_down":     -2,
+    "half_up":         1,
+    "half_down":      -1,
+    # Special cases handled inline below: relative_major, relative_minor,
+    # parallel_major, parallel_minor.
+}
+
+
+def _resolve_modulation(song_key: str, target: str, part) -> str:
+    """Compute a new key string from *song_key* under the named
+    *target* modulation. Falls back to song_key for unknown names
+    rather than raising — pairing a parser error message with a
+    typo'd modulation would surprise users."""
+    from slackbeatz.theory.keys import parse_key
+
+    tonic, mode = parse_key(song_key)
+    is_minor = mode == "minor"
+
+    if target == "relative_major":
+        # Minor → its relative major (= up a m3). Major key stays put.
+        if is_minor:
+            new_tonic = (tonic + 3) % 12
+            return _format_key(new_tonic, "major")
+        return song_key
+    if target == "relative_minor":
+        if not is_minor:
+            new_tonic = (tonic - 3) % 12
+            return _format_key(new_tonic, "minor")
+        return song_key
+    if target == "parallel_major":
+        return _format_key(tonic, "major")
+    if target == "parallel_minor":
+        return _format_key(tonic, "minor")
+
+    semitones = _MODULATION_OFFSETS.get(target)
+    if semitones is None:
+        # Unknown target — fall back to current key.
+        return song_key
+    new_tonic = (tonic + semitones) % 12
+    return _format_key(new_tonic, "minor" if is_minor else "major")
+
+
+_PITCH_NAMES_SHARP = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
+
+
+def _format_key(tonic: int, mode: str) -> str:
+    """Format a (tonic, mode) pair back into a key string slackbeatz
+    accepts ('Am', 'C', 'F#m', etc.)."""
+    name = _PITCH_NAMES_SHARP[tonic % 12]
+    if mode == "minor":
+        return f"{name}m"
+    return name
+
+
 def _resolve_part(
     part: PartDecl,
     song_tempo: int,
@@ -187,6 +249,7 @@ def _resolve_part(
     bars_max_raw = knobs.pop("bars_max", None)  # synthetic from `bars=N..M`
     tension_raw = knobs.pop("tension", None)  # issue #14
     meter_raw = knobs.pop("meter", None)  # time signature override
+    modulate_to_raw = knobs.pop("modulate_to", None)  # named modulation
 
     if tempo_raw is None:
         tempo = song_tempo
@@ -195,12 +258,20 @@ def _resolve_part(
     else:
         raise ResolveError(part.line, f"part {part.name!r}: tempo must be int")
 
-    if key_raw is None:
+    # Key resolution: explicit `key=` wins, then `modulate_to=` is
+    # resolved against the song key, then fall back to song key.
+    if key_raw is None and modulate_to_raw is None:
         key = song_key
-    elif isinstance(key_raw, str):
+    elif key_raw is not None:
+        if not isinstance(key_raw, str):
+            raise ResolveError(part.line, f"part {part.name!r}: key must be a name")
         key = key_raw
     else:
-        raise ResolveError(part.line, f"part {part.name!r}: key must be a name")
+        if not isinstance(modulate_to_raw, str):
+            raise ResolveError(
+                part.line, f"part {part.name!r}: modulate_to must be a name",
+            )
+        key = _resolve_modulation(song_key, modulate_to_raw, part)
 
     role = role_raw if isinstance(role_raw, str) else part.name
 

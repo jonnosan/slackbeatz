@@ -227,74 +227,84 @@ def render_events(song: ResolvedSong) -> list[tuple[int, mido.Message]]:
     single ``control_change`` message. The list is sorted by ``abs_tick``
     with ``note_off`` events placed before any ``note_on`` at the same
     tick to avoid retriggering a held note on the same instrument.
+
+    After per-gen rendering, any gen with the ``harmonize_with=H`` knob
+    is processed by reading H's already-emitted Notes and adding
+    transposed copies on the harmonizing gen's own channel. ``interval``
+    knob (semitones, default +4 = major 3rd) controls the harmony.
     """
-    timed: list[tuple[int, int, mido.Message]] = []  # (tick, sort_key, msg)
+    # Two-pass: collect events keyed by gen handle so the harmonize
+    # pass can read another gen's Note pitches.
+    events_by_gen: dict[str, list[tuple[int, int, mido.Message]]] = {}
     cursor = 0
     for idx, part_name in enumerate(song.arrangement):
         part = song.parts[part_name]
-        # Per-arrangement-instance bar count (issue #21).
         bars = _bars_for(song, idx, part_name)
         for gen_handle in part.gen_handles:
-            ctx = _build_context(song, idx, gen_handle)
             gen_resolved = song.gens[gen_handle]
+            # Gens with harmonize_with set don't generate their own
+            # notes — they emit transposed copies of another gen's
+            # output in the harmonize pass below. Their own algorithm
+            # output would conflict with the harmonized copy.
+            if isinstance(gen_resolved.knobs.get("harmonize_with"), str):
+                events_by_gen.setdefault(gen_handle, [])
+                continue
+            ctx = _build_context(song, idx, gen_handle)
             algo = _instantiate_algorithm(gen_resolved)
+            bucket = events_by_gen.setdefault(gen_handle, [])
             for event in algo.generate(ctx):
                 validate(event)
                 if isinstance(event, Note):
                     on_tick = cursor + event.tick
                     off_tick = cursor + event.tick + event.duration
-                    timed.append(
-                        (
-                            on_tick,
-                            1,  # note_on sorted after note_off at same tick
-                            mido.Message(
-                                "note_on",
-                                channel=event.channel - 1,
-                                note=event.pitch,
-                                velocity=event.velocity,
-                            ),
-                        )
-                    )
-                    timed.append(
-                        (
-                            off_tick,
-                            0,
-                            mido.Message(
-                                "note_off",
-                                channel=event.channel - 1,
-                                note=event.pitch,
-                                velocity=0,
-                            ),
-                        )
-                    )
+                    bucket.append((on_tick, 1, mido.Message(
+                        "note_on", channel=event.channel - 1,
+                        note=event.pitch, velocity=event.velocity,
+                    )))
+                    bucket.append((off_tick, 0, mido.Message(
+                        "note_off", channel=event.channel - 1,
+                        note=event.pitch, velocity=0,
+                    )))
                 elif isinstance(event, CC):
                     abs_tick = cursor + event.tick
-                    timed.append(
-                        (
-                            abs_tick,
-                            0,
-                            mido.Message(
-                                "control_change",
-                                channel=event.channel - 1,
-                                control=event.controller,
-                                value=event.value,
-                            ),
-                        )
-                    )
+                    bucket.append((abs_tick, 0, mido.Message(
+                        "control_change", channel=event.channel - 1,
+                        control=event.controller, value=event.value,
+                    )))
                 else:  # PitchBend
                     abs_tick = cursor + event.tick
-                    timed.append(
-                        (
-                            abs_tick,
-                            0,
-                            mido.Message(
-                                "pitchwheel",
-                                channel=event.channel - 1,
-                                pitch=event.value,
-                            ),
-                        )
-                    )
+                    bucket.append((abs_tick, 0, mido.Message(
+                        "pitchwheel", channel=event.channel - 1,
+                        pitch=event.value,
+                    )))
         cursor += bars_to_ticks(bars, meter=part.meter)
+
+    # Harmonize pass: for each gen with harmonize_with=H, emit
+    # transposed copies of H's note_on/note_off events on this gen's
+    # channel. ``interval`` is in semitones (default +4 = major 3rd).
+    for gen_handle, gen_resolved in song.gens.items():
+        target = gen_resolved.knobs.get("harmonize_with")
+        if not isinstance(target, str) or target not in events_by_gen:
+            continue
+        interval = gen_resolved.knobs.get("interval", 4)
+        if not isinstance(interval, (int, float)):
+            interval = 4
+        interval = int(interval)
+        if gen_resolved.instrument is None:
+            continue  # nothing to route to
+        out_channel = gen_resolved.instrument.channel - 1
+        bucket = events_by_gen.setdefault(gen_handle, [])
+        for tick, sort_key, msg in events_by_gen[target]:
+            if msg.type not in ("note_on", "note_off"):
+                continue
+            new_note = msg.note + interval
+            if not 0 <= new_note <= 127:
+                continue
+            bucket.append((tick, sort_key, msg.copy(
+                channel=out_channel, note=new_note,
+            )))
+
+    timed = [t for events in events_by_gen.values() for t in events]
     timed.sort(key=lambda t: (t[0], t[1]))
     return [(tick, msg) for tick, _key, msg in timed]
 
