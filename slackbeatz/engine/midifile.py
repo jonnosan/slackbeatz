@@ -52,6 +52,8 @@ _GM_PROGRAM_DEFAULTS: dict[tuple[str, str], int] = {
     ("bass", "drum_and_bass"): 39,
     # Garage: 38 Synth Bass 1 — punchy sub-bass.
     ("bass", "garage"):       38,
+    # Lofi: Acoustic Bass (33) — warm fingered upright character.
+    ("bass", "lofi"):         33,
 
     # Melody: Saw Lead (81) for euclid / Square Lead (80) for psytrance —
     # bright, cuts through. Deep techno wants Pad 1 new age (88).
@@ -65,6 +67,10 @@ _GM_PROGRAM_DEFAULTS: dict[tuple[str, str], int] = {
     ("melody", "dub_techno"):   88,   # Pad 1 — distant lead
     ("melody", "drum_and_bass"): 88,  # Pad 1 — sparse atmospheric lead
     ("melody", "garage"):       53,   # Voice Aahs — vocal-stab feel
+    # Lofi: Electric Piano 2 (5) — the warm Rhodes Mk II sound that
+    # defines lofi melody. Could also use Vibraphone (11) or
+    # Soprano Sax (64) for variety.
+    ("melody", "lofi"):          5,
 
     # Chords / pads: Warm Pad (89) for euclid, Pad 4 choir (91) for
     # deep_techno, Pad 6 Metallic (94) for psytrance, Electric Piano 1
@@ -81,6 +87,9 @@ _GM_PROGRAM_DEFAULTS: dict[tuple[str, str], int] = {
     ("chords", "drum_and_bass"): 89,
     # Garage: 5 Electric Piano 2 (Wurli) — jazzy R&B-flavoured stabs.
     ("chords", "garage"):        5,
+    # Lofi: Electric Piano 1 (4) — the classic Rhodes Mk I sound.
+    # Pairs perfectly with EP2 melody and acoustic bass.
+    ("chords", "lofi"):          4,
 
     # Candy: FX 5 brightness (100) for euclid sweeps, FX 7 echoes (102)
     # for deep_techno LFO modulation, FX 8 sci-fi (103) for psytrance
@@ -94,6 +103,8 @@ _GM_PROGRAM_DEFAULTS: dict[tuple[str, str], int] = {
     ("candy", "dub_techno"):  99,    # FX 4 atmosphere — slow textural drone
     ("candy", "drum_and_bass"): 102,  # FX 7 Echoes — atmospheric texture
     ("candy", "garage"):       100,   # FX 5 Brightness — short stabs
+    # Lofi: FX 1 (96) — rain-like noise that approximates vinyl crackle.
+    ("candy", "lofi"):          96,
 
     # rhythm / drums live on the GM percussion channel (MIDI ch 10);
     # FluidSynth auto-routes to the drum-kit bank there, no program

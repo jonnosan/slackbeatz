@@ -93,6 +93,15 @@ _STYLE_KEYWORDS: dict[str, dict[str, int]] = {
         "beat":    1, "rhythm":  1, "pulse":    1, "drive":    2,
         "loop":    1, "floor":   1, "groove":   1,
     },
+    "lofi": {
+        # Lofi hip-hop / chillhop / "study beats" keyword bank.
+        "lofi":     5, "chill":    3, "study":    3, "rhodes":   4,
+        "vinyl":    3, "rainy":    2, "coffee":   2, "jazz":     2,
+        "hip-hop":  2, "hiphop":   2, "chillhop": 5, "beats":    1,
+        "warm":     2, "cozy":     3, "smoke":    1, "evening":  1,
+        "saturday": 2, "vibes":    2, "yume":     2, "japanese": 1,
+        "tape":     1,
+    },
 }
 
 # Sentiment: positive = bright/major-leaning; negative = dark/minor-leaning.
@@ -223,6 +232,17 @@ _STYLE_PROFILES: dict[str, StyleProfile] = {
             ("wurli", "chords"), ("tex", "candy"),
         ],
     ),
+    "lofi": StyleProfile(
+        base_tempo=82, tempo_range=4,            # 78-86 BPM — typical lofi
+        arrangement=[
+            ("intro", 8), ("main", 32), ("break", 8), ("main", 32), ("outro", 16),
+        ],
+        gens=[
+            ("kick", "rhythm"), ("snare", "rhythm"), ("hats", "rhythm"),
+            ("upright", "bass"),  ("rhodes", "melody"),
+            ("ep",     "chords"), ("crackle", "candy"),
+        ],
+    ),
 }
 
 
@@ -239,6 +259,11 @@ _HANDLE_TO_INST: dict[str, str] = {
     "sub":    "bass",
     "vocal":  "lead",
     "wurli":  "pad",
+    # lofi handles
+    "upright": "bass",
+    "rhodes":  "lead",
+    "ep":      "pad",
+    "crackle": "riser",
 }
 
 

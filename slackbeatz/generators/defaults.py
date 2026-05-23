@@ -36,6 +36,7 @@ STYLE_BASE_VEL: dict[tuple[str, str], int] = {
     ("bass", "dub_techno"):   70,   # sustained drone, soft
     ("bass", "drum_and_bass"): 100,  # punchy sub-bass
     ("bass", "garage"):       105,   # punchy sub
+    ("bass", "lofi"):          78,   # warm walking bass, fingered upright feel
 
     # melody
     ("melody", "euclid"):       90,
@@ -46,6 +47,7 @@ STYLE_BASE_VEL: dict[tuple[str, str], int] = {
     ("melody", "dub_techno"):   65,   # near-silent
     ("melody", "drum_and_bass"): 78,
     ("melody", "garage"):        92,   # vocal-stab punch
+    ("melody", "lofi"):          70,   # soft Rhodes EP
     # chords
     ("chords", "euclid"):       85,
     ("chords", "deep_techno"):  70,
@@ -55,6 +57,7 @@ STYLE_BASE_VEL: dict[tuple[str, str], int] = {
     ("chords", "dub_techno"):   95,   # the chord stab is the centerpiece — punch
     ("chords", "drum_and_bass"): 78,  # lush pads
     ("chords", "garage"):        90,  # punchy stabs
+    ("chords", "lofi"):          78,  # warm Rhodes pad chords
 }
 
 # Octave offset (added to the style's natural register).
@@ -67,6 +70,8 @@ STYLE_BASE_OCTAVE: dict[tuple[str, str], int] = {
     ("bass", "dub_techno"): -1,
     ("bass", "drum_and_bass"): -1,    # A1 (55 Hz) — classic DnB Reese register
     ("bass", "garage"):       -1,
+    ("bass", "lofi"):         -1,    # A1 (55 Hz) — warm fingered bass
+
     ("melody", "euclid"):       0,
     ("melody", "deep_techno"):  0,
     ("melody", "psytrance"):    1,
@@ -75,6 +80,8 @@ STYLE_BASE_OCTAVE: dict[tuple[str, str], int] = {
     ("melody", "dub_techno"):   1,
     ("melody", "drum_and_bass"): 1,
     ("melody", "garage"):        0,
+    ("melody", "lofi"):          1,    # Rhodes mid-register
+
     ("chords", "euclid"):       0,
     ("chords", "deep_techno"):  0,
     ("chords", "psytrance"):    0,
@@ -83,6 +90,7 @@ STYLE_BASE_OCTAVE: dict[tuple[str, str], int] = {
     ("chords", "dub_techno"):   0,
     ("chords", "drum_and_bass"): 0,
     ("chords", "garage"):       0,
+    ("chords", "lofi"):         0,
 }
 
 # Note-length ratio (1.0 = full step length; lower = staccato).
@@ -95,6 +103,7 @@ STYLE_GATE: dict[tuple[str, str], float] = {
     ("bass", "dub_techno"):  0.98,   # sustained drone, long
     ("bass", "drum_and_bass"): 0.95,
     ("bass", "garage"):       0.55,
+    ("bass", "lofi"):         0.85,   # sustained walking bass
     ("melody", "euclid"):       0.60,
     ("melody", "deep_techno"):  0.95,
     ("melody", "psytrance"):    0.50,
@@ -103,6 +112,7 @@ STYLE_GATE: dict[tuple[str, str], float] = {
     ("melody", "dub_techno"):   0.90,
     ("melody", "drum_and_bass"): 0.75,
     ("melody", "garage"):       0.25,   # short stabs
+    ("melody", "lofi"):         0.85,   # long sustained Rhodes notes
     ("chords", "euclid"):       0.95,
     ("chords", "deep_techno"):  0.98,
     ("chords", "psytrance"):    0.90,
@@ -111,6 +121,7 @@ STYLE_GATE: dict[tuple[str, str], float] = {
     ("chords", "dub_techno"):   0.18,   # signature short stab — punch then fade
     ("chords", "drum_and_bass"): 0.92,  # sustained pad
     ("chords", "garage"):       0.30,   # short stab
+    ("chords", "lofi"):         0.96,   # sustained Rhodes EP
 }
 
 # Sidechain ducking depth on bass gens. 1.0 = off.
@@ -123,6 +134,7 @@ BASS_DUCK: dict[str, float] = {
     "dub_techno":  0.75,   # gentle duck — bass is more drone than punch
     "drum_and_bass": 0.80,
     "garage":        0.55,  # noticeable pump
+    "lofi":          1.00,   # no sidechain — lofi sits back
 }
 
 # Per-style velocity jitter range (±N) for rhythm/drums humanisation.
@@ -135,6 +147,7 @@ STYLE_VEL_JITTER: dict[str, int] = {
     "dub_techno":  4,   # dub techno wants smooth dynamics
     "drum_and_bass": 7,
     "garage":      6,
+    "lofi":        6,
 }
 
 
@@ -152,6 +165,7 @@ STYLE_SCALE: dict[tuple[str, str], str] = {
     ("bass",   "dub_techno"):   "dorian",
     ("bass",   "drum_and_bass"): "dorian",
     ("bass",   "garage"):       "minor",
+    ("bass",   "lofi"):         "dorian",
     ("melody", "euclid"):       "minor",
     ("melody", "deep_techno"):  "dorian",
     ("melody", "psytrance"):    "phrygian",
@@ -160,6 +174,7 @@ STYLE_SCALE: dict[tuple[str, str], str] = {
     ("melody", "dub_techno"):   "dorian",
     ("melody", "drum_and_bass"): "dorian",
     ("melody", "garage"):       "minor_pentatonic",
+    ("melody", "lofi"):         "minor_pentatonic",
     ("chords", "euclid"):       "minor",
     ("chords", "deep_techno"):  "minor",  # chord roots are scale degrees, not modes
     ("chords", "psytrance"):    "phrygian",
@@ -168,6 +183,7 @@ STYLE_SCALE: dict[tuple[str, str], str] = {
     ("chords", "dub_techno"):   "dorian",
     ("chords", "drum_and_bass"): "dorian",
     ("chords", "garage"):       "minor",
+    ("chords", "lofi"):         "minor",
 }
 
 
