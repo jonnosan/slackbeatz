@@ -385,6 +385,32 @@ def third_prob_for(gen: Generator) -> float:
     return float(v) if isinstance(v, (int, float)) else 0.0
 
 
+def phrase_lift_for(gen: Generator) -> int:
+    """``phrase_lift=N`` — boost velocity by +8 on the first bar of
+    every N-bar phrase. 0 = off; 4/8/16 are typical phrase lengths."""
+    v = gen.knobs.get("phrase_lift", 0)
+    return int(v) if isinstance(v, (int, float)) else 0
+
+
+def tension_dyn_for(gen: Generator) -> float:
+    """``tension_dyn=N`` — chord-tension-aware velocity boost (0..1).
+    Higher values cause notes to be louder on the V chord (dominant)
+    and softer on the i chord (tonic), matching the harmonic-function
+    rise-and-fall of common-practice music. Only meaningful for gens
+    that follow a chord progression (chords / bass with progression=)."""
+    v = gen.knobs.get("tension_dyn", 0.0)
+    return float(v) if isinstance(v, (int, float)) else 0.0
+
+
+def mistakes_for(gen: Generator) -> float:
+    """``mistakes=N`` — probability (0..0.1) of a per-note 'live
+    mistake': pitch off by a semitone, timing off by ±10 ticks, or
+    velocity off by ±15. Adds humanity without sounding broken at
+    small values. Keep ≤ 0.05 unless you want a drunk-pianist effect."""
+    v = gen.knobs.get("mistakes", 0.0)
+    return float(v) if isinstance(v, (int, float)) else 0.0
+
+
 def scale_for(gen, ctx, fallback: str = "minor") -> str:
     """Resolve which scale this gen should draw from (issue #22).
 

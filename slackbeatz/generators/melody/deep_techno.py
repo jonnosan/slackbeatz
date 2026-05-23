@@ -7,6 +7,7 @@ from typing import Iterator
 from slackbeatz.engine.event import Event, Note
 from slackbeatz.generators._shared import (
     apply_gate_jitter,
+    apply_mistake,
     call_response_active,
     evolution_multiplier,
     maybe_passing_tone,
@@ -21,8 +22,10 @@ from slackbeatz.generators.defaults import (
     gate_for,
     gate_jitter_for,
     macro_knobs,
+    mistakes_for,
     pair_for,
     passing_tones_for,
+    phrase_lift_for,
     scale_for,
 )
 from slackbeatz.generators.registry import register_generator
@@ -68,6 +71,9 @@ class MelodyDeepTechno(Generator):
         macro = macro_knobs(self)
         direction = pick_evolution_direction(ctx.rng, macro["evolution"])
         scale = scale_for(self, ctx, fallback="dorian")
+        # New (round 9): phrase lift + live mistakes.
+        phrase_lift = phrase_lift_for(self)
+        mistakes = mistakes_for(self)
 
         tonic, _ = parse_key(ctx.key)
         ticks_per_bar = ctx.ticks_per_bar
@@ -111,14 +117,18 @@ class MelodyDeepTechno(Generator):
             base_dur = max(1, int(cell_ticks * gate))
             dur = apply_gate_jitter(base_dur, gate_jitter, ctx.rng)
             jitter = ctx.rng.randint(-4, 4)
+            phrase_bump = 8 if phrase_lift > 0 and bar % phrase_lift == 0 else 0
             vel = max(
                 1,
                 min(
                     127,
                     int(round(base_vel * intensity * evo_mult * ctx.tension))
-                    + jitter,
+                    + jitter + phrase_bump,
                 ),
             )
+            # Apply live mistake (very small probability, randomly
+            # perturbs pitch / tick / velocity). Default off.
+            pitch, tick, vel = apply_mistake(pitch, tick, vel, mistakes, ctx.rng)
             yield Note(
                 tick=tick, duration=dur,
                 channel=inst.channel, pitch=pitch, velocity=vel,

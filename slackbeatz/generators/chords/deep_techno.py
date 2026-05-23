@@ -17,6 +17,7 @@ from slackbeatz.generators._shared import (
     is_build_part,
     pick_evolution_direction,
     should_mute_bar,
+    tension_velocity_boost,
 )
 from slackbeatz.generators.base import Generator
 from slackbeatz.generators.defaults import (
@@ -26,8 +27,10 @@ from slackbeatz.generators.defaults import (
     gate_jitter_for,
     inversion_for,
     macro_knobs,
+    phrase_lift_for,
     progression_for,
     scale_for,
+    tension_dyn_for,
     voicing_for,
 )
 from slackbeatz.generators.registry import register_generator
@@ -58,6 +61,8 @@ class ChordsDeepTechno(Generator):
         prog = progression_for(self, default_name="i-iv", default_bars=8)
         voicing = voicing_for(self, fallback="seventh")  # min7 by default
         inversion = inversion_for(self)
+        tension_dyn = tension_dyn_for(self)
+        phrase_lift = phrase_lift_for(self)
 
         ticks_per_bar = ctx.ticks_per_bar
         chord_ticks = prog.bars_per_chord * ticks_per_bar
@@ -72,7 +77,19 @@ class ChordsDeepTechno(Generator):
             tick = bar * ticks_per_bar
             jitter = ctx.rng.randint(-3, 3)
             evo_mult = evolution_multiplier(bar, ctx.bars, macro["evolution"], direction)
-            vel = max(1, min(127, int(round(base_vel * intensity * evo_mult * ctx.tension)) + jitter))
+            # Phrase lift fires +8 on bar 0 of each N-bar phrase.
+            phrase_bump = 8 if phrase_lift > 0 and bar % phrase_lift == 0 else 0
+            # Tension-dyn boost based on which chord we're on (0 = tonic,
+            # 4 = dominant → maximum boost).
+            tension_boost = tension_velocity_boost(chord_root, tension_dyn, base_vel)
+            vel = max(
+                1,
+                min(
+                    127,
+                    int(round(base_vel * intensity * evo_mult * ctx.tension))
+                    + jitter + phrase_bump + tension_boost,
+                ),
+            )
 
             chord_pitches = build_chord(
                 chord_root, tonic=tonic, scale=scale,

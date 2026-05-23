@@ -569,6 +569,71 @@ def groove_offset(groove_name: str, step: int) -> int:
 
 
 # --------------------------------------------------------------------------
+# Musical-context modulators: tension-aware velocity + phrase lift + live
+# humanity. Reused by chord / bass / melody gens.
+# --------------------------------------------------------------------------
+
+# Per-scale-degree tension factor for tension_dyn. 0.0 = tonic (most
+# settled, no boost), 1.0 = dominant (V, the most tense). Pre-dominant
+# (IV / ii) and other intermediate chords sit in between. The shape
+# tracks the standard function-harmony arc: i → IV/iv → V → i.
+_DEGREE_TENSION: dict[int, float] = {
+    0: 0.0,   # i — home, tonic
+    1: 0.5,   # ii — pre-dominant
+    2: 0.4,   # iii — secondary
+    3: 0.6,   # IV/iv — pre-dominant
+    4: 1.0,   # V — dominant, most tense
+    5: 0.3,   # vi/VI — relative
+    6: 0.7,   # vii — leading-tone (resolves up)
+}
+
+
+def degree_tension(degree: int) -> float:
+    """Look up the tension factor for a chord-root scale degree.
+    Values in 0..1; 0 = settled, 1 = maximum harmonic tension."""
+    return _DEGREE_TENSION.get(degree % 7, 0.0)
+
+
+def tension_velocity_boost(degree: int, tension_dyn: float, base_vel: int) -> int:
+    """Return a velocity *delta* (signed) appropriate for the chord
+    function. With ``tension_dyn=0`` always returns 0; with =1 the V
+    chord boosts by up to ~25% of base_vel, the tonic stays flat.
+
+    Caller adds the delta to its computed velocity then clamps to
+    1..127.
+    """
+    if tension_dyn <= 0:
+        return 0
+    factor = degree_tension(degree) * tension_dyn
+    # Max boost roughly +25% at full tension_dyn × dominant chord.
+    return int(round(factor * base_vel * 0.25))
+
+
+def apply_mistake(
+    pitch: int,
+    tick: int,
+    velocity: int,
+    mistakes: float,
+    rng,
+) -> tuple[int, int, int]:
+    """One in a few hundred notes, a real player flubs slightly. This
+    helper rolls *mistakes* (a probability 0..0.1 — keep it small) and
+    randomly perturbs one of pitch / tick / velocity. Returns a possibly-
+    modified (pitch, tick, velocity) tuple."""
+    if mistakes <= 0 or rng.random() >= mistakes:
+        return pitch, tick, velocity
+    # Pick which dimension to mess with.
+    which = rng.choice(("pitch", "tick", "velocity"))
+    if which == "pitch":
+        pitch = max(0, min(127, pitch + rng.choice((-1, 1))))
+    elif which == "tick":
+        tick = max(0, tick + rng.randint(-10, 10))
+    else:
+        velocity = max(1, min(127, velocity + rng.choice((-15, 15))))
+    return pitch, tick, velocity
+
+
+# --------------------------------------------------------------------------
 # Walking-bass helper
 # --------------------------------------------------------------------------
 
