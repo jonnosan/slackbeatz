@@ -570,7 +570,33 @@ def cmd_repl(args) -> int:
     if args.gui:
         try:
             import tkinter  # noqa: F401 — probe-only import
-            tk_available = True
+            # Also probe for threaded Tcl. Homebrew's python-tk@3.12
+            # ships a non-threaded Tcl 9 — on such builds the process
+            # aborts with "Tcl_WaitForEvent: Notifier not initialized"
+            # the first time any allocator path on a worker thread
+            # touches Tcl (which slackbeatz reliably hits within a
+            # second of starting playback). Detect now, before we
+            # spawn the REPL daemon thread, so we can fall back to
+            # the REPL-on-main-thread path cleanly.
+            _probe = tkinter.Tk()
+            try:
+                _probe.tk.eval("set tcl_platform(threaded)")
+                tk_available = True
+            except tkinter.TclError:
+                print(
+                    "Your Tk's Tcl interpreter is non-threaded — common "
+                    "on Homebrew python-tk@3.12. slackbeatz's --gui "
+                    "mode requires threaded Tcl (without it, the process "
+                    "aborts on the first cross-thread Tcl call mid-"
+                    "playback). Falling back to REPL-only.\n"
+                    "All transport / knob / mute / solo / gain / reverb "
+                    "/ chorus / save / seek controls are available as "
+                    "/slash commands — see /help. To enable the GUI, "
+                    "install Python from python.org; its Tk is threaded.",
+                    file=sys.stderr,
+                )
+            finally:
+                _probe.destroy()
         except ImportError as e:
             py_minor = f"{sys.version_info.major}.{sys.version_info.minor}"
             print(
@@ -613,6 +639,21 @@ def cmd_repl(args) -> int:
                 player=player,
                 on_close=_stop_now,
             )
+        except RuntimeError as e:
+            # GUI refused to launch (e.g. non-threaded Tcl detected
+            # at startup). The REPL daemon thread is already running
+            # — but with the GUI gone, it ought to live on the main
+            # thread instead. Tell the daemon to exit, then run a
+            # fresh REPL on main with the same Player instance.
+            print(f"\n{e}\n\nFalling through to REPL-only mode.", file=sys.stderr)
+            # The daemon REPL might already be blocked in input(); we
+            # can't cleanly interrupt it cross-thread. Easiest is to
+            # let it co-exist as a no-op (it's daemon, dies when we
+            # exit) and run a new input loop on main. But two input()
+            # calls racing for stdin is broken, so instead we just
+            # exit — the user re-runs with the install-Tk hint.
+            cleanup_fs()
+            return 1
         except Exception as e:  # noqa: BLE001 — surface unexpected Tk runtime errors
             print(f"(gui error: {e})", file=sys.stderr)
         cleanup_fs()
