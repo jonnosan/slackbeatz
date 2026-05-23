@@ -63,14 +63,22 @@ class BassDrumAndBass(Generator):
         )
 
         ticks_per_bar = ctx.ticks_per_bar
-        # One note per 2 bars — slow drone underneath the busy drums.
-        cell_ticks = 2 * ticks_per_bar
+        # One sub hit per BAR (was every 2 bars — too sparse for tracks
+        # that only run 2-4 bars in the REPL). Each note holds for most
+        # of the bar (gate=0.95 default for DnB) so it still feels like
+        # a sustained sub, but every bar re-articulates so short songs
+        # actually have audible bass.
+        cell_ticks = ticks_per_bar
         dur = max(1, int(cell_ticks * gate))
+        # Octave below the main sub — for the "wobble" octave drop.
+        root_low = transposed_pitch(
+            midi_note(tonic, 1 + octave_off), ctx.transpose_semitones,
+        )
 
         bar = 0
         while bar < ctx.bars:
             if should_mute_bar(ctx.rng, macro["mute_prob"]):
-                bar += 2
+                bar += 1
                 continue
             tick = bar * ticks_per_bar
             jitter = ctx.rng.randint(-3, 3)
@@ -80,9 +88,25 @@ class BassDrumAndBass(Generator):
             vel = max(1, min(127, int(round(vel_base * env))))
             remaining = (ctx.bars - bar) * ticks_per_bar
             note_dur = apply_gate_jitter(min(dur, remaining - 1), gate_jitter, ctx.rng)
-            pitch = maybe_octave_jump(root, octave_jump, ctx.rng)
-            yield Note(
-                tick=tick, duration=max(1, note_dur),
-                channel=inst.channel, pitch=pitch, velocity=vel,
-            )
-            bar += 2
+            # Every odd-numbered bar (bar 1, 3, 5, ...) splits the sub
+            # into root for the first half + octave-down "drop" for the
+            # second half — the classic DnB sub-wobble gesture.
+            if bar % 2 == 1:
+                half_dur = max(1, note_dur // 2)
+                pitch_a = maybe_octave_jump(root, octave_jump, ctx.rng)
+                yield Note(
+                    tick=tick, duration=half_dur,
+                    channel=inst.channel, pitch=pitch_a, velocity=vel,
+                )
+                yield Note(
+                    tick=tick + half_dur, duration=half_dur,
+                    channel=inst.channel, pitch=root_low,
+                    velocity=max(1, vel - 8),  # slight dip for the drop
+                )
+            else:
+                pitch = maybe_octave_jump(root, octave_jump, ctx.rng)
+                yield Note(
+                    tick=tick, duration=max(1, note_dur),
+                    channel=inst.channel, pitch=pitch, velocity=vel,
+                )
+            bar += 1

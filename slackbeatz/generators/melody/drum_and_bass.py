@@ -81,8 +81,13 @@ class MelodyDrumAndBass(Generator):
         ticks_per_bar = ctx.ticks_per_bar
         eighth = ctx.ppq // 2
 
+        # Phrase length: 4-bar groups when available, but for songs
+        # shorter than 4 bars we scale the phrase to fit so the
+        # arpeggio still fires somewhere in the song. For ctx.bars >= 4
+        # the original "every 4 bars" pacing is preserved.
+        phrase_len = min(4, ctx.bars) if ctx.bars > 0 else 4
         phrase_idx = 0
-        for bar in range(0, ctx.bars, 4):
+        for bar in range(0, ctx.bars, phrase_len):
             if should_mute_bar(ctx.rng, macro["mute_prob"]):
                 phrase_idx += 1
                 continue
@@ -95,16 +100,18 @@ class MelodyDrumAndBass(Generator):
             if phrase_idx % 2 == 1:
                 tones.reverse()
 
-            # Arpeggio starts at beat 3 of bar +2 (= halfway through
-            # phrase). Eighth-note spacing for the 4-6 notes.
-            start_tick = (bar + 2) * ticks_per_bar + 2 * ctx.ppq
+            # Arpeggio starts at the latter half of the phrase: beat 3
+            # of bar (phrase_len // 2). Scales to phrase length so
+            # 1/2/3-bar songs still see the arp fire.
+            half_bar = phrase_len // 2
+            start_tick = (bar + half_bar) * ticks_per_bar + 2 * ctx.ppq
             evo_mult = evolution_multiplier(
                 bar, ctx.bars, macro["evolution"], direction,
             )
             for i, deg in enumerate(tones):
                 tick = start_tick + i * eighth
                 # Stop if we've spilled past the phrase boundary.
-                if tick >= (bar + 4) * ticks_per_bar:
+                if tick >= (bar + phrase_len) * ticks_per_bar:
                     break
                 pitch = transposed_pitch(
                     scale_note(deg, tonic, scale, 4 + octave_off),
