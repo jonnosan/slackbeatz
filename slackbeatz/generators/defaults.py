@@ -61,7 +61,7 @@ STYLE_BASE_VEL: dict[tuple[str, str], int] = {
 STYLE_BASE_OCTAVE: dict[tuple[str, str], int] = {
     ("bass", "euclid"):      -1,
     ("bass", "deep_techno"): -1,
-    ("bass", "psytrance"):   -1,
+    ("bass", "psytrance"):    0,    # A2 / E2 (82-110 Hz) — rolling gallop sits in midrange, audible on laptop speakers
     ("bass", "vaporwave"):   -1,
     ("bass", "acid"):         0,   # TB-303 sits high for the lead-bass feel
     ("bass", "dub_techno"): -1,

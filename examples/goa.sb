@@ -19,8 +19,9 @@ gen hats    rhythm psytrance humanize=2
 gen clap    rhythm psytrance humanize=2
 # burble_prob=0.07 → ~7% of bass notes hit the phrygian b2 instead of
 # the root — the signature acid burble. octave_jump=0.04 occasionally
-# kicks the bass up an octave for the gallop "ping" feel.
-gen bass    bass   psytrance octave=-1 burble_prob=0.07 octave_jump=0.04
+# kicks the bass up an octave for the gallop "ping" feel. The style's
+# default sits the gallop at E2 (~82 Hz) — audible on laptop speakers.
+gen bass    bass   psytrance burble_prob=0.07 octave_jump=0.04
 # motif_memory=6 makes the phrygian arpeggio more hypnotic — recent
 # degrees get reused with ~60% probability.
 gen lead    melody psytrance octave=1 motif_memory=6
