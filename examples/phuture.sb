@@ -1,0 +1,61 @@
+# phuture.sb — acid-house demo.
+#
+# Phuture / Acid Trax inspired. The TB-303 (bass acid) is the centre of
+# attention, with a slow filter cutoff sweep across each part and per-
+# note pitch wobble for the analogue feel. Drums sit underneath: tight
+# 909-style kick / clap / hat, no fills. Organ stab enters in the back
+# half of the main parts. Candy gen only fires the brief filter sweep
+# into the drop.
+#
+# Tempo 122 bpm, A minor. Mute + density-drift + evolution knobs are
+# tasted lightly so the build/drop sections evolve rather than just
+# repeating.
+
+song "Phuture"
+  setup "gm"
+  tempo 122
+  key   Am
+  seed  47
+
+# 909 drums — kick / clap / hat only (no snare in acid kits).
+# evolution=0.3 means the rng picks a +/- direction per part-instance
+# and the kick/hat ramps over the part for slow energy motion.
+gen kick   rhythm acid humanize=2 accent=8 evolution=0.3
+gen clap   rhythm acid humanize=3
+gen hats   rhythm acid humanize=2 drop_prob=0.04 evolution=0.3
+
+# The 303 — heavy CC modulation, wide LFO cycle, big resonance.
+gen acid303 bass acid inst=bass cycle=2 resonance=110 bend=120 evolution=0.4
+
+# Organ stabs that fade in over the part. mute_prob means it doesn't
+# always enter — sometimes parts stay sparse.
+gen organ  chords acid inst=pad mute_prob=0.3
+
+# Candy is barely there in acid — just the build sweep.
+gen sweep  candy  acid inst=riser
+
+part intro 16
+  kick
+  hats
+
+part main 32 role=main
+  kick
+  clap
+  hats
+  acid303
+  organ
+
+part build 8 role=build
+  kick
+  hats
+  acid303
+  sweep
+
+part drop 32 role=drop
+  kick
+  clap
+  hats
+  acid303
+  organ
+
+play intro main build drop main build drop

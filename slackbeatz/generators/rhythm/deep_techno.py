@@ -7,12 +7,17 @@ from typing import Iterator
 from slackbeatz.engine.event import Event, Note
 from slackbeatz.generators._shared import (
     HitParams,
+    drift_pulses,
     euclid,
+    evolution_multiplier,
     humanize_hit,
+    pick_evolution_direction,
+    should_mute_bar,
     step_duration,
     step_to_ticks,
 )
 from slackbeatz.generators.base import Generator
+from slackbeatz.generators.defaults import macro_knobs, vel_jitter_for
 from slackbeatz.generators.registry import register_generator
 from slackbeatz.model.context import PartContext
 
@@ -53,28 +58,35 @@ class RhythmDeepTechno(Generator):
         if pulses == 0 or base_vel == 0:
             return
 
+        base_vel = self.knob_int("base_vel", base_vel)
+        macro = macro_knobs(self)
         params = HitParams(
             base_vel=base_vel,
             intensity=self.knob_float("intensity", 1.0),
-            vel_jitter=5,
+            vel_jitter=vel_jitter_for(self),
             humanize=self.knob_int("humanize", 0),
             drop_prob=self.knob_float("drop_prob", 0.0),
             accent=self.knob_int("accent", 0),
         )
-        pattern = euclid(pulses, 16, offset)
+        direction = pick_evolution_direction(ctx.rng, macro["evolution"])
         step_ticks = step_duration(ctx.ppq)
         dur = max(1, step_ticks // 2)
 
         for bar in range(ctx.bars):
-            bar_start = bar * 4 * ctx.ppq
+            if should_mute_bar(ctx.rng, macro["mute_prob"]):
+                continue
             # Claps only fire ~30% of bars to keep it sparse.
             if name == "clap" and ctx.rng.random() > 0.3:
                 continue
+            bar_pulses = drift_pulses(pulses, macro["density_drift"], ctx.rng)
+            pattern = euclid(bar_pulses, 16, offset)
+            evo_mult = evolution_multiplier(bar, ctx.bars, macro["evolution"], direction)
+            bar_start = bar * 4 * ctx.ppq
             for step, hit in enumerate(pattern):
                 if not hit:
                     continue
                 tick = bar_start + step_to_ticks(step, ctx.ppq)
-                shaped = humanize_hit(params, ctx.rng, step, tick)
+                shaped = humanize_hit(params, ctx.rng, step, tick, intensity_mult=evo_mult)
                 if shaped is None:
                     continue
                 vel, tick = shaped

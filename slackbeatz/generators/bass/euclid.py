@@ -13,11 +13,21 @@ from typing import Iterator
 from slackbeatz.engine.event import Event, Note
 from slackbeatz.generators._shared import (
     euclid,
+    evolution_multiplier,
+    pick_evolution_direction,
+    should_mute_bar,
     sidechain_envelope,
     step_duration,
     step_to_ticks,
 )
 from slackbeatz.generators.base import Generator
+from slackbeatz.generators.defaults import (
+    base_octave_for,
+    base_vel_for,
+    duck_for,
+    gate_for,
+    macro_knobs,
+)
 from slackbeatz.generators.registry import register_generator
 from slackbeatz.model.context import PartContext
 from slackbeatz.theory.keys import parse_key
@@ -30,14 +40,13 @@ class BassEuclid(Generator):
         inst = self.instrument
         assert inst is not None and inst.is_pitched, "bass needs a pitched instrument"
 
-        octave_off = self.knob_int("octave", -1)
+        octave_off = base_octave_for(self)
         intensity = self.knob_float("intensity", 1.0)
-        gate = self.knob_float("gate", 0.85)
-        # Sidechain depth: 0.0 = silent on kick, 1.0 = no ducking. The
-        # 0.55 default produces an audible pumping feel without
-        # swallowing the bass entirely.
-        duck = self.knob_float("duck", 0.55)
-        base_vel = 95
+        gate = gate_for(self)
+        duck = duck_for(self)
+        base_vel = base_vel_for(self)
+        macro = macro_knobs(self)
+        direction = pick_evolution_direction(ctx.rng, macro["evolution"])
 
         tonic, _scale = parse_key(ctx.key)
         # Bass register: octave 2 by default (E2 ~ 40). octave_off shifts.
@@ -51,7 +60,10 @@ class BassEuclid(Generator):
         dur = max(1, int(step_ticks * 2 * gate))  # 8th note long * gate
 
         for bar in range(ctx.bars):
+            if should_mute_bar(ctx.rng, macro["mute_prob"]):
+                continue
             bar_start = bar * ticks_per_bar
+            evo_mult = evolution_multiplier(bar, ctx.bars, macro["evolution"], direction)
             # Skip beat 1 on every other bar (structural "drop" on top of
             # the sidechain pumping that follows).
             duck_beat1 = bar % 2 == 1
@@ -62,9 +74,7 @@ class BassEuclid(Generator):
                     continue
                 tick = bar_start + step_to_ticks(step, ctx.ppq)
                 jitter = ctx.rng.randint(-6, 6)
-                vel_base = int(round(base_vel * intensity)) + jitter
-                # Sidechain pumping: ducks on each beat downbeat (where
-                # the kick lands), recovers by mid-beat.
+                vel_base = int(round(base_vel * intensity * evo_mult)) + jitter
                 env = sidechain_envelope(tick - bar_start, ctx.ppq, duck=duck)
                 vel = max(1, min(127, int(round(vel_base * env))))
                 yield Note(

@@ -3,6 +3,9 @@
 Ramps CC 74 from low to high over up to 8 bars approaching a part with
 ``next_role == "drop"`` (or while inside a ``build`` part), then snaps
 back to low at the drop's downbeat (emitted as the final tick).
+
+Also climbs CC 71 (resonance) in parallel for the signature acid
+filter-screech, and CC 11 (expression) for actual loudness motion.
 """
 
 from __future__ import annotations
@@ -11,6 +14,7 @@ from typing import Iterator
 
 from slackbeatz.engine.event import CC, Event
 from slackbeatz.generators.base import Generator
+from slackbeatz.generators.defaults import macro_knobs
 from slackbeatz.generators.registry import register_generator
 from slackbeatz.model.context import PartContext
 
@@ -27,10 +31,14 @@ class CandyPsytrance(Generator):
         is_build = ctx.role in _BUILD_ROLES or ctx.next_role == "drop"
         if not is_build:
             return
+        macro = macro_knobs(self)
+        if macro["mute_prob"] > 0 and ctx.rng.random() < macro["mute_prob"]:
+            return
 
         intensity = self.knob_float("intensity", 1.0)
         density = self.knob_float("density", 0.7)
         cc_num = self.knob_int("cc", 74)
+        resonance_knob = self.knob_int("resonance", 110)
 
         ticks_per_bar = 4 * ctx.ppq
         total_ticks = ctx.bars * ticks_per_bar
@@ -58,6 +66,13 @@ class CandyPsytrance(Generator):
                 tick=tick, channel=inst.channel, controller=11,
                 value=max(0, min(127, expression)),
             )
+            # CC 71 resonance climbs too — acid sweep needs the squeal.
+            if resonance_knob > 0:
+                resonance = int(round(40 + (resonance_knob - 40) * frac * intensity))
+                yield CC(
+                    tick=tick, channel=inst.channel, controller=71,
+                    value=max(0, min(127, resonance)),
+                )
         # Snap CC 74 (filter) back to low at the very end so the drop
         # starts with a clean transient; expression stays at full so
         # the next part hits hard.

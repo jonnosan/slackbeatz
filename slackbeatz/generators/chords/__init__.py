@@ -1,3 +1,3 @@
 """``chords`` generator style modules."""
 
-from . import euclid, deep_techno, psytrance, vaporwave  # noqa: F401
+from . import euclid, deep_techno, psytrance, vaporwave, acid  # noqa: F401

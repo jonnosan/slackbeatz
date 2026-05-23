@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 import mido
 
 from slackbeatz.engine.clock import PPQ, TempoMap, TempoSegment, bars_to_ticks
-from slackbeatz.engine.event import CC, Note, validate
+from slackbeatz.engine.event import CC, Note, PitchBend, validate
 from slackbeatz.generators.registry import REGISTRY
 from slackbeatz.model.context import PartContext
 from slackbeatz.model.song import ResolvedSong
@@ -172,7 +172,7 @@ def render_events(song: ResolvedSong) -> list[tuple[int, mido.Message]]:
                             ),
                         )
                     )
-                else:  # CC
+                elif isinstance(event, CC):
                     abs_tick = cursor + event.tick
                     timed.append(
                         (
@@ -183,6 +183,19 @@ def render_events(song: ResolvedSong) -> list[tuple[int, mido.Message]]:
                                 channel=event.channel - 1,
                                 control=event.controller,
                                 value=event.value,
+                            ),
+                        )
+                    )
+                else:  # PitchBend
+                    abs_tick = cursor + event.tick
+                    timed.append(
+                        (
+                            abs_tick,
+                            0,
+                            mido.Message(
+                                "pitchwheel",
+                                channel=event.channel - 1,
+                                pitch=event.value,
                             ),
                         )
                     )

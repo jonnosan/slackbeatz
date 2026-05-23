@@ -1,0 +1,164 @@
+"""Per-(type, style) algorithm defaults.
+
+Centralising the small "magic numbers" each algorithm class needs —
+velocity baselines, octave offsets, gate ratios, sidechain depths,
+default candy CC controllers. Each value is overridable from the DSL
+via the corresponding knob on the ``gen`` line (e.g. ``base_vel=120``
+to push a `bass psytrance` louder than the style default).
+
+Adding a new style means adding a row to each of these tables (plus
+writing the algorithm classes that read them). The acid style entries
+illustrate the minimal data shape.
+
+Lookup helpers below (``base_vel_for``, ``base_octave_for``, …) collapse
+the "knob overrides table default" pattern into one call.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from slackbeatz.generators.base import Generator
+
+
+# --------------------------------------------------------------------------
+# Data tables — keyed by (type, style). Algorithms look up their own row.
+# --------------------------------------------------------------------------
+
+# Velocity baseline before per-hit jitter / intensity scaling.
+STYLE_BASE_VEL: dict[tuple[str, str], int] = {
+    # bass
+    ("bass", "euclid"):       95,
+    ("bass", "deep_techno"):  80,
+    ("bass", "psytrance"):   105,
+    ("bass", "vaporwave"):    75,
+    ("bass", "acid"):        105,
+    # melody
+    ("melody", "euclid"):       90,
+    ("melody", "deep_techno"):  75,
+    ("melody", "psytrance"):    88,
+    ("melody", "vaporwave"):    75,
+    ("melody", "acid"):         85,
+    # chords
+    ("chords", "euclid"):       85,
+    ("chords", "deep_techno"):  70,
+    ("chords", "psytrance"):    75,
+    ("chords", "vaporwave"):    70,
+    ("chords", "acid"):         78,
+}
+
+# Octave offset (added to the style's natural register).
+STYLE_BASE_OCTAVE: dict[tuple[str, str], int] = {
+    ("bass", "euclid"):      -1,
+    ("bass", "deep_techno"): -1,
+    ("bass", "psytrance"):   -1,
+    ("bass", "vaporwave"):   -1,
+    ("bass", "acid"):         0,   # TB-303 sits high for the lead-bass feel
+    ("melody", "euclid"):       0,
+    ("melody", "deep_techno"):  0,
+    ("melody", "psytrance"):    1,
+    ("melody", "vaporwave"):    1,
+    ("melody", "acid"):         0,
+    ("chords", "euclid"):       0,
+    ("chords", "deep_techno"):  0,
+    ("chords", "psytrance"):    0,
+    ("chords", "vaporwave"):    0,
+    ("chords", "acid"):         0,
+}
+
+# Note-length ratio (1.0 = full step length; lower = staccato).
+STYLE_GATE: dict[tuple[str, str], float] = {
+    ("bass", "euclid"):      0.85,
+    ("bass", "deep_techno"): 0.90,
+    ("bass", "psytrance"):   0.30,   # short pumps for the gallop
+    ("bass", "vaporwave"):   0.90,
+    ("bass", "acid"):        0.55,   # mid — the 303 envelope is per-note
+    ("melody", "euclid"):       0.60,
+    ("melody", "deep_techno"):  0.95,
+    ("melody", "psytrance"):    0.50,
+    ("melody", "vaporwave"):    0.85,
+    ("melody", "acid"):         0.40,
+    ("chords", "euclid"):       0.95,
+    ("chords", "deep_techno"):  0.98,
+    ("chords", "psytrance"):    0.90,
+    ("chords", "vaporwave"):    0.96,
+    ("chords", "acid"):         0.30,   # short organ stabs in acid house
+}
+
+# Sidechain ducking depth on bass gens. 1.0 = off.
+BASS_DUCK: dict[str, float] = {
+    "euclid":      0.55,
+    "deep_techno": 0.70,
+    "psytrance":   0.45,
+    "vaporwave":   1.00,
+    "acid":        0.50,
+}
+
+# Per-style velocity jitter range (±N) for rhythm/drums humanisation.
+STYLE_VEL_JITTER: dict[str, int] = {
+    "euclid":      8,
+    "deep_techno": 5,
+    "psytrance":   6,
+    "vaporwave":   4,
+    "acid":        4,   # acid is tight
+}
+
+
+# --------------------------------------------------------------------------
+# Lookup helpers — collapse "knob > table default > fallback" into one call.
+# --------------------------------------------------------------------------
+
+def base_vel_for(gen: Generator, fallback: int = 90) -> int:
+    """Resolve the velocity baseline. Knob ``base_vel=N`` wins; else look
+    up ``(type, style)`` in the table; else fall back to *fallback*."""
+    knob = gen.knobs.get("base_vel")
+    if isinstance(knob, int):
+        return knob
+    return STYLE_BASE_VEL.get((gen.type_, gen.style), fallback)
+
+
+def base_octave_for(gen: Generator, fallback: int = 0) -> int:
+    knob = gen.knobs.get("base_octave")
+    if isinstance(knob, int):
+        return knob
+    # Legacy `octave=N` knob still wins if explicitly set.
+    legacy = gen.knobs.get("octave")
+    if isinstance(legacy, int):
+        return legacy
+    return STYLE_BASE_OCTAVE.get((gen.type_, gen.style), fallback)
+
+
+def gate_for(gen: Generator, fallback: float = 0.85) -> float:
+    knob = gen.knobs.get("gate")
+    if isinstance(knob, (int, float)):
+        return float(knob)
+    return STYLE_GATE.get((gen.type_, gen.style), fallback)
+
+
+def duck_for(gen: Generator, fallback: float = 1.0) -> float:
+    knob = gen.knobs.get("duck")
+    if isinstance(knob, (int, float)):
+        return float(knob)
+    return BASS_DUCK.get(gen.style, fallback)
+
+
+def vel_jitter_for(gen: Generator, fallback: int = 6) -> int:
+    return STYLE_VEL_JITTER.get(gen.style, fallback)
+
+
+# --------------------------------------------------------------------------
+# Convenience: bundle the macro / mute / drift knob reads in one place.
+# Algorithm classes hit these once at the start of generate().
+# --------------------------------------------------------------------------
+
+def macro_knobs(gen: Generator) -> dict[str, Any]:
+    """Read the macro-level chance knobs in one go.
+
+    Returns a dict with ``density_drift``, ``mute_prob``, ``evolution``,
+    each defaulting to 0.0 when not set on the gen.
+    """
+    return {
+        "density_drift": float(gen.knobs.get("density_drift", 0.0) or 0.0),
+        "mute_prob":     float(gen.knobs.get("mute_prob",     0.0) or 0.0),
+        "evolution":     float(gen.knobs.get("evolution",     0.0) or 0.0),
+    }

@@ -14,6 +14,7 @@ from typing import Iterator
 
 from slackbeatz.engine.event import CC, Event, Note
 from slackbeatz.generators.base import Generator
+from slackbeatz.generators.defaults import macro_knobs
 from slackbeatz.generators.registry import register_generator
 from slackbeatz.model.context import PartContext
 from slackbeatz.theory.keys import parse_key
@@ -25,6 +26,9 @@ class CandyVaporwave(Generator):
     def generate(self, ctx: PartContext) -> Iterator[Event]:
         inst = self.instrument
         if inst is None:
+            return
+        macro = macro_knobs(self)
+        if macro["mute_prob"] > 0 and ctx.rng.random() < macro["mute_prob"]:
             return
 
         intensity = self.knob_float("intensity", 1.0)

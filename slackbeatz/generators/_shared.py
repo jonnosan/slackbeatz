@@ -54,16 +54,21 @@ def humanize_hit(
     rng: random.Random,
     step: int,
     tick: int,
+    *,
+    intensity_mult: float = 1.0,
 ) -> tuple[int, int] | None:
     """Apply the chance knobs to one rhythmic hit.
 
     Returns ``(velocity, tick)`` or ``None`` if the hit was dropped by
     ``drop_prob``. Algorithms call this once per pattern position they
     intend to emit a note at.
+
+    ``intensity_mult`` is an extra multiplier (typically the per-bar
+    ``evolution`` ramp) layered on top of ``params.intensity``.
     """
     if params.drop_prob > 0 and rng.random() < params.drop_prob:
         return None
-    vel = int(round(params.base_vel * params.intensity))
+    vel = int(round(params.base_vel * params.intensity * intensity_mult))
     if params.vel_jitter > 0:
         vel += rng.randint(-params.vel_jitter, params.vel_jitter)
     if params.accent > 0 and step % params.accent == 0:
@@ -73,6 +78,57 @@ def humanize_hit(
     if params.humanize > 0:
         new_tick = max(0, tick + rng.randint(-params.humanize, params.humanize))
     return (vel, new_tick)
+
+
+# --------------------------------------------------------------------------
+# Pattern + macro chance (issues #2, #8, #9)
+# --------------------------------------------------------------------------
+
+def drift_pulses(base: int, drift: float, rng: random.Random) -> int:
+    """Per-bar Euclidean pulse-count perturbation.
+
+    ``drift=0`` returns *base* unchanged. ``drift=0.5`` means roughly
+    half of bars roll ±1 around the base; ``drift=1`` always perturbs.
+    Result is clamped to ``[0, STEPS_PER_BAR]`` so an extreme drift
+    doesn't degenerate a 4/16 kick into all-pulses.
+    """
+    if drift <= 0:
+        return base
+    if rng.random() >= drift:
+        return base
+    return max(0, min(STEPS_PER_BAR, base + rng.choice([-1, 1])))
+
+
+def should_mute_bar(rng: random.Random, mute_prob: float) -> bool:
+    """Roll the per-bar gen-drop chance. ``True`` ⇒ skip this bar."""
+    return mute_prob > 0 and rng.random() < mute_prob
+
+
+def evolution_multiplier(
+    bar: int,
+    total_bars: int,
+    evolution: float,
+    direction: int,
+) -> float:
+    """Linear ramp across a part for an ``evolution`` energy curve.
+
+    Maps bar position ``[0, total_bars-1]`` onto a multiplier in
+    ``[1 - evolution, 1 + evolution]``. ``direction=1`` ramps up across
+    the part; ``-1`` ramps down; ``0`` (or ``evolution=0``) returns
+    ``1.0``. Callers typically pick the direction once per part-instance
+    via ``ctx.rng.choice([-1, 1])`` and reuse it for every bar.
+    """
+    if evolution <= 0 or direction == 0 or total_bars <= 1:
+        return 1.0
+    frac = bar / (total_bars - 1)
+    return 1.0 + direction * evolution * (2 * frac - 1)
+
+
+def pick_evolution_direction(rng: random.Random, evolution: float) -> int:
+    """Returns +1 or -1 per part-instance, or 0 if evolution is disabled."""
+    if evolution <= 0:
+        return 0
+    return rng.choice([-1, 1])
 
 
 # --------------------------------------------------------------------------

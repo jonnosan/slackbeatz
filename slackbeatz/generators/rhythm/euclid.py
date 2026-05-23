@@ -16,12 +16,17 @@ from typing import Iterator
 from slackbeatz.engine.event import Event, Note
 from slackbeatz.generators._shared import (
     HitParams,
+    drift_pulses,
     euclid,
+    evolution_multiplier,
     humanize_hit,
+    pick_evolution_direction,
+    should_mute_bar,
     step_duration,
     step_to_ticks,
 )
 from slackbeatz.generators.base import Generator
+from slackbeatz.generators.defaults import base_vel_for, macro_knobs, vel_jitter_for
 from slackbeatz.generators.registry import register_generator
 from slackbeatz.model.context import PartContext
 
@@ -66,23 +71,31 @@ class RhythmEuclid(Generator):
         )
         name = self.handle.lower()
         pulses, offset = _DEFAULTS.get(name, (4, 0))
-        base_vel = _DEFAULT_VEL.get(name, 100)
+        # base_vel = handle-specific default unless overridden via the
+        # `base_vel=N` knob.
+        base_vel = self.knob_int("base_vel", _DEFAULT_VEL.get(name, 100))
+        macro = macro_knobs(self)
         params = HitParams(
             base_vel=base_vel,
             intensity=self.knob_float("intensity", 1.0),
-            vel_jitter=8,
+            vel_jitter=vel_jitter_for(self),
             humanize=self.knob_int("humanize", 0),
             drop_prob=self.knob_float("drop_prob", 0.0),
             accent=self.knob_int("accent", 0),
         )
         swing = self.knob_float("swing", 0.0)
+        direction = pick_evolution_direction(ctx.rng, macro["evolution"])
 
-        pattern = euclid(pulses, 16, offset)
         step_ticks = step_duration(ctx.ppq)
         swing_offset = int(step_ticks * swing * 0.5)
         dur = max(1, step_ticks // 2)
 
         for bar in range(ctx.bars):
+            if should_mute_bar(ctx.rng, macro["mute_prob"]):
+                continue
+            bar_pulses = drift_pulses(pulses, macro["density_drift"], ctx.rng)
+            pattern = euclid(bar_pulses, 16, offset)
+            evo_mult = evolution_multiplier(bar, ctx.bars, macro["evolution"], direction)
             bar_start = bar * 4 * ctx.ppq
             for step, hit in enumerate(pattern):
                 if not hit:
@@ -90,7 +103,7 @@ class RhythmEuclid(Generator):
                 tick = bar_start + step_to_ticks(step, ctx.ppq)
                 if step % 2 == 1:
                     tick += swing_offset
-                shaped = humanize_hit(params, ctx.rng, step, tick)
+                shaped = humanize_hit(params, ctx.rng, step, tick, intensity_mult=evo_mult)
                 if shaped is None:
                     continue
                 vel, tick = shaped

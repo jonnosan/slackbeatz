@@ -22,6 +22,7 @@ Pre-rendered audio for each bundled example lives under [`examples/rendered/`](e
 | `deep_set` | `deep_techno` | [.mid](examples/rendered/deep_set.mid) | [.mp3](examples/rendered/deep_set.mp3) |
 | `goa` | `psytrance` | [.mid](examples/rendered/goa.mid) | [.mp3](examples/rendered/goa.mp3) |
 | `mall` | `vaporwave` | [.mid](examples/rendered/mall.mid) | [.mp3](examples/rendered/mall.mp3) |
+| `phuture` | `acid` (Phuture / Acid Trax inspired) | [.mid](examples/rendered/phuture.mid) | [.mp3](examples/rendered/phuture.mp3) |
 
 The MP3s are rendered through **GeneralUser GS** (free GM soundfont, ~30 MB, auto-downloaded on first use) with per-channel GM program selection — bass = Synth Bass, lead = Saw Lead / Square Lead, pad = Warm Pad, candy = FX patches — picked per `(type, style)` so each style sits in a recognisably different timbral space. It's still a GM rendering, not production audio: plug a real synth in for that.
 
@@ -127,11 +128,20 @@ Every `gen` line accepts a small whitelisted set of `key=value` knobs after the 
 | `drop_prob` | 0..1 | Per-hit probability of dropping the note | Rhythm, drums |
 | `accent` | int | Every Nth step gets +12 velocity | Rhythm, drums |
 | `duck` | 0..1 | Sidechain ducking depth on each beat (1.0 = off) | Bass |
-| `octave` | int | Register offset | Pitched gens |
+| `density_drift` | 0..1 | Per-bar pulse-count perturbation around the base | Rhythm, drums |
+| `mute_prob` | 0..1 | Per-bar (or per-emission) chance the gen drops out | All |
+| `evolution` | 0..1 | Linear intensity ramp across the part (direction picked by rng) | All |
+| `base_vel` / `base_octave` | int | Override the per-style velocity / register defaults | All |
+| `octave` | int | Register offset (legacy alias for `base_octave`) | Pitched gens |
 | `gate` | 0..1 | Note length as a fraction of step duration | Pitched gens |
 | `density` | 0..1 | CC event count | Candy |
 | `cc` | int 0..127 | Override which CC controller candy modulates | Candy |
-| `cycle` | int bars | LFO period for slow modulators | Candy |
+| `resonance` | int 0..127 | CC 71 ceiling for filter-resonance sweeps | Candy, bass acid |
+| `modwheel` | int 0..127 | CC 1 LFO peak amplitude | Melody vaporwave |
+| `pan` | int 0..127 | Stereo placement centre (64 = middle) | Melody vaporwave |
+| `reverb` | int 0..127 | CC 91 reverb send level | Chords vaporwave |
+| `bend` | int | Per-note pitch-wheel wobble amount (8192 ≈ ±1 semitone) | Bass psytrance / acid |
+| `cycle` | int bars | LFO period for slow modulators | Candy, bass acid |
 | `seed` | int | Override the resolved seed for this gen | All |
 
 The chance-driven ones (`humanize`, `drop_prob`, `accent`, `duck`) are deliberately off by default — existing songs keep playing the same; users opt into the variation explicitly. See the example `.sb` files for style-appropriate values.
@@ -173,6 +183,7 @@ That integer is then mixed with the part name and generator handle (deterministi
 | `deep_techno` | Slower, sparser, modal. Sustained pads, half-note bass, 1–2 melody notes per bar |
 | `psytrance` | 138–148 bpm, gallop 16th-note bass, offbeat hats, phrygian arpeggios |
 | `vaporwave` | 70–80 bpm, half-time kick, descending i-VII-VI-V on Rhodes electric piano, Tenor Sax leads, periodic tubular-bell glints |
+| `acid` | Phuture / Acid Trax — TB-303-style 16th-note bass with octave jumps, continuous CC 74 filter sweep + CC 71 resonance climb, pitch-bend wobble, sparse 909 drums, occasional organ stab |
 
 New styles are added by writing one small class per type (six in total) and registering them via `@register_generator("type", "newstyle")`.
 

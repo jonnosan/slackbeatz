@@ -13,13 +13,23 @@ from __future__ import annotations
 
 from typing import Iterator
 
-from slackbeatz.engine.event import Event, Note
+from slackbeatz.engine.event import Event, Note, PitchBend
 from slackbeatz.generators._shared import (
+    evolution_multiplier,
+    pick_evolution_direction,
+    should_mute_bar,
     sidechain_envelope,
     step_duration,
     step_to_ticks,
 )
 from slackbeatz.generators.base import Generator
+from slackbeatz.generators.defaults import (
+    base_octave_for,
+    base_vel_for,
+    duck_for,
+    gate_for,
+    macro_knobs,
+)
 from slackbeatz.generators.registry import register_generator
 from slackbeatz.model.context import PartContext
 from slackbeatz.theory.keys import parse_key
@@ -32,15 +42,18 @@ class BassPsytrance(Generator):
         inst = self.instrument
         assert inst is not None and inst.is_pitched
 
-        octave_off = self.knob_int("octave", -1)
+        octave_off = base_octave_for(self)
         intensity = self.knob_float("intensity", 1.0)
-        gate = self.knob_float("gate", 0.3)
-        # Psytrance bass benefits from heavy sidechain — the gallop's
-        # first 16th-after-each-kick is already softer because of the
-        # rest, and ducking the next two 16ths a bit reinforces the
-        # pumping feel.
-        duck = self.knob_float("duck", 0.45)
-        base_vel = 105
+        gate = gate_for(self)
+        duck = duck_for(self)
+        base_vel = base_vel_for(self)
+        macro = macro_knobs(self)
+        direction = pick_evolution_direction(ctx.rng, macro["evolution"])
+        # `bend` is the max pitch-wobble per note in pitchwheel units
+        # (±N around 0; 8192 = one semitone). Default 150 ≈ ±4 cents,
+        # the right size for an "analogue oscillator drift" feel that
+        # is subliminal in isolation but sells the squelch.
+        bend_amount = self.knob_int("bend", 150)
 
         tonic, _ = parse_key(ctx.key)
         root = midi_note(tonic, 2 + octave_off)
@@ -54,14 +67,25 @@ class BassPsytrance(Generator):
         gallop_steps = [s for s in range(16) if s % 4 != 0]
 
         for bar in range(ctx.bars):
+            if should_mute_bar(ctx.rng, macro["mute_prob"]):
+                continue
             bar_start = bar * ticks_per_bar
+            evo_mult = evolution_multiplier(bar, ctx.bars, macro["evolution"], direction)
             for step in gallop_steps:
                 tick = bar_start + step_to_ticks(step, ctx.ppq)
                 jitter = ctx.rng.randint(-4, 4)
-                vel_base = int(round(base_vel * intensity)) + jitter
+                vel_base = int(round(base_vel * intensity * evo_mult)) + jitter
                 env = sidechain_envelope(tick - bar_start, ctx.ppq, duck=duck)
                 vel = max(1, min(127, int(round(vel_base * env))))
+                # PitchBend immediately before each note for the analogue
+                # wobble. Pitch reset at note-off so subsequent notes don't
+                # inherit a bias from this one's bend.
+                if bend_amount > 0:
+                    bend = ctx.rng.randint(-bend_amount, bend_amount)
+                    yield PitchBend(tick=max(0, tick - 1), channel=inst.channel, value=bend)
                 yield Note(
                     tick=tick, duration=dur,
                     channel=inst.channel, pitch=root, velocity=vel,
                 )
+                if bend_amount > 0:
+                    yield PitchBend(tick=tick + dur, channel=inst.channel, value=0)

@@ -12,8 +12,21 @@ from __future__ import annotations
 from typing import Iterator
 
 from slackbeatz.engine.event import Event, Note
-from slackbeatz.generators._shared import ChordProgression, sidechain_envelope
+from slackbeatz.generators._shared import (
+    ChordProgression,
+    evolution_multiplier,
+    pick_evolution_direction,
+    should_mute_bar,
+    sidechain_envelope,
+)
 from slackbeatz.generators.base import Generator
+from slackbeatz.generators.defaults import (
+    base_octave_for,
+    base_vel_for,
+    duck_for,
+    gate_for,
+    macro_knobs,
+)
 from slackbeatz.generators.registry import register_generator
 from slackbeatz.model.context import PartContext
 from slackbeatz.theory.keys import parse_key
@@ -26,14 +39,16 @@ class BassVaporwave(Generator):
         inst = self.instrument
         assert inst is not None and inst.is_pitched
 
-        octave_off = self.knob_int("octave", -1)
+        octave_off = base_octave_for(self)
         intensity = self.knob_float("intensity", 1.0)
-        gate = self.knob_float("gate", 0.9)
+        gate = gate_for(self)
         # Vaporwave is half-time — kick lands only on beats 1 & 3, so
-        # the techno sidechain envelope is the wrong shape. Default off
-        # (1.0); opt in with `duck=0.7` for a subtle pulse.
-        duck = self.knob_float("duck", 1.0)
-        base_vel = 75
+        # the techno sidechain envelope is the wrong shape. Defaults
+        # table sets duck=1.0 (off); opt in with `duck=0.7` for pulse.
+        duck = duck_for(self)
+        base_vel = base_vel_for(self)
+        macro = macro_knobs(self)
+        direction = pick_evolution_direction(ctx.rng, macro["evolution"])
 
         tonic, _ = parse_key(ctx.key)
         prog = ChordProgression("i-VII-VI-V", bars_per_chord=4)
@@ -44,6 +59,9 @@ class BassVaporwave(Generator):
 
         bar = 0
         while bar < ctx.bars:
+            if should_mute_bar(ctx.rng, macro["mute_prob"]):
+                bar += prog.bars_per_chord
+                continue
             chord_root = prog.degree_at_bar(bar)
             # Root for the first half of the chord …
             root_pitch = scale_note(chord_root, tonic, "minor", 2 + octave_off)
@@ -56,7 +74,10 @@ class BassVaporwave(Generator):
                     break
                 tick = (bar + offset_bars) * ticks_per_bar
                 jitter = ctx.rng.randint(-3, 3)
-                vel_base = int(round(base_vel * intensity)) + jitter
+                evo_mult = evolution_multiplier(
+                    bar + offset_bars, ctx.bars, macro["evolution"], direction,
+                )
+                vel_base = int(round(base_vel * intensity * evo_mult)) + jitter
                 env = sidechain_envelope(tick % ticks_per_bar, ctx.ppq, duck=duck)
                 vel = max(1, min(127, int(round(vel_base * env))))
                 remaining = (ctx.bars - bar - offset_bars) * ticks_per_bar

@@ -35,7 +35,21 @@ class CC:
     value: int  # 0..127
 
 
-Event = Note | CC
+@dataclass(frozen=True)
+class PitchBend:
+    """14-bit pitchwheel message; range ``-8192..8191``.
+
+    With the GM default bend range of ±2 semitones, value=4096 ≈ +1
+    semitone. Subtle "analogue" wobbles typically sit in ±100 (≈±2½
+    cents) for a hardware-emulating feel.
+    """
+
+    tick: int
+    channel: int
+    value: int  # -8192..8191
+
+
+Event = Note | CC | PitchBend
 
 
 def validate(event: Event) -> None:
@@ -56,8 +70,11 @@ def validate(event: Event) -> None:
             raise ValueError(f"pitch {event.pitch} out of 0..127")
         if not 1 <= event.velocity <= 127:
             raise ValueError(f"velocity {event.velocity} out of 1..127")
-    else:
+    elif isinstance(event, CC):
         if not 0 <= event.controller <= 127:
             raise ValueError(f"controller {event.controller} out of 0..127")
         if not 0 <= event.value <= 127:
             raise ValueError(f"cc value {event.value} out of 0..127")
+    else:  # PitchBend
+        if not -8192 <= event.value <= 8191:
+            raise ValueError(f"pitch bend value {event.value} out of -8192..8191")

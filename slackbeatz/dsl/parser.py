@@ -33,7 +33,13 @@ _GEN_KNOBS = frozenset(
     {"ch", "note", "inst", "kit", "intensity", "swing", "octave", "gate",
      "density", "seed", "program", "cc", "cycle",
      # Per-hit shaping (rhythm / drums) and sidechain (bass):
-     "humanize", "drop_prob", "accent", "duck"}
+     "humanize", "drop_prob", "accent", "duck",
+     # Pattern + macro chance (issues #2, #8, #9):
+     "density_drift", "mute_prob", "evolution",
+     # Style-default overrides (issue #19):
+     "base_vel", "base_octave",
+     # CC expansion (issue #7):
+     "pan", "reverb", "modwheel", "resonance", "bend"}
 )
 _PART_KNOBS = frozenset({"tempo", "key", "role", "seed"})
 _INST_KNOBS = frozenset({"ch", "note"})

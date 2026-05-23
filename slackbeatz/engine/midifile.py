@@ -35,39 +35,45 @@ from slackbeatz.model.song import ResolvedSong
 # Per-(type, style) default GM program number (0-indexed).
 # Reference: https://en.wikipedia.org/wiki/General_MIDI#Program_change_events
 _GM_PROGRAM_DEFAULTS: dict[tuple[str, str], int] = {
-    # Bass: 38 Synth Bass 1 for euclid/psytrance (TB-303-ish punchy),
+    # Bass: 38 Synth Bass 1 for euclid/psytrance/acid (TB-303-ish punchy),
     # 39 Synth Bass 2 for deep_techno (warmer / longer-sustained),
     # 34 Electric Bass (Pick) for vaporwave (lazy mid-80s pick bass).
+    # Acid stays on 38 — the closest GM patch to a real TB-303.
     ("bass", "euclid"):       38,
     ("bass", "deep_techno"):  39,
     ("bass", "psytrance"):    38,
     ("bass", "vaporwave"):    34,
+    ("bass", "acid"):         38,
 
     # Melody: Saw Lead (81) for euclid / Square Lead (80) for psytrance —
-    # bright, cuts through. Deep techno wants Pad 1 new age (88) for the
-    # sustained modal lead feel. Vaporwave wants Tenor Sax (66) for that
-    # late-night smooth-jazz solo.
+    # bright, cuts through. Deep techno wants Pad 1 new age (88).
+    # Vaporwave wants Tenor Sax (66). Acid uses 87 (Bass+Lead) as the
+    # occasional stab voice — closest to an organ punch on top of the 303.
     ("melody", "euclid"):       81,
     ("melody", "deep_techno"):  88,
     ("melody", "psytrance"):    80,
     ("melody", "vaporwave"):    66,
+    ("melody", "acid"):         87,
 
     # Chords / pads: Warm Pad (89) for euclid, Pad 4 choir (91) for
-    # deep_techno (jazzy choir-ish), Pad 6 Metallic (94) for psytrance,
-    # Electric Piano 1 (4 = Rhodes) for vaporwave — the iconic patch.
+    # deep_techno, Pad 6 Metallic (94) for psytrance, Electric Piano 1
+    # Rhodes (4) for vaporwave. Acid uses Rock Organ (18) — the
+    # Hammond stab that punctuates Phuture-style productions.
     ("chords", "euclid"):       89,
     ("chords", "deep_techno"):  91,
     ("chords", "psytrance"):    94,
     ("chords", "vaporwave"):     4,
+    ("chords", "acid"):         18,
 
-    # Candy / risers: FX 5 brightness (100) for euclid build/drop sweeps,
-    # FX 7 echoes (102) for deep_techno slow LFO modulation,
-    # FX 8 sci-fi (103) for psytrance acid sweeps,
-    # Tubular Bells (14) for vaporwave's periodic bell glints.
+    # Candy: FX 5 brightness (100) for euclid sweeps, FX 7 echoes (102)
+    # for deep_techno LFO modulation, FX 8 sci-fi (103) for psytrance
+    # acid sweeps, Tubular Bells (14) for vaporwave. Acid uses 100 —
+    # the same brightness as euclid, just sparser.
     ("candy", "euclid"):       100,
     ("candy", "deep_techno"): 102,
     ("candy", "psytrance"):   103,
     ("candy", "vaporwave"):    14,
+    ("candy", "acid"):        100,
 
     # rhythm / drums live on the GM percussion channel (MIDI ch 10);
     # FluidSynth auto-routes to the drum-kit bank there, no program
