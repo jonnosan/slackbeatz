@@ -1023,6 +1023,54 @@ def _handle_transport_command(line: str, player) -> str | None:
     return None
 
 
+def cmd_export(args) -> int:
+    """Export a song as a stems bundle: MIDI + per-channel WAVs +
+    README + manifest. Drop into a folder or zip and drag into any
+    DAW that accepts audio + MIDI tracks (Ableton, Bitwig, Logic,
+    Reaper, Studio One, Cubase, FL, …)."""
+    from slackbeatz.export import export_bundle
+    song_path = Path(args.song_file)
+    try:
+        file_ast = parse_file(song_path)
+        if file_ast.song is None:
+            print(f"error: {song_path}: no song block found", file=sys.stderr)
+            return 2
+        setup = _load_setup_for_song(song_path, file_ast, args.setup)
+        resolved = resolve_song(file_ast.song, setup, cli_seed=args.seed)
+    except (ParseError, ResolveError, SetupError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    try:
+        soundfont = find_soundfont(args.soundfont) if args.soundfont else find_soundfont(None)
+    except SoundfontError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    output_path = Path(args.output)
+    print(f"slackbeatz export → {output_path}")
+    # Count distinct channels (= one stem each) rather than gens —
+    # multiple drum gens share channel 10, bass + drone share ch 2, etc.
+    n_channels = len({
+        gen.instrument.channel for gen in resolved.gens.values()
+        if gen.instrument is not None
+    } | {
+        gen.kit.channel for gen in resolved.gens.values()
+        if gen.kit is not None
+    })
+    print(f"  rendering {n_channels} stem(s) (one FluidSynth call each — takes a few seconds)...")
+    try:
+        export_bundle(resolved, output_path, soundfont=soundfont,
+                      sample_rate=args.sample_rate)
+    except MissingToolError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    except subprocess.CalledProcessError as e:
+        print(f"error: subprocess failed (exit {e.returncode}): {e.cmd[0]}",
+              file=sys.stderr)
+        return 1
+    print(f"wrote {output_path}")
+    return 0
+
+
 def cmd_render(args) -> int:
     """Render a song to a Standard MIDI File. Drag the resulting .mid
     into Ableton / Logic / Reaper / etc — each MIDI channel lands on
@@ -1091,12 +1139,31 @@ def _build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_list_ports)
 
     # render
-    sp = sub.add_parser("render", help="render a song to a .mid file (phase 2)")
+    sp = sub.add_parser("render", help="render a song to a .mid file")
     sp.add_argument("song_file")
     sp.add_argument("--setup")
     sp.add_argument("--seed", type=int, default=0)
     sp.add_argument("-o", "--output", required=True, help="output .mid path")
     sp.set_defaults(func=cmd_render)
+
+    # export — stems bundle (MIDI + per-channel WAVs + README + manifest)
+    sp = sub.add_parser(
+        "export",
+        help="export a song as a stems bundle (MIDI + per-channel WAVs)",
+    )
+    sp.add_argument("song_file")
+    sp.add_argument("--setup")
+    sp.add_argument("--seed", type=int, default=0)
+    sp.add_argument(
+        "-o", "--output", required=True,
+        help="output path — folder if no .zip suffix, zip file if .zip",
+    )
+    sp.add_argument("--soundfont", help="path to .sf2/.sf3 for stem rendering")
+    sp.add_argument(
+        "--sample-rate", type=int, default=44100,
+        help="WAV sample rate (default 44100)",
+    )
+    sp.set_defaults(func=cmd_export)
 
     # live — single-command realtime audio via spawned FluidSynth
     sp = sub.add_parser(
