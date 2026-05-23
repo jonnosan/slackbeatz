@@ -1,19 +1,21 @@
 """Tiny Tk control window for ``slackbeatz live`` and ``slackbeatz repl``.
 
 FluidSynth itself is headless, so we open a small native window that
-sends ``gain N`` / ``set synth.reverb.* N`` / ``set synth.chorus.* N``
-commands to its stdin shell every time a slider moves. No external
-dependency — Tk ships with CPython on macOS, Linux, and Windows.
+sends shell commands (``gain N``, ``set synth.reverb.* N``,
+``prog C N``, ``select C SF B P``) to its stdin every time the user
+changes a slider, toggles a checkbox, or picks a new instrument. No
+external dependency — Tk ships with CPython on macOS, Linux, and
+Windows (Homebrew users need ``brew install python-tk@<version>``).
 
-The shell-command names below match what FluidSynth 2.x's interactive
-shell accepts (verified against ``help general`` and the documented
-``set`` syntax for runtime settings).
+The shell-command names below match FluidSynth 2.x's interactive
+shell (verified against ``help general`` and the documented ``set``
+runtime-settings syntax).
 
 Architecture:
 
 * Tk needs to run on the main thread. The caller runs the scheduler
-  in a background thread (``daemon=True``) and calls ``run_tweak_gui``
-  on the main thread.
+  (or REPL input loop) in a background thread (``daemon=True``) and
+  calls ``run_tweak_gui`` on the main thread.
 * Closing the window calls ``on_close`` which signals the caller to
   shut down (terminate FluidSynth, kill the daemon thread implicitly).
 """
@@ -38,11 +40,80 @@ _SLIDERS: list[tuple[str, str, float, float, float]] = [
 ]
 
 
+# General-MIDI program list (program 0-127). Drum-bank presets live
+# below — channel 10 (1-indexed) gets a different picker. Names follow
+# the GM Level 1 spec.
+_GM_PROGRAMS: list[str] = [
+    "Acoustic Grand Piano", "Bright Acoustic Piano", "Electric Grand Piano",
+    "Honky-tonk Piano", "Electric Piano 1", "Electric Piano 2", "Harpsichord",
+    "Clavinet", "Celesta", "Glockenspiel", "Music Box", "Vibraphone",
+    "Marimba", "Xylophone", "Tubular Bells", "Dulcimer",
+    "Drawbar Organ", "Percussive Organ", "Rock Organ", "Church Organ",
+    "Reed Organ", "Accordion", "Harmonica", "Tango Accordion",
+    "Acoustic Guitar (nylon)", "Acoustic Guitar (steel)",
+    "Electric Guitar (jazz)", "Electric Guitar (clean)",
+    "Electric Guitar (muted)", "Overdriven Guitar", "Distortion Guitar",
+    "Guitar Harmonics",
+    "Acoustic Bass", "Electric Bass (finger)", "Electric Bass (pick)",
+    "Fretless Bass", "Slap Bass 1", "Slap Bass 2", "Synth Bass 1", "Synth Bass 2",
+    "Violin", "Viola", "Cello", "Contrabass", "Tremolo Strings",
+    "Pizzicato Strings", "Orchestral Harp", "Timpani",
+    "String Ensemble 1", "String Ensemble 2", "SynthStrings 1", "SynthStrings 2",
+    "Choir Aahs", "Voice Oohs", "Synth Voice", "Orchestra Hit",
+    "Trumpet", "Trombone", "Tuba", "Muted Trumpet", "French Horn",
+    "Brass Section", "SynthBrass 1", "SynthBrass 2",
+    "Soprano Sax", "Alto Sax", "Tenor Sax", "Baritone Sax",
+    "Oboe", "English Horn", "Bassoon", "Clarinet",
+    "Piccolo", "Flute", "Recorder", "Pan Flute", "Blown Bottle",
+    "Shakuhachi", "Whistle", "Ocarina",
+    "Lead 1 (square)", "Lead 2 (sawtooth)", "Lead 3 (calliope)",
+    "Lead 4 (chiff)", "Lead 5 (charang)", "Lead 6 (voice)",
+    "Lead 7 (fifths)", "Lead 8 (bass + lead)",
+    "Pad 1 (new age)", "Pad 2 (warm)", "Pad 3 (polysynth)", "Pad 4 (choir)",
+    "Pad 5 (bowed)", "Pad 6 (metallic)", "Pad 7 (halo)", "Pad 8 (sweep)",
+    "FX 1 (rain)", "FX 2 (soundtrack)", "FX 3 (crystal)", "FX 4 (atmosphere)",
+    "FX 5 (brightness)", "FX 6 (goblins)", "FX 7 (echoes)", "FX 8 (sci-fi)",
+    "Sitar", "Banjo", "Shamisen", "Koto", "Kalimba", "Bagpipe", "Fiddle", "Shanai",
+    "Tinkle Bell", "Agogo", "Steel Drums", "Woodblock", "Taiko Drum",
+    "Melodic Tom", "Synth Drum", "Reverse Cymbal",
+    "Guitar Fret Noise", "Breath Noise", "Seashore", "Bird Tweet",
+    "Telephone Ring", "Helicopter", "Applause", "Gunshot",
+]
+
+# GM drum-kit presets on bank 128. FluidR3 / GeneralUser populate
+# only a subset; the rest fall back to the Standard Set silently.
+_GM_DRUM_KITS: list[tuple[int, str]] = [
+    (0,   "Standard Set"),
+    (8,   "Room Set"),
+    (16,  "Power Set"),
+    (24,  "Electronic Set"),
+    (25,  "TR-808"),
+    (32,  "Jazz Set"),
+    (40,  "Brush Set"),
+    (48,  "Orchestral Set"),
+    (56,  "Sound FX Set"),
+]
+
+
+# Slackbeatz-conventional channel labels for the GM setup. The
+# instruments tab uses these as hints so the dropdown for ch 2 reads
+# "ch 2 — bass" not just "ch 2". Songs using a different setup still
+# get the right MIDI behaviour; only the *label* may be misleading.
+_CHANNEL_LABELS: dict[int, str] = {
+    1:  "lead",
+    2:  "bass",
+    3:  "pad / chords",
+    4:  "candy / FX",
+    10: "drums",
+}
+
+
 def run_tweak_gui(
     fs_stdin: IO[bytes],
     *,
     initial_gain: float | None = None,
     initial_reverb_room: float | None = None,
+    initial_programs: dict[int, int] | None = None,
     on_close: Callable[[], None] | None = None,
 ) -> None:
     """Open the tweak window. Blocks until the user closes it.
@@ -51,17 +122,23 @@ def run_tweak_gui(
     ----------
     fs_stdin:
         FluidSynth's stdin pipe (from ``subprocess.Popen(..., stdin=PIPE)``).
-        Slider movements write shell commands to this file handle.
+        Slider movements / dropdown changes write shell commands to
+        this file handle.
     initial_gain, initial_reverb_room:
         Override the slider defaults to match values the user passed via
         ``--gain`` / ``--reverb`` on the CLI.
+    initial_programs:
+        Optional ``{channel_1_indexed: gm_program}`` map. Pre-populates
+        the per-channel program dropdowns so the GUI starts with the
+        same patch assignments slackbeatz is about to send. Channel 10
+        is treated as drums (the value is a drum-kit preset index).
     on_close:
-        Called when the user closes the window (clicks the close button
-        or hits Cmd-W). The caller typically uses this to terminate the
-        FluidSynth subprocess.
+        Called when the user closes the window. The caller typically
+        uses this to terminate the FluidSynth subprocess.
     """
     try:
         import tkinter as tk
+        from tkinter import ttk
     except ImportError as e:
         # The Homebrew python@3.x formulas don't bundle Tk — `import
         # tkinter` raises ModuleNotFoundError: No module named '_tkinter'.
@@ -88,10 +165,17 @@ def run_tweak_gui(
 
     root = tk.Tk()
     root.title("slackbeatz live — tweak")
-    root.minsize(380, 280)
+    root.minsize(440, 480)
 
-    # Override a couple of slider defaults from the CLI flags so the
-    # window reflects what's actually playing.
+    notebook = ttk.Notebook(root)
+    notebook.pack(fill="both", expand=True, padx=6, pady=6)
+
+    # ------------------------------------------------------------------
+    # Effects tab — gain / reverb / chorus sliders + on-off toggles.
+    # ------------------------------------------------------------------
+    effects = ttk.Frame(notebook)
+    notebook.add(effects, text="Effects")
+
     overrides: dict[str, float] = {}
     if initial_gain is not None:
         overrides["Master gain"] = initial_gain
@@ -100,14 +184,13 @@ def run_tweak_gui(
 
     for label, cmd_tmpl, low, high, default in _SLIDERS:
         value = overrides.get(label, default)
-        frame = tk.Frame(root)
-        frame.pack(fill="x", padx=10, pady=2)
-        tk.Label(frame, text=label, width=18, anchor="w").pack(side="left")
+        row = ttk.Frame(effects)
+        row.pack(fill="x", padx=10, pady=2)
+        ttk.Label(row, text=label, width=18, anchor="w").pack(side="left")
         var = tk.DoubleVar(value=value)
-        # resolution kept fine so the slider feels smooth.
         resolution = (high - low) / 200 if (high - low) > 0 else 0.01
         scale = tk.Scale(
-            frame, from_=low, to=high,
+            row, from_=low, to=high,
             resolution=resolution,
             orient="horizontal", variable=var,
             showvalue=True, length=240,
@@ -115,26 +198,106 @@ def run_tweak_gui(
         )
         scale.pack(side="left", fill="x", expand=True)
 
-    # Reverb / chorus on-off toggles.
-    toggles = tk.Frame(root); toggles.pack(fill="x", padx=10, pady=(8, 4))
+    toggles = ttk.Frame(effects)
+    toggles.pack(fill="x", padx=10, pady=(8, 4))
     rev_var = tk.IntVar(value=1)
     cho_var = tk.IntVar(value=1)
-    tk.Checkbutton(
+    ttk.Checkbutton(
         toggles, text="Reverb on", variable=rev_var,
         command=lambda: send(f"set synth.reverb.active {rev_var.get()}"),
     ).pack(side="left", padx=6)
-    tk.Checkbutton(
+    ttk.Checkbutton(
         toggles, text="Chorus on", variable=cho_var,
         command=lambda: send(f"set synth.chorus.active {cho_var.get()}"),
     ).pack(side="left", padx=6)
 
-    # Hint label.
-    tk.Label(
-        root,
-        text="Move a slider to tweak the synth live. Close window or hit "
-             "Ctrl+C in the terminal to stop.",
-        wraplength=360, justify="center", fg="#666",
-    ).pack(padx=10, pady=(4, 8))
+    ttk.Label(
+        effects,
+        text="Move a slider to tweak the synth live. Close window or "
+             "hit Ctrl+C in the terminal to stop.",
+        wraplength=400, justify="center", foreground="#666",
+    ).pack(padx=10, pady=(8, 4))
+
+    # ------------------------------------------------------------------
+    # Instruments tab — per-channel program-change dropdowns. Channel
+    # 10 gets the drum-kit picker; the other 15 channels each get a
+    # 128-name GM program dropdown.
+    # ------------------------------------------------------------------
+    instruments = ttk.Frame(notebook)
+    notebook.add(instruments, text="Instruments")
+
+    ttk.Label(
+        instruments,
+        text="Pick a GM program for each channel. Slackbeatz typically "
+             "uses ch 1 (lead), ch 2 (bass), ch 3 (pad), ch 4 (candy), "
+             "ch 10 (drums).",
+        wraplength=400, justify="left", foreground="#444",
+    ).pack(padx=10, pady=(8, 4), anchor="w")
+
+    initial_programs = initial_programs or {}
+
+    # Scrollable area so 16 rows fit comfortably even on small windows.
+    canvas = tk.Canvas(instruments, borderwidth=0, highlightthickness=0)
+    scrollbar = ttk.Scrollbar(instruments, orient="vertical", command=canvas.yview)
+    inner = ttk.Frame(canvas)
+
+    def _on_inner_configure(_event):
+        canvas.configure(scrollregion=canvas.bbox("all"))
+    inner.bind("<Configure>", _on_inner_configure)
+    canvas.create_window((0, 0), window=inner, anchor="nw")
+    canvas.configure(yscrollcommand=scrollbar.set)
+    canvas.pack(side="left", fill="both", expand=True, padx=(10, 0), pady=4)
+    scrollbar.pack(side="right", fill="y", padx=(0, 6), pady=4)
+
+    program_index_by_name = {name: i for i, name in enumerate(_GM_PROGRAMS)}
+    drum_kit_label_by_idx = {idx: f"{name} ({idx})" for idx, name in _GM_DRUM_KITS}
+    drum_kit_choices = [drum_kit_label_by_idx[idx] for idx, _ in _GM_DRUM_KITS]
+    drum_idx_by_label = {label: idx for idx, label in drum_kit_label_by_idx.items()}
+
+    for ch in range(1, 17):
+        row = ttk.Frame(inner)
+        row.pack(fill="x", padx=2, pady=1)
+        role = _CHANNEL_LABELS.get(ch, "")
+        label_text = f"ch {ch:>2}" + (f" — {role}" if role else "")
+        ttk.Label(row, text=label_text, width=18, anchor="w").pack(side="left")
+
+        if ch == 10:
+            # Drum bank picker (bank 128 preset).
+            initial_kit = initial_programs.get(10, 0)
+            current_label = drum_kit_label_by_idx.get(initial_kit, drum_kit_choices[0])
+            cb = ttk.Combobox(
+                row, values=drum_kit_choices, state="readonly",
+                width=28,
+            )
+            cb.set(current_label)
+
+            def _drum_select(_event, combo=cb):
+                idx = drum_idx_by_label.get(combo.get(), 0)
+                # select <chan-0idx> <sfont_id> <bank> <preset>
+                # sfont_id 1 is the first/only SF FluidSynth loaded.
+                send(f"select 9 1 128 {idx}")
+            cb.bind("<<ComboboxSelected>>", _drum_select)
+            cb.pack(side="left", fill="x", expand=True)
+        else:
+            initial_prog = initial_programs.get(ch, 0)
+            initial_prog = max(0, min(127, initial_prog))
+            display_choices = [f"{i:>3}  {name}" for i, name in enumerate(_GM_PROGRAMS)]
+            cb = ttk.Combobox(
+                row, values=display_choices, state="readonly",
+                width=28,
+            )
+            cb.set(display_choices[initial_prog])
+
+            def _prog_select(_event, combo=cb, chan_zero=ch - 1):
+                label = combo.get()
+                # Label is "  N  Name" — split on the first two spaces.
+                try:
+                    idx = int(label.strip().split()[0])
+                except (ValueError, IndexError):
+                    idx = program_index_by_name.get(label, 0)
+                send(f"prog {chan_zero} {idx}")
+            cb.bind("<<ComboboxSelected>>", _prog_select)
+            cb.pack(side="left", fill="x", expand=True)
 
     if on_close is not None:
         root.protocol("WM_DELETE_WINDOW", lambda: (on_close(), root.destroy()))

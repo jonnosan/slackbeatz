@@ -284,6 +284,7 @@ def cmd_live(args) -> int:
                 fs_proc.stdin,
                 initial_gain=args.gain,
                 initial_reverb_room=args.reverb,
+                initial_programs=_program_map(resolved),
                 on_close=stop_event.set,
             )
         else:
@@ -409,6 +410,31 @@ def _spawn_fluidsynth(soundfont: Path, *, gain: float, reverb: float) -> tuple[s
     except subprocess.TimeoutExpired:
         proc.kill()
     return None, None, "fluidsynth started but didn't expose a MIDI port"
+
+
+def _program_map(resolved) -> dict[int, int]:
+    """Return ``{channel_1_indexed: gm_program}`` for the song's pitched
+    gens. Mirrors what ``scheduler._initial_program_changes`` sends —
+    the GUI uses it to pre-populate the per-channel program dropdowns
+    so the displayed patches match what slackbeatz is about to send.
+
+    The first gen on each channel wins (matches the scheduler's own
+    de-dup rule). Drum gens are skipped.
+    """
+    from slackbeatz.engine.midifile import _program_for_gen
+
+    out: dict[int, int] = {}
+    for gen in resolved.gens.values():
+        if gen.instrument is None:
+            continue
+        channel = gen.instrument.channel  # already 1-indexed
+        if channel in out:
+            continue
+        prog = _program_for_gen(gen)
+        if prog is None:
+            continue
+        out[channel] = prog
+    return out
 
 
 def _handle_tweak_command(line: str, fs_stdin) -> str | None:
