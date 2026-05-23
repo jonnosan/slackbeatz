@@ -31,14 +31,19 @@ from slackbeatz.generators.registry import register_generator
 from slackbeatz.model.context import PartContext
 
 
-# 2-step DNA: kick on 1 only, snare/clap on beat 3 (step 8).
+# 2-step DNA — kick on beats 1+3 (NOT 4-on-floor; that's house/techno),
+# snare on SYNCOPATED 16ths (NOT beats 2+4; that's rock). The
+# Bjorklund(2, 16, offset=6) distribution gives snares at steps 6 + 14
+# — exactly the iconic 2-step "push" snare that lands a 16th late, in
+# the gaps between the kicks. Listen to Artful Dodger / Sweet Female
+# Attitude / MJ Cole for the canonical feel.
 _DEFAULTS: dict[str, tuple[int, int]] = {
-    "kick":  (1, 0),     # beat 1 only
-    "bd":    (1, 0),
-    "snare": (1, 8),     # beat 3 only — the 2-step signature
-    "sd":    (1, 8),
-    "clap":  (1, 8),
-    "hat":   (10, 0),    # busy shuffled hats
+    "kick":  (2, 0),     # beats 1 + 3 — solid 2-step skeleton
+    "bd":    (2, 0),
+    "snare": (2, 6),     # steps 6 + 14 — syncopated push snare
+    "sd":    (2, 6),
+    "clap":  (2, 6),     # match the snare position
+    "hat":   (10, 0),    # busy shuffled 16th hats — pair with groove=shuffle
     "hh":    (10, 0),
     "hats":  (10, 0),
     "ohat":  (1, 14),

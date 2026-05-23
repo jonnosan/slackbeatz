@@ -38,8 +38,12 @@ from slackbeatz.model.context import PartContext
 _DEFAULTS: dict[str, tuple[int, int]] = {
     "kick":  (2, 0),    # beats 1 & 3 — half-time feel
     "bd":    (2, 0),
-    "snare": (2, 4),    # beats 2 & 4 backbeat (classic)
-    "sd":    (2, 4),
+    # Halftime snare lands on BEAT 3 only (step 8) — doubles with the
+    # kick to give vaporwave its "lazy ballad" feel. The previous
+    # default of 2+4 backbeat made it sound like rock at slow tempo,
+    # not chillwave.
+    "snare": (1, 8),
+    "sd":    (1, 8),
     "clap":  (1, 12),   # beat 4 only — soft accent
     "hat":   (4, 0),    # quarter-note closed hat, no offbeats
     "hh":    (4, 0),

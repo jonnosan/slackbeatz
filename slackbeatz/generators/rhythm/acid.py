@@ -34,14 +34,19 @@ from slackbeatz.model.context import PartContext
 
 
 _DEFAULTS: dict[str, tuple[int, int]] = {
-    "kick":  (4, 0),
+    "kick":  (4, 0),     # 4-on-floor — the steady acid kick
     "bd":    (4, 0),
-    "snare": (2, 4),
-    "sd":    (2, 4),
-    "clap":  (1, 12),   # beat 4 only — acid sparse clap
-    "hat":   (8, 0),
-    "hh":    (8, 0),
-    "hats":  (8, 0),
+    # Acid drums DON'T do rock-style 2+4 snare. The clap (when present)
+    # owns the backbeat on beat 4 only. Authentic Phuture / 808-State
+    # tracks rarely double snare + clap on 2+4.
+    "snare": (1, 12),    # beat 4 only — matches the clap
+    "sd":    (1, 12),
+    "clap":  (1, 12),    # beat 4 only — acid sparse clap
+    # Hats sparser than techno — quarter-note closed hits is the
+    # period-authentic pattern. The 303 line carries the busy 16th feel.
+    "hat":   (4, 0),
+    "hh":    (4, 0),
+    "hats":  (4, 0),
     "ohat":  (1, 14),
 }
 

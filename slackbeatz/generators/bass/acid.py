@@ -82,8 +82,13 @@ class BassAcid(Generator):
 
         tonic, _ = parse_key(ctx.key)
         # TB-303 sits high for a lead-bass — octave 2 is sub-low; octave
-        # 3 is the canonical 303 register.
-        register_octave = 3 + octave_off
+        # TB-303 lead-bass sits in A2 register (~110 Hz fundamental).
+        # That's high enough for the squelchy filter character but
+        # still in bass-frequency territory. Previous default of
+        # octave 3 (= A3, 220 Hz) was lead-melody register and felt
+        # detached from the rest of the mix. Users wanting the
+        # higher 303 "ping" can set octave=3 explicitly on the gen.
+        register_octave = 2 + octave_off
         root_raw = midi_note(tonic, register_octave)
         root_pitch = transposed_pitch(root_raw, ctx.transpose_semitones)
         third_pitch = transposed_pitch(root_raw + 3, ctx.transpose_semitones)
