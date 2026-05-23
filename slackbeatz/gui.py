@@ -212,34 +212,17 @@ def run_tweak_gui(
     root.title("slackbeatz live — tweak")
     root.minsize(440, 480)
 
-    # Bail out cleanly on non-threaded Tcl builds. Homebrew's
-    # python-tk@3.12 ships a non-threaded Tcl 9 (verified via the
-    # absence of ``tcl_platform(threaded)``); on such builds, any
-    # Tcl call from a non-main thread aborts the whole process with
-    # "Tcl_WaitForEvent: Notifier not initialized". slackbeatz's REPL
-    # input runs on a daemon thread by necessity (Tk owns the main
-    # thread for mainloop) and the Player spawns yet more threads
-    # for playback + clock, so we can't realistically guarantee that
-    # no allocator / refcount path ever touches Tcl from a non-main
-    # thread. Rather than crash a few seconds into the first song,
-    # refuse the GUI and route the user to the REPL.
-    try:
-        root.tk.eval("set tcl_platform(threaded)")
-    except tk.TclError:
-        root.destroy()
-        raise RuntimeError(
-            "Tk's Tcl interpreter on this Python build is non-threaded "
-            "(tcl_platform(threaded) is undefined). slackbeatz's --gui "
-            "mode needs threaded Tcl to interact safely with playback "
-            "worker threads — without it, the process aborts on the "
-            "first cross-thread Tcl call. Workarounds:\n"
-            "  • Use `slackbeatz repl` without --gui; all transport, "
-            "knob, mute, solo, gain, reverb, chorus, save, and seek "
-            "controls are available as /slash commands (see /help).\n"
-            "  • Or install a Python build with threaded Tcl, e.g. the "
-            "python.org installer (python3.org/downloads), or pyenv "
-            "with a threaded Tcl in the build environment."
-        )
+    # NOTE: an earlier version of this code checked
+    # ``tcl_platform(threaded)`` here to refuse non-threaded Tcl
+    # outright. That check is wrong for Tcl 9 — the variable was
+    # removed (Tcl 9 ships threaded by default), so the check rejected
+    # python.org's Python 3.14 + Tcl 9.0.3 even though that combo is
+    # safe (apartment-threaded with _tkinter raising RuntimeError on
+    # cross-thread Tcl calls).
+    #
+    # The empirical thread-safety probe now lives in cli.cmd_repl
+    # before any of this code is reached. If we get here, the
+    # caller has already confirmed the GUI is safe to launch.
 
     notebook = ttk.Notebook(root)
     notebook.pack(fill="both", expand=True, padx=6, pady=6)

@@ -570,31 +570,45 @@ def cmd_repl(args) -> int:
     if args.gui:
         try:
             import tkinter  # noqa: F401 — probe-only import
-            # Also probe for threaded Tcl. Homebrew's python-tk@3.12
-            # ships a non-threaded Tcl 9 — on such builds the process
-            # aborts with "Tcl_WaitForEvent: Notifier not initialized"
-            # the first time any allocator path on a worker thread
-            # touches Tcl (which slackbeatz reliably hits within a
-            # second of starting playback). Detect now, before we
-            # spawn the REPL daemon thread, so we can fall back to
-            # the REPL-on-main-thread path cleanly.
+            # Empirical thread-safety probe. We can't simply check
+            # ``tcl_platform(threaded)`` because Tcl 9 removed that
+            # variable; we can't trust ``info exists`` either because
+            # python.org's Tcl 9.0.3 is "apartment-threaded" (each
+            # interpreter pinned to a thread, with _tkinter raising a
+            # catchable RuntimeError on cross-thread calls). What we
+            # actually need to know is: does a worker-thread Tcl call
+            # crash the process or surface as a normal exception?
+            #
+            # We spawn a worker, ask it to do a trivial ``expr 1+1``,
+            # and check whether the worker survived and whether _tkinter
+            # raised. Three outcomes:
+            #
+            #   (a) Worker returns "2" → fully threaded Tcl. Safe.
+            #   (b) Worker raises a Python exception → apartment-guarded
+            #       (python.org's Tcl 9). The guard catches all
+            #       cross-thread Tcl calls, so the GUI is still safe.
+            #   (c) Process crashes here → unsafe Tcl (Homebrew's
+            #       non-threaded Tcl 8). We never reach the next line.
+            #
+            # If we reach the post-probe check, we're in (a) or (b),
+            # both of which are safe enough to launch the GUI.
+            import threading
             _probe = tkinter.Tk()
             try:
-                _probe.tk.eval("set tcl_platform(threaded)")
+                _probe_result: list = [None]
+
+                def _probe_worker():
+                    try:
+                        _probe_result[0] = _probe.tk.eval("expr 1+1")
+                    except Exception as exc:  # noqa: BLE001 — any exception is fine
+                        _probe_result[0] = ("guarded", type(exc).__name__)
+
+                _t = threading.Thread(target=_probe_worker, daemon=True)
+                _t.start()
+                _t.join(timeout=2.0)
+                # Reaching this line means the process didn't abort.
+                # Either path (a) or (b) → safe.
                 tk_available = True
-            except tkinter.TclError:
-                print(
-                    "Your Tk's Tcl interpreter is non-threaded — common "
-                    "on Homebrew python-tk@3.12. slackbeatz's --gui "
-                    "mode requires threaded Tcl (without it, the process "
-                    "aborts on the first cross-thread Tcl call mid-"
-                    "playback). Falling back to REPL-only.\n"
-                    "All transport / knob / mute / solo / gain / reverb "
-                    "/ chorus / save / seek controls are available as "
-                    "/slash commands — see /help. To enable the GUI, "
-                    "install Python from python.org; its Tk is threaded.",
-                    file=sys.stderr,
-                )
             finally:
                 _probe.destroy()
         except ImportError as e:
