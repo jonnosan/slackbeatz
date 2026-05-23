@@ -100,6 +100,7 @@ class SongAST:
     tempo: int | None = None
     key: str | None = None
     seed: int | None = None
+    scale: str | None = None  # song-wide scale override (e.g. "dorian")
     gens: list[GenDecl] = field(default_factory=list)
     parts: list[PartDecl] = field(default_factory=list)
     play: PlayLine | None = None

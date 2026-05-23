@@ -131,6 +131,36 @@ def pick_evolution_direction(rng: random.Random, evolution: float) -> int:
     return rng.choice([-1, 1])
 
 
+def apply_gate_jitter(base_dur: int, jitter: float, rng: random.Random) -> int:
+    """Issue #1 — apply ±``jitter`` random variation to a note duration.
+
+    ``jitter=0`` returns *base_dur* unchanged. ``jitter=0.3`` means each
+    note rolls a duration in roughly ``[base_dur*0.7, base_dur*1.3]``.
+    Result is clamped to at least 1 tick.
+    """
+    if jitter <= 0:
+        return base_dur
+    factor = 1.0 + rng.uniform(-jitter, jitter)
+    return max(1, int(round(base_dur * factor)))
+
+
+def transposed_pitch(pitch: int, ctx_transpose: int) -> int:
+    """Apply the part-instance transposition to a single MIDI pitch.
+
+    Issue #10. Clamps the result to ``[0, 127]`` — out-of-range notes
+    are pushed back into range by octaves rather than dropped, so a
+    high-register lead transposed +7 doesn't disappear.
+    """
+    if ctx_transpose == 0:
+        return pitch
+    result = pitch + ctx_transpose
+    while result > 127:
+        result -= 12
+    while result < 0:
+        result += 12
+    return result
+
+
 # --------------------------------------------------------------------------
 # Sidechain ducking envelope (kick-on-each-beat assumption)
 # --------------------------------------------------------------------------

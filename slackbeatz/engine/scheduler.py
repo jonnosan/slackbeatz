@@ -93,6 +93,33 @@ def build_tempo_map(song: ResolvedSong) -> TempoMap:
 # Event generation per part-instance
 # --------------------------------------------------------------------------
 
+_TRANSPOSE_CHOICES = (0, 0, 0, 0, -5, -3, 3, 5, 7)
+"""Pool of semitone offsets when ``transpose_prob`` fires for a part-
+instance. Weighted toward common harmonic moves (perfect 4th down,
+minor 3rd, fifth up) so transpositions feel intentional, not random."""
+
+
+def _transposition_for(
+    song: ResolvedSong,
+    arrangement_index: int,
+    part_name: str,
+) -> int:
+    """Roll the part's `transpose_prob` for this arrangement-instance.
+
+    The seed mixes the song seed, part name, and arrangement index so
+    different instances of the same part can transpose differently,
+    but the same instance is reproducible across runs.
+    """
+    part = song.parts[part_name]
+    if part.transpose_prob <= 0:
+        return 0
+    seed = derive_seed(song.seed, part_name, f"__transpose_{arrangement_index}")
+    rng = random.Random(seed)
+    if rng.random() >= part.transpose_prob:
+        return 0
+    return rng.choice(_TRANSPOSE_CHOICES)
+
+
 def _build_context(
     song: ResolvedSong,
     arrangement_index: int,
@@ -112,6 +139,12 @@ def _build_context(
         else None
     )
     seed = resolved_seed_for(song, part_name, gen_handle)
+    # Scale: part-level override wins, then song-level, then None
+    # (gens fall back to their style's hardcoded default).
+    scale_override = part.scale_override or song.scale_override
+    # Transpose: rolled once per arrangement-instance, applied to every
+    # gen in the part. Shared across gens so harmony stays coherent.
+    transpose_semitones = _transposition_for(song, arrangement_index, part_name)
     return PartContext(
         name=part.name,
         role=part.role,
@@ -124,6 +157,8 @@ def _build_context(
         prev_role=prev_role,
         next_role=next_role,
         rng=random.Random(seed),
+        scale_override=scale_override,
+        transpose_semitones=transpose_semitones,
     )
 
 

@@ -44,6 +44,8 @@ class ResolvedPart:
     key: str  # already resolved (part > song default)
     role: str  # defaults to name if `role=` not set
     seed_override: int | None  # None ⇒ use song / CLI / default
+    scale_override: str | None = None  # set if `scale=` on the part
+    transpose_prob: float = 0.0  # per-arrangement-instance roll
     gen_handles: list[str] = field(default_factory=list)
 
 
@@ -59,3 +61,4 @@ class ResolvedSong:
     gens: dict[str, ResolvedGen]
     parts: dict[str, ResolvedPart]
     arrangement: list[str]  # flat list of part names (groups + *N expanded)
+    scale_override: str | None = None  # song-level `scale <name>`, optional

@@ -10,10 +10,12 @@ from typing import Iterator
 
 from slackbeatz.engine.event import Event, Note
 from slackbeatz.generators._shared import (
+    apply_gate_jitter,
     evolution_multiplier,
     pick_evolution_direction,
     should_mute_bar,
     sidechain_envelope,
+    transposed_pitch,
 )
 from slackbeatz.generators.base import Generator
 from slackbeatz.generators.defaults import (
@@ -21,6 +23,7 @@ from slackbeatz.generators.defaults import (
     base_vel_for,
     duck_for,
     gate_for,
+    gate_jitter_for,
     macro_knobs,
 )
 from slackbeatz.generators.registry import register_generator
@@ -45,9 +48,12 @@ class BassDeepTechno(Generator):
         macro = macro_knobs(self)
         direction = pick_evolution_direction(ctx.rng, macro["evolution"])
 
+        gate_jitter = gate_jitter_for(self)
+
         tonic, _ = parse_key(ctx.key)
-        root = midi_note(tonic, 2 + octave_off)
-        fifth = root + 7
+        root_raw = midi_note(tonic, 2 + octave_off)
+        root = transposed_pitch(root_raw, ctx.transpose_semitones)
+        fifth = transposed_pitch(root_raw + 7, ctx.transpose_semitones)
 
         ticks_per_bar = 4 * ctx.ppq
         # Two-bar cell: root for 2 bars, fifth for 2 bars.
@@ -68,10 +74,11 @@ class BassDeepTechno(Generator):
             vel_base = int(round(base_vel * intensity * evo_mult)) + jitter
             env = sidechain_envelope(tick % ticks_per_bar, ctx.ppq, duck=duck)
             vel = max(1, min(127, int(round(vel_base * env))))
-            # Clamp duration to part end.
+            # Clamp duration to part end + apply gate jitter.
             remaining = (ctx.bars - bar) * ticks_per_bar
+            note_dur = apply_gate_jitter(min(dur, remaining - 1), gate_jitter, ctx.rng)
             yield Note(
-                tick=tick, duration=min(dur, remaining - 1),
+                tick=tick, duration=max(1, note_dur),
                 channel=inst.channel, pitch=pitch, velocity=vel,
             )
             bar += 2

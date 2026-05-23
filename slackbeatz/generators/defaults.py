@@ -33,18 +33,21 @@ STYLE_BASE_VEL: dict[tuple[str, str], int] = {
     ("bass", "psytrance"):   105,
     ("bass", "vaporwave"):    75,
     ("bass", "acid"):        105,
+    ("bass", "dub_techno"):   70,   # sustained drone, soft
     # melody
     ("melody", "euclid"):       90,
     ("melody", "deep_techno"):  75,
     ("melody", "psytrance"):    88,
     ("melody", "vaporwave"):    75,
     ("melody", "acid"):         85,
+    ("melody", "dub_techno"):   65,   # near-silent
     # chords
     ("chords", "euclid"):       85,
     ("chords", "deep_techno"):  70,
     ("chords", "psytrance"):    75,
     ("chords", "vaporwave"):    70,
     ("chords", "acid"):         78,
+    ("chords", "dub_techno"):   95,   # the chord stab is the centerpiece — punch
 }
 
 # Octave offset (added to the style's natural register).
@@ -54,16 +57,19 @@ STYLE_BASE_OCTAVE: dict[tuple[str, str], int] = {
     ("bass", "psytrance"):   -1,
     ("bass", "vaporwave"):   -1,
     ("bass", "acid"):         0,   # TB-303 sits high for the lead-bass feel
+    ("bass", "dub_techno"): -1,
     ("melody", "euclid"):       0,
     ("melody", "deep_techno"):  0,
     ("melody", "psytrance"):    1,
     ("melody", "vaporwave"):    1,
     ("melody", "acid"):         0,
+    ("melody", "dub_techno"):   1,
     ("chords", "euclid"):       0,
     ("chords", "deep_techno"):  0,
     ("chords", "psytrance"):    0,
     ("chords", "vaporwave"):    0,
     ("chords", "acid"):         0,
+    ("chords", "dub_techno"):   0,
 }
 
 # Note-length ratio (1.0 = full step length; lower = staccato).
@@ -73,16 +79,19 @@ STYLE_GATE: dict[tuple[str, str], float] = {
     ("bass", "psytrance"):   0.30,   # short pumps for the gallop
     ("bass", "vaporwave"):   0.90,
     ("bass", "acid"):        0.55,   # mid — the 303 envelope is per-note
+    ("bass", "dub_techno"):  0.98,   # sustained drone, long
     ("melody", "euclid"):       0.60,
     ("melody", "deep_techno"):  0.95,
     ("melody", "psytrance"):    0.50,
     ("melody", "vaporwave"):    0.85,
     ("melody", "acid"):         0.40,
+    ("melody", "dub_techno"):   0.90,
     ("chords", "euclid"):       0.95,
     ("chords", "deep_techno"):  0.98,
     ("chords", "psytrance"):    0.90,
     ("chords", "vaporwave"):    0.96,
     ("chords", "acid"):         0.30,   # short organ stabs in acid house
+    ("chords", "dub_techno"):   0.18,   # signature short stab — punch then fade
 }
 
 # Sidechain ducking depth on bass gens. 1.0 = off.
@@ -92,6 +101,7 @@ BASS_DUCK: dict[str, float] = {
     "psytrance":   0.45,
     "vaporwave":   1.00,
     "acid":        0.50,
+    "dub_techno":  0.75,   # gentle duck — bass is more drone than punch
 }
 
 # Per-style velocity jitter range (±N) for rhythm/drums humanisation.
@@ -101,6 +111,34 @@ STYLE_VEL_JITTER: dict[str, int] = {
     "psytrance":   6,
     "vaporwave":   4,
     "acid":        4,   # acid is tight
+    "dub_techno":  4,   # dub techno wants smooth dynamics
+}
+
+
+# Per-(type, style) default scale name (issue #22). Pitched gens use
+# this when no `scale=` override is set on the gen, part, or song.
+# Modes are looked up by name in slackbeatz.theory.scales.SCALES.
+STYLE_SCALE: dict[tuple[str, str], str] = {
+    # Most styles use the standard minor; deep_techno + vaporwave + dub_techno
+    # use dorian for modal flavour; psytrance uses phrygian.
+    ("bass",   "euclid"):       "minor",
+    ("bass",   "deep_techno"):  "dorian",
+    ("bass",   "psytrance"):    "phrygian",
+    ("bass",   "vaporwave"):    "minor",
+    ("bass",   "acid"):         "minor",
+    ("bass",   "dub_techno"):   "dorian",
+    ("melody", "euclid"):       "minor",
+    ("melody", "deep_techno"):  "dorian",
+    ("melody", "psytrance"):    "phrygian",
+    ("melody", "vaporwave"):    "dorian",
+    ("melody", "acid"):         "minor",
+    ("melody", "dub_techno"):   "dorian",
+    ("chords", "euclid"):       "minor",
+    ("chords", "deep_techno"):  "minor",  # chord roots are scale degrees, not modes
+    ("chords", "psytrance"):    "phrygian",
+    ("chords", "vaporwave"):    "minor",
+    ("chords", "acid"):         "minor",
+    ("chords", "dub_techno"):   "dorian",
 }
 
 
@@ -144,6 +182,31 @@ def duck_for(gen: Generator, fallback: float = 1.0) -> float:
 
 def vel_jitter_for(gen: Generator, fallback: int = 6) -> int:
     return STYLE_VEL_JITTER.get(gen.style, fallback)
+
+
+def gate_jitter_for(gen: Generator) -> float:
+    """Read the gate_jitter knob (issue #1). Defaults to 0 (no jitter)."""
+    v = gen.knobs.get("gate_jitter", 0.0)
+    return float(v) if isinstance(v, (int, float)) else 0.0
+
+
+def scale_for(gen, ctx, fallback: str = "minor") -> str:
+    """Resolve which scale this gen should draw from (issue #22).
+
+    Priority (most specific first):
+
+    1. ``scale=<name>`` knob on the gen line.
+    2. ``ctx.scale_override`` — set by the scheduler from the part's
+       ``scale=`` knob, then the song-level ``scale <name>``.
+    3. :data:`STYLE_SCALE` entry for the gen's ``(type, style)``.
+    4. *fallback* (default ``"minor"``).
+    """
+    knob = gen.knobs.get("scale")
+    if isinstance(knob, str):
+        return knob
+    if ctx.scale_override:
+        return ctx.scale_override
+    return STYLE_SCALE.get((gen.type_, gen.style), fallback)
 
 
 # --------------------------------------------------------------------------

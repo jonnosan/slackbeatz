@@ -6,16 +6,20 @@ from typing import Iterator
 
 from slackbeatz.engine.event import Event, Note
 from slackbeatz.generators._shared import (
+    apply_gate_jitter,
     evolution_multiplier,
     pick_evolution_direction,
     should_mute_bar,
+    transposed_pitch,
 )
 from slackbeatz.generators.base import Generator
 from slackbeatz.generators.defaults import (
     base_octave_for,
     base_vel_for,
     gate_for,
+    gate_jitter_for,
     macro_knobs,
+    scale_for,
 )
 from slackbeatz.generators.registry import register_generator
 from slackbeatz.model.context import PartContext
@@ -39,8 +43,10 @@ class MelodyDeepTechno(Generator):
         intensity = self.knob_float("intensity", 1.0)
         gate = gate_for(self)
         base_vel = base_vel_for(self)
+        gate_jitter = gate_jitter_for(self)
         macro = macro_knobs(self)
         direction = pick_evolution_direction(ctx.rng, macro["evolution"])
+        scale = scale_for(self, ctx, fallback="dorian")
 
         tonic, _ = parse_key(ctx.key)
         ticks_per_bar = 4 * ctx.ppq
@@ -58,11 +64,15 @@ class MelodyDeepTechno(Generator):
                 candidates = [d for d in _DEGREES if d != last_deg] or _DEGREES
                 deg = ctx.rng.choice(candidates)
                 last_deg = deg
-                pitch = scale_note(deg, tonic, "dorian", 4 + octave_off)
+                pitch = transposed_pitch(
+                    scale_note(deg, tonic, scale, 4 + octave_off),
+                    ctx.transpose_semitones,
+                )
                 if not 0 <= pitch <= 127:
                     continue
                 tick = bar * ticks_per_bar + beat * ctx.ppq
-                dur = max(1, int(ctx.ppq * 2 * gate))  # half-note-ish
+                base_dur = max(1, int(ctx.ppq * 2 * gate))  # half-note-ish
+                dur = apply_gate_jitter(base_dur, gate_jitter, ctx.rng)
                 jitter = ctx.rng.randint(-4, 4)
                 vel = max(1, min(127, int(round(base_vel * intensity * evo_mult)) + jitter))
                 yield Note(

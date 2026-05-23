@@ -13,15 +13,18 @@ from typing import Iterator
 
 from slackbeatz.engine.event import Event, Note
 from slackbeatz.generators._shared import (
+    apply_gate_jitter,
     evolution_multiplier,
     pick_evolution_direction,
     should_mute_bar,
+    transposed_pitch,
 )
 from slackbeatz.generators.base import Generator
 from slackbeatz.generators.defaults import (
     base_octave_for,
     base_vel_for,
     gate_for,
+    gate_jitter_for,
     macro_knobs,
 )
 from slackbeatz.generators.registry import register_generator
@@ -53,13 +56,16 @@ class ChordsAcid(Generator):
 
         # Hold a root + 5th + octave dyad (no third = modal) from the
         # midpoint of the part to the end. Short gate ⇒ stabs, not pad.
+        gate_jitter = gate_jitter_for(self)
         enter_bar = ctx.bars // 2
         tick = enter_bar * ticks_per_bar
         remaining = (ctx.bars - enter_bar) * ticks_per_bar
-        dur = max(1, int(remaining * gate))
-        root = midi_note(tonic, 4 + octave_off)
-        fifth = root + 7
-        octave_up = root + 12
+        base_dur = max(1, int(remaining * gate))
+        dur = apply_gate_jitter(base_dur, gate_jitter, ctx.rng)
+        root_raw = midi_note(tonic, 4 + octave_off)
+        root = transposed_pitch(root_raw, ctx.transpose_semitones)
+        fifth = transposed_pitch(root_raw + 7, ctx.transpose_semitones)
+        octave_up = transposed_pitch(root_raw + 12, ctx.transpose_semitones)
         evo_mult = evolution_multiplier(enter_bar, ctx.bars, macro["evolution"], direction)
         jitter = ctx.rng.randint(-3, 3)
         vel = max(1, min(127, int(round(base_vel * intensity * evo_mult)) + jitter))
@@ -67,6 +73,6 @@ class ChordsAcid(Generator):
             if not 0 <= pitch <= 127:
                 continue
             yield Note(
-                tick=tick, duration=dur,
+                tick=tick, duration=max(1, dur),
                 channel=inst.channel, pitch=pitch, velocity=vel,
             )

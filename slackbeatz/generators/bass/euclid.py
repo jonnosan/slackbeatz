@@ -12,6 +12,7 @@ from typing import Iterator
 
 from slackbeatz.engine.event import Event, Note
 from slackbeatz.generators._shared import (
+    apply_gate_jitter,
     euclid,
     evolution_multiplier,
     pick_evolution_direction,
@@ -19,6 +20,7 @@ from slackbeatz.generators._shared import (
     sidechain_envelope,
     step_duration,
     step_to_ticks,
+    transposed_pitch,
 )
 from slackbeatz.generators.base import Generator
 from slackbeatz.generators.defaults import (
@@ -26,6 +28,7 @@ from slackbeatz.generators.defaults import (
     base_vel_for,
     duck_for,
     gate_for,
+    gate_jitter_for,
     macro_knobs,
 )
 from slackbeatz.generators.registry import register_generator
@@ -45,19 +48,22 @@ class BassEuclid(Generator):
         gate = gate_for(self)
         duck = duck_for(self)
         base_vel = base_vel_for(self)
+        gate_jitter = gate_jitter_for(self)
         macro = macro_knobs(self)
         direction = pick_evolution_direction(ctx.rng, macro["evolution"])
 
         tonic, _scale = parse_key(ctx.key)
         # Bass register: octave 2 by default (E2 ~ 40). octave_off shifts.
-        root = midi_note(tonic, 2 + octave_off)
+        root = transposed_pitch(
+            midi_note(tonic, 2 + octave_off), ctx.transpose_semitones
+        )
 
         pulses = 8
         pattern = euclid(pulses, 16, 0)
 
         step_ticks = step_duration(ctx.ppq)
         ticks_per_bar = 4 * ctx.ppq
-        dur = max(1, int(step_ticks * 2 * gate))  # 8th note long * gate
+        base_dur = max(1, int(step_ticks * 2 * gate))  # 8th note long * gate
 
         for bar in range(ctx.bars):
             if should_mute_bar(ctx.rng, macro["mute_prob"]):
@@ -77,6 +83,7 @@ class BassEuclid(Generator):
                 vel_base = int(round(base_vel * intensity * evo_mult)) + jitter
                 env = sidechain_envelope(tick - bar_start, ctx.ppq, duck=duck)
                 vel = max(1, min(127, int(round(vel_base * env))))
+                dur = apply_gate_jitter(base_dur, gate_jitter, ctx.rng)
                 yield Note(
                     tick=tick, duration=dur, channel=inst.channel,
                     pitch=root, velocity=vel,

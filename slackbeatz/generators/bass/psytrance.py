@@ -15,12 +15,14 @@ from typing import Iterator
 
 from slackbeatz.engine.event import Event, Note, PitchBend
 from slackbeatz.generators._shared import (
+    apply_gate_jitter,
     evolution_multiplier,
     pick_evolution_direction,
     should_mute_bar,
     sidechain_envelope,
     step_duration,
     step_to_ticks,
+    transposed_pitch,
 )
 from slackbeatz.generators.base import Generator
 from slackbeatz.generators.defaults import (
@@ -28,6 +30,7 @@ from slackbeatz.generators.defaults import (
     base_vel_for,
     duck_for,
     gate_for,
+    gate_jitter_for,
     macro_knobs,
 )
 from slackbeatz.generators.registry import register_generator
@@ -54,9 +57,17 @@ class BassPsytrance(Generator):
         # the right size for an "analogue oscillator drift" feel that
         # is subliminal in isolation but sells the squelch.
         bend_amount = self.knob_int("bend", 150)
+        # Issue #15: phrygian b2 "burble". When this rolls, a note plays
+        # one semitone above the root instead of the root — the
+        # signature acid-flavoured ornament of psytrance bass.
+        burble_prob = self.knob_float("burble_prob", 0.05)
+        gate_jitter = gate_jitter_for(self)
 
         tonic, _ = parse_key(ctx.key)
-        root = midi_note(tonic, 2 + octave_off)
+        root_raw = midi_note(tonic, 2 + octave_off)
+        root = transposed_pitch(root_raw, ctx.transpose_semitones)
+        # b2 is one semitone above the root — the phrygian flavour note.
+        b2 = transposed_pitch(root_raw + 1, ctx.transpose_semitones)
 
         step_ticks = step_duration(ctx.ppq)
         ticks_per_bar = 4 * ctx.ppq
@@ -83,9 +94,12 @@ class BassPsytrance(Generator):
                 if bend_amount > 0:
                     bend = ctx.rng.randint(-bend_amount, bend_amount)
                     yield PitchBend(tick=max(0, tick - 1), channel=inst.channel, value=bend)
+                # Phrygian b2 burble — occasionally substitute root → b2.
+                pitch = b2 if (burble_prob > 0 and ctx.rng.random() < burble_prob) else root
+                note_dur = apply_gate_jitter(dur, gate_jitter, ctx.rng)
                 yield Note(
-                    tick=tick, duration=dur,
-                    channel=inst.channel, pitch=root, velocity=vel,
+                    tick=tick, duration=max(1, note_dur),
+                    channel=inst.channel, pitch=pitch, velocity=vel,
                 )
                 if bend_amount > 0:
-                    yield PitchBend(tick=tick + dur, channel=inst.channel, value=0)
+                    yield PitchBend(tick=tick + note_dur, channel=inst.channel, value=0)

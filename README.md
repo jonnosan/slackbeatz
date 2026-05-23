@@ -23,6 +23,7 @@ Pre-rendered audio for each bundled example lives under [`examples/rendered/`](e
 | `goa` | `psytrance` | [.mid](examples/rendered/goa.mid) | [.mp3](examples/rendered/goa.mp3) |
 | `mall` | `vaporwave` | [.mid](examples/rendered/mall.mid) | [.mp3](examples/rendered/mall.mp3) |
 | `phuture` | `acid` (Phuture / Acid Trax inspired) | [.mid](examples/rendered/phuture.mid) | [.mp3](examples/rendered/phuture.mp3) |
+| `basic` | `dub_techno` (Basic Channel inspired) | [.mid](examples/rendered/basic.mid) | [.mp3](examples/rendered/basic.mp3) |
 
 The MP3s are rendered through **GeneralUser GS** (free GM soundfont, ~30 MB, auto-downloaded on first use) with per-channel GM program selection — bass = Synth Bass, lead = Saw Lead / Square Lead, pad = Warm Pad, candy = FX patches — picked per `(type, style)` so each style sits in a recognisably different timbral space. It's still a GM rendering, not production audio: plug a real synth in for that.
 
@@ -142,7 +143,27 @@ Every `gen` line accepts a small whitelisted set of `key=value` knobs after the 
 | `reverb` | int 0..127 | CC 91 reverb send level | Chords vaporwave |
 | `bend` | int | Per-note pitch-wheel wobble amount (8192 ≈ ±1 semitone) | Bass psytrance / acid |
 | `cycle` | int bars | LFO period for slow modulators | Candy, bass acid |
+| `gate_jitter` | 0..1 | Per-note random duration variance | Pitched gens |
+| `arp_prob` | 0..1 | Probability a chord plays as an arpeggio instead of held | Chords (euclid / deep_techno / psytrance / vaporwave) |
+| `burble_prob` | 0..1 | Probability a bass note hits the phrygian b2 instead of the root | Bass psytrance |
+| `scale` | scale name | Override the gen's hardcoded scale (e.g. `scale=dorian`) | All pitched |
 | `seed` | int | Override the resolved seed for this gen | All |
+
+Part-level knobs (on the `part <name> <bars>` line):
+
+| Knob | What it does |
+|---|---|
+| `tempo=N` / `key=NAME` / `role=R` / `seed=N` | Per-part overrides of the song defaults |
+| `scale=NAME` | Override the scale for all pitched gens in this part |
+| `transpose_prob=0..1` | Per-arrangement-instance roll for transposition (±N semitones); shared across all gens in the part so harmony stays coherent |
+
+Song-level (under the `song "..."` block):
+
+| Attribute | What it does |
+|---|---|
+| `tempo N` / `key NAME` / `seed N` | Defaults inherited by parts |
+| `scale NAME` | Default scale for all pitched gens (overridable per part / per gen) |
+| `setup "..."` | Path or bundled name of the setup to bind against |
 
 The chance-driven ones (`humanize`, `drop_prob`, `accent`, `duck`) are deliberately off by default — existing songs keep playing the same; users opt into the variation explicitly. See the example `.sb` files for style-appropriate values.
 
@@ -184,6 +205,7 @@ That integer is then mixed with the part name and generator handle (deterministi
 | `psytrance` | 138–148 bpm, gallop 16th-note bass, offbeat hats, phrygian arpeggios |
 | `vaporwave` | 70–80 bpm, half-time kick, descending i-VII-VI-V on Rhodes electric piano, Tenor Sax leads, periodic tubular-bell glints |
 | `acid` | Phuture / Acid Trax — TB-303-style 16th-note bass with octave jumps, continuous CC 74 filter sweep + CC 71 resonance climb, pitch-bend wobble, sparse 909 drums, occasional organ stab |
+| `dub_techno` | Basic Channel / Maurizio — soft 4/4 kick + closed hat, off-beat chord stab on every 8th (the signature "chk-chk-chk-chk"), sustained warm-pad bass drone, slow CC 74 + CC 91 modulation. No fills |
 
 New styles are added by writing one small class per type (six in total) and registering them via `@register_generator("type", "newstyle")`.
 

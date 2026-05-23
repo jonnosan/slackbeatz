@@ -39,9 +39,16 @@ _GEN_KNOBS = frozenset(
      # Style-default overrides (issue #19):
      "base_vel", "base_octave",
      # CC expansion (issue #7):
-     "pan", "reverb", "modwheel", "resonance", "bend"}
+     "pan", "reverb", "modwheel", "resonance", "bend",
+     # Round 2 — issue #1 (gate_jitter), #5 (arp_prob),
+     # #15 (psytrance bass burble), #22 (per-gen scale override):
+     "gate_jitter", "arp_prob", "burble_prob", "scale"}
 )
-_PART_KNOBS = frozenset({"tempo", "key", "role", "seed"})
+# Part-level knobs include the new transpose_prob (issue #10): a per-
+# part-instance roll for transposition that the scheduler applies
+# uniformly across all gens in that part. Also `scale` lets a single
+# part swap to a different mode without song-wide effect.
+_PART_KNOBS = frozenset({"tempo", "key", "role", "seed", "transpose_prob", "scale"})
 _INST_KNOBS = frozenset({"ch", "note"})
 _KIT_KNOBS = frozenset({"ch", "preset"})
 
@@ -321,6 +328,10 @@ class _Parser:
                 self.file.song.seed = int(toks[1])
             except ValueError:
                 raise ParseError(ln.line_no, f"seed must be int, got {toks[1]!r}") from None
+        elif kw == "scale":
+            if len(toks) != 2:
+                raise ParseError(ln.line_no, "expected: scale <name>")
+            self.file.song.scale = toks[1]
         else:
             raise ParseError(ln.line_no, f"unknown song attribute {kw!r}")
 

@@ -44,6 +44,9 @@ _GM_PROGRAM_DEFAULTS: dict[tuple[str, str], int] = {
     ("bass", "psytrance"):    38,
     ("bass", "vaporwave"):    34,
     ("bass", "acid"):         38,
+    # Dub techno: 92 Pad 5 (Bowed) — a warm sustained drone that sits
+    # under the chord stabs without competing for attention.
+    ("bass", "dub_techno"):   92,
 
     # Melody: Saw Lead (81) for euclid / Square Lead (80) for psytrance —
     # bright, cuts through. Deep techno wants Pad 1 new age (88).
@@ -54,6 +57,7 @@ _GM_PROGRAM_DEFAULTS: dict[tuple[str, str], int] = {
     ("melody", "psytrance"):    80,
     ("melody", "vaporwave"):    66,
     ("melody", "acid"):         87,
+    ("melody", "dub_techno"):   88,   # Pad 1 — distant lead
 
     # Chords / pads: Warm Pad (89) for euclid, Pad 4 choir (91) for
     # deep_techno, Pad 6 Metallic (94) for psytrance, Electric Piano 1
@@ -64,6 +68,8 @@ _GM_PROGRAM_DEFAULTS: dict[tuple[str, str], int] = {
     ("chords", "psytrance"):    94,
     ("chords", "vaporwave"):     4,
     ("chords", "acid"):         18,
+    # Dub techno: 90 Pad 3 (Polysynth) — the iconic chord-stab voice.
+    ("chords", "dub_techno"):   90,
 
     # Candy: FX 5 brightness (100) for euclid sweeps, FX 7 echoes (102)
     # for deep_techno LFO modulation, FX 8 sci-fi (103) for psytrance
@@ -74,6 +80,7 @@ _GM_PROGRAM_DEFAULTS: dict[tuple[str, str], int] = {
     ("candy", "psytrance"):   103,
     ("candy", "vaporwave"):    14,
     ("candy", "acid"):        100,
+    ("candy", "dub_techno"):  99,    # FX 4 atmosphere — slow textural drone
 
     # rhythm / drums live on the GM percussion channel (MIDI ch 10);
     # FluidSynth auto-routes to the drum-kit bank there, no program

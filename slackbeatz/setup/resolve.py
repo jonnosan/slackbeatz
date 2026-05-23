@@ -167,6 +167,8 @@ def _resolve_part(
     key_raw = knobs.pop("key", None)
     role_raw = knobs.pop("role", None)
     seed_raw = knobs.pop("seed", None)
+    scale_raw = knobs.pop("scale", None)
+    transpose_prob_raw = knobs.pop("transpose_prob", None)
 
     if tempo_raw is None:
         tempo = song_tempo
@@ -199,6 +201,17 @@ def _resolve_part(
                 f"part {part.name!r}: gen {h!r} not declared at song level",
             )
 
+    scale_override = scale_raw if isinstance(scale_raw, str) else None
+    transpose_prob = 0.0
+    if transpose_prob_raw is not None:
+        if not isinstance(transpose_prob_raw, (int, float)):
+            raise ResolveError(part.line, f"part {part.name!r}: transpose_prob must be a number")
+        transpose_prob = float(transpose_prob_raw)
+        if not 0.0 <= transpose_prob <= 1.0:
+            raise ResolveError(
+                part.line, f"part {part.name!r}: transpose_prob must be 0..1, got {transpose_prob}"
+            )
+
     return ResolvedPart(
         name=part.name,
         bars=part.bars,
@@ -206,6 +219,8 @@ def _resolve_part(
         key=key,
         role=role,
         seed_override=seed_override,
+        scale_override=scale_override,
+        transpose_prob=transpose_prob,
         gen_handles=list(part.gens),
     )
 
@@ -264,4 +279,5 @@ def resolve_song(
         gens=gens,
         parts=parts,
         arrangement=arrangement,
+        scale_override=song.scale,
     )

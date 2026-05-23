@@ -1,0 +1,40 @@
+# basic.sb — dub techno demo.
+#
+# Basic Channel / Maurizio / Rhythm & Sound feel: soft 4/4 kick + closed
+# hat under a wet chord stab on every off-beat 8th (the "chk-chk-chk-chk"
+# riding over the pulse). Sustained warm-pad bass drone underneath. No
+# fills, no drops — dub techno is gradual textural motion.
+#
+# 120 bpm, A minor (dorian flavour via per-style default). Demonstrates
+# the new knobs:
+#   transpose_prob on `main` so different repeats sit at different keys
+#   arp_prob on chords for occasional pad-stab → arpeggio variant
+#   gate_jitter on bass for breathing on the long drone
+
+song "Basic"
+  setup "gm"
+  tempo 120
+  key   Am
+
+gen kick   rhythm dub_techno humanize=2
+gen hats   rhythm dub_techno humanize=3 drop_prob=0.06
+gen drone  bass   dub_techno inst=bass gate_jitter=0.15
+gen stab   chords dub_techno inst=pad arp_prob=0.15
+gen tex    candy  dub_techno inst=riser
+
+part intro 16
+  drone
+  tex
+
+part main 64 transpose_prob=0.3
+  kick
+  hats
+  drone
+  stab
+  tex
+
+part outro 16
+  drone
+  tex
+
+play intro main main outro

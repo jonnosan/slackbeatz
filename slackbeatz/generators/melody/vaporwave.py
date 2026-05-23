@@ -18,16 +18,20 @@ from typing import Iterator
 from slackbeatz.engine.event import CC, Event, Note
 from slackbeatz.generators._shared import (
     ChordProgression,
+    apply_gate_jitter,
     evolution_multiplier,
     pick_evolution_direction,
     should_mute_bar,
+    transposed_pitch,
 )
 from slackbeatz.generators.base import Generator
 from slackbeatz.generators.defaults import (
     base_octave_for,
     base_vel_for,
     gate_for,
+    gate_jitter_for,
     macro_knobs,
+    scale_for,
 )
 from slackbeatz.generators.registry import register_generator
 from slackbeatz.model.context import PartContext
@@ -54,8 +58,10 @@ class MelodyVaporwave(Generator):
         # Optional per-phrase panning: pan=N (-64..63) sets the centre,
         # phrases wander ±10 around it. 64 = MIDI centre.
         pan_center = self.knob_int("pan", 64)
+        gate_jitter = gate_jitter_for(self)
         macro = macro_knobs(self)
         direction = pick_evolution_direction(ctx.rng, macro["evolution"])
+        scale = scale_for(self, ctx, fallback="dorian")
 
         tonic, _ = parse_key(ctx.key)
         prog = ChordProgression("i-VII-VI-V", bars_per_chord=4)
@@ -105,15 +111,17 @@ class MelodyVaporwave(Generator):
                 candidates = [d for d in _DEGREES if d != last_deg] or _DEGREES
                 deg = ctx.rng.choice(candidates)
                 last_deg = deg
-                pitch = scale_note(
-                    chord_root_deg + deg, tonic, "dorian", 4 + octave_off
+                pitch = transposed_pitch(
+                    scale_note(chord_root_deg + deg, tonic, scale, 4 + octave_off),
+                    ctx.transpose_semitones,
                 )
                 if not 0 <= pitch <= 127:
                     continue
                 # Note lands on a quarter-note grid relative to chord start.
                 tick = bar * ticks_per_bar + slot * ppq
-                # Long sustain — half a bar by default.
-                dur = max(1, int(2 * ppq * gate))
+                # Long sustain — half a bar by default + optional jitter.
+                base_dur = max(1, int(2 * ppq * gate))
+                dur = apply_gate_jitter(base_dur, gate_jitter, ctx.rng)
                 jitter = ctx.rng.randint(-4, 4)
                 vel = max(1, min(127, int(round(base_vel * intensity * evo_mult)) + jitter))
                 yield Note(

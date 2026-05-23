@@ -1,3 +1,3 @@
 """``melody`` generator style modules."""
 
-from . import euclid, deep_techno, psytrance, vaporwave, acid  # noqa: F401
+from . import euclid, deep_techno, psytrance, vaporwave, acid, dub_techno  # noqa: F401

@@ -12,16 +12,20 @@ from typing import Iterator
 
 from slackbeatz.engine.event import Event, Note
 from slackbeatz.generators._shared import (
+    apply_gate_jitter,
     evolution_multiplier,
     pick_evolution_direction,
     should_mute_bar,
+    transposed_pitch,
 )
 from slackbeatz.generators.base import Generator
 from slackbeatz.generators.defaults import (
     base_octave_for,
     base_vel_for,
     gate_for,
+    gate_jitter_for,
     macro_knobs,
+    scale_for,
 )
 from slackbeatz.generators.registry import register_generator
 from slackbeatz.model.context import PartContext
@@ -41,8 +45,10 @@ class MelodyAcid(Generator):
             return
         gate = gate_for(self)
         base_vel = base_vel_for(self)
+        gate_jitter = gate_jitter_for(self)
         macro = macro_knobs(self)
         direction = pick_evolution_direction(ctx.rng, macro["evolution"])
+        scale = scale_for(self, ctx, fallback="minor")
 
         tonic, _ = parse_key(ctx.key)
         ticks_per_bar = 4 * ctx.ppq
@@ -54,14 +60,19 @@ class MelodyAcid(Generator):
             if should_mute_bar(ctx.rng, macro["mute_prob"]):
                 continue
             deg = ctx.rng.choice([0, 4, 7])  # root / 5th / octave
-            pitch = scale_note(deg, tonic, "minor", 5 + octave_off)
+            pitch = transposed_pitch(
+                scale_note(deg, tonic, scale, 5 + octave_off),
+                ctx.transpose_semitones,
+            )
             if not 0 <= pitch <= 127:
                 continue
             tick = bar * ticks_per_bar
             evo_mult = evolution_multiplier(bar, ctx.bars, macro["evolution"], direction)
             jitter = ctx.rng.randint(-3, 3)
             vel = max(1, min(127, int(round(base_vel * intensity * evo_mult)) + jitter))
+            base_dur = max(1, int(2 * ppq * gate))
+            dur = apply_gate_jitter(base_dur, gate_jitter, ctx.rng)
             yield Note(
-                tick=tick, duration=max(1, int(2 * ppq * gate)),
+                tick=tick, duration=dur,
                 channel=inst.channel, pitch=pitch, velocity=vel,
             )

@@ -35,3 +35,10 @@ class PartContext:
     prev_role: str | None = None
     next_role: str | None = None
     rng: random.Random = field(default_factory=random.Random)
+    # Set by the scheduler if any `scale=` knob (part or song) is in
+    # play. Pitched gens read this with a fallback to their style's
+    # hardcoded default.
+    scale_override: str | None = None
+    # Semitone offset applied per arrangement-instance — picked by the
+    # scheduler from the part's `transpose_prob` knob. 0 = no shift.
+    transpose_semitones: int = 0
