@@ -710,10 +710,33 @@ def _repl_input_loop(
         if getattr(args, "emit_clock", False):
             player.emit_clock = True
 
+    # IMPORTANT: this loop is called from the REPL daemon thread when
+    # --gui is active. Using ``input()`` here fires CPython's
+    # ``PyOS_InputHook`` on the calling thread; with _tkinter loaded,
+    # that hook is wired to ``Tcl_DoOneEvent`` to pump Tk events while
+    # input is pending. Tcl_DoOneEvent on a non-main thread crashes
+    # the process with "Tcl_WaitForEvent: Notifier not initialized"
+    # because it bypasses _tkinter's Python-level apartment guard
+    # (the hook is a C function pointer, not a Python wrapper).
+    #
+    # ``sys.stdin.readline()`` doesn't fire the input hook, so we use
+    # that instead and write the prompt ourselves. The cost is losing
+    # GNU readline's line-editing (history, arrow keys) — acceptable
+    # for the GUI mode, and the on-main-thread path below keeps
+    # input() so non-GUI users get readline back.
+    use_readline = on_quit is None  # main-thread path → safe to use input()
     try:
         while True:
             try:
-                line = input("slackbeatz> ").strip()
+                if use_readline:
+                    line = input("slackbeatz> ").strip()
+                else:
+                    sys.stdout.write("slackbeatz> ")
+                    sys.stdout.flush()
+                    raw = sys.stdin.readline()
+                    if not raw:
+                        raise EOFError
+                    line = raw.rstrip("\r\n").strip()
             except EOFError:
                 print()  # newline after Ctrl+D
                 break
