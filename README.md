@@ -64,11 +64,64 @@ Two file types, both `.sb`:
 - **Setup file** — declares the rig: which instrument names live on which MIDI channels, plus drum kits with per-drum note maps.
 - **Song file** — declares generators (in *logical* instrument names), parts (named sections), and an arrangement.
 
-See `examples/dark_sunday.sb` and `examples/studio.sb` for a full example, or run `slackbeatz check examples/dark_sunday.sb` to validate without producing MIDI.
+A minimal song that resolves against the bundled `gm` setup:
+
+```text
+# tiny.sb
+
+song "Tiny"
+  setup "gm"          # bundled name; or a path like "studio.sb"
+  tempo 128
+  key   Am
+  seed  42
+
+# gen <handle> <type> <style> [<k=v>...]
+gen kick  rhythm euclid
+gen bass  bass   euclid
+gen pad   chords euclid
+
+# part <name> <bars> [tempo=N] [key=K] [role=R] [seed=N]
+# indented lines list the gen handles active in this part
+part intro 8
+  kick
+  pad
+
+part drop 16  role=drop
+  kick
+  bass
+  pad
+
+# arrangement; `*N` repeats, `()` groups
+play intro drop drop
+```
+
+Validate without producing audio:
+
+```bash
+slackbeatz check examples/dark_sunday.sb
+slackbeatz list-generators            # show every registered (type, style)
+slackbeatz list-setups                # show bundled setup names
+```
+
+Full reference lives in [`examples/dark_sunday.sb`](examples/dark_sunday.sb) (every DSL feature) and [`examples/studio.sb`](examples/studio.sb) (standalone setup).
 
 ## How it works
 
-Each generator is a chance-driven algorithm picked by `(type, style)` — e.g. `rhythm euclid`, `bass psytrance`. Algorithms use a seeded PRNG, so the same `seed` always produces the same output. Seed can be set globally (CLI), per song, per part, or per generator.
+Each generator is a chance-driven algorithm picked by `(type, style)` — e.g. `rhythm euclid`, `bass psytrance`. Algorithms use a seeded PRNG, so the same `seed` always produces the same output.
+
+### Seeds and reproducibility
+
+The seed used for a given *(part, generator)* pair is resolved most-specific-first:
+
+```
+gen.seed   →   part.seed   →   song.seed   →   CLI --seed   →   default 0
+```
+
+That integer is then mixed with the part name and generator handle (deterministically, via SHA-256, so it survives `PYTHONHASHSEED`) to derive an independent PRNG stream. Practical consequences:
+
+* Repeated parts (`drop drop` in the arrangement) play **identically** — same `(seed, part_name, gen_name)` → same stream. Techno loops typically want this.
+* Different gens in the same part roll independently from the same base seed.
+* For deliberate variation across repeats, declare differently-named parts (`drop1` / `drop2`) with different `seed=` values.
 
 ## Generator types
 
@@ -90,6 +143,29 @@ Each generator is a chance-driven algorithm picked by `(type, style)` — e.g. `
 | `psytrance` | 138–148 bpm, gallop 16th-note bass, offbeat hats, phrygian arpeggios |
 
 New styles are added by writing one small class per type (six in total) and registering them via `@register_generator("type", "newstyle")`.
+
+## Status
+
+| Component | State |
+|---|---|
+| DSL parser, setup resolver, arrangement expansion | ✅ shipping |
+| Realtime MIDI playback (`slackbeatz play`) | ✅ shipping (master clock only — see below) |
+| WAV/MP3 rendering (`slackbeatz audio`) | ✅ shipping |
+| Standard MIDI File output (`slackbeatz render`) | 🟡 stubbed; engine writes MIDI internally already (used by `audio`) — exposing via the subcommand is small |
+| Slave to external MIDI Clock (`--clock external`) | 🟡 architecture in place, implementation deferred |
+| Per-step pattern overrides in the DSL | ❌ deliberately not planned — algorithms own the notes |
+
+The clock-mode plumbing is split cleanly: `engine/clock_source.py` carries a `ClockSource` ABC with `InternalClock` (v1, master) implemented and `ExternalClock` stubbed with a docstring that lays out the future MIDI-Clock-slave contract. The scheduler talks to the ABC only, so adding the external implementation won't touch any other module.
+
+## Development
+
+```bash
+git clone https://github.com/jonnosan/slackbeatz && cd slackbeatz
+python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
+.venv/bin/pytest        # 21 tests, ~100ms — covers DSL, resolve, engine, examples
+```
+
+The previous Arduino sketch is still at the [`arduino-v1`](https://github.com/jonnosan/slackbeatz/tree/arduino-v1) tag for posterity.
 
 ## License
 
