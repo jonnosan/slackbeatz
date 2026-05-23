@@ -1,0 +1,427 @@
+"""Parser for `.sb` files. Consumes the line stream from :mod:`lexer` and
+produces a :class:`FileAST`.
+
+The grammar is small enough that a hand-rolled state machine reads more
+clearly than a generator stack: at indent 0 each line opens or continues a
+top-level block (`setup`, `song`, `inst`, `kit`, `gen`, `part`, `play`); at
+indent 1 each line is a child of the most recently opened block of the
+right shape (song attributes, kit overrides, part gens).
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from .ast import (
+    ArrAtom,
+    FileAST,
+    GenDecl,
+    InstDecl,
+    KitDecl,
+    KnobValue,
+    PartDecl,
+    PlayLine,
+    SetupAST,
+    SongAST,
+)
+from .lexer import Line, tokenize, tokenize_file
+
+# Set of known knob keys per declaration kind. Unknown keys raise at parse
+# time so typos surface immediately rather than being silently ignored by
+# the generator algorithm.
+_GEN_KNOBS = frozenset(
+    {"ch", "note", "inst", "kit", "intensity", "swing", "octave", "gate",
+     "density", "seed"}
+)
+_PART_KNOBS = frozenset({"tempo", "key", "role", "seed"})
+_INST_KNOBS = frozenset({"ch", "note"})
+_KIT_KNOBS = frozenset({"ch", "preset"})
+
+
+class ParseError(Exception):
+    """Raised on grammar violations. Includes line number and a hint."""
+
+    def __init__(self, line_no: int, msg: str) -> None:
+        super().__init__(f"line {line_no}: {msg}")
+        self.line_no = line_no
+
+
+# --------------------------------------------------------------------------
+# Public entry points
+# --------------------------------------------------------------------------
+
+def parse(text: str, *, source_path: str | None = None) -> FileAST:
+    """Parse the contents of a `.sb` file."""
+    lines = list(tokenize(text))
+    return _Parser(lines, source_path=source_path).run()
+
+
+def parse_file(path: str | Path) -> FileAST:
+    """Parse a `.sb` file from disk."""
+    lines = tokenize_file(path)
+    return _Parser(lines, source_path=str(path)).run()
+
+
+# --------------------------------------------------------------------------
+# Helpers shared between the parser and the public knob-validation API
+# --------------------------------------------------------------------------
+
+def _parse_knob_value(raw: str) -> KnobValue:
+    """Coerce a knob RHS into int / float / str."""
+    try:
+        return int(raw)
+    except ValueError:
+        pass
+    try:
+        return float(raw)
+    except ValueError:
+        pass
+    return raw
+
+
+def _parse_kv_pairs(
+    tokens: list[str],
+    *,
+    allowed: frozenset[str],
+    line_no: int,
+) -> dict[str, KnobValue]:
+    """Parse the trailing `k=v` portion of a declaration.
+
+    Each token must contain exactly one `=`. Unknown keys (not in *allowed*)
+    raise :class:`ParseError`.
+    """
+    out: dict[str, KnobValue] = {}
+    for tok in tokens:
+        if "=" not in tok:
+            raise ParseError(line_no, f"expected key=value, got {tok!r}")
+        key, _, value = tok.partition("=")
+        if not key:
+            raise ParseError(line_no, f"empty key in {tok!r}")
+        if key not in allowed:
+            raise ParseError(
+                line_no,
+                f"unknown knob {key!r} (allowed: {sorted(allowed)})",
+            )
+        if key in out:
+            raise ParseError(line_no, f"duplicate knob {key!r}")
+        out[key] = _parse_knob_value(value)
+    return out
+
+
+def _unquote(tok: str, line_no: int) -> str:
+    """Strip surrounding double quotes from a STRING token."""
+    if len(tok) < 2 or tok[0] != '"' or tok[-1] != '"':
+        raise ParseError(line_no, f"expected quoted string, got {tok!r}")
+    return tok[1:-1]
+
+
+# --------------------------------------------------------------------------
+# Parser state machine
+# --------------------------------------------------------------------------
+
+class _Parser:
+    """Two-state machine driven by indent and first-token keyword."""
+
+    def __init__(self, lines: list[Line], *, source_path: str | None) -> None:
+        self.lines = lines
+        self.source_path = source_path
+        self.file = FileAST(source_path=source_path)
+
+        # Tracks the most recently opened block of each shape, so an
+        # indented child line can be routed to the right one.
+        self._open_block: str | None = None  # "song" | "kit" | "part" | None
+        self._open_kit: KitDecl | None = None
+        self._open_part: PartDecl | None = None
+
+    # ------------------------------------------------------------------
+    # Top-level driver
+    # ------------------------------------------------------------------
+
+    def run(self) -> FileAST:
+        for ln in self.lines:
+            if ln.indented:
+                self._handle_indented(ln)
+                continue
+            # Indent 0 closes any block that only accepts indented children
+            # (kit overrides, part gens). It does NOT close a song block —
+            # gen/part/play lines at indent 0 still feed the song.
+            if self._open_block in ("kit", "part"):
+                self._open_block = None
+                self._open_kit = None
+                self._open_part = None
+            self._handle_top(ln)
+        return self.file
+
+    # ------------------------------------------------------------------
+    # Top-level (indent 0) line dispatch
+    # ------------------------------------------------------------------
+
+    def _handle_top(self, ln: Line) -> None:
+        if not ln.tokens:
+            return
+        kw = ln.tokens[0]
+        tail = ln.tokens[1:]
+        if kw == "setup":
+            self._handle_setup_header(tail, ln.line_no)
+        elif kw == "song":
+            self._handle_song_header(tail, ln.line_no)
+        elif kw == "inst":
+            self._handle_inst(tail, ln.line_no)
+        elif kw == "kit":
+            self._handle_kit_header(tail, ln.line_no)
+        elif kw == "gen":
+            self._handle_gen(tail, ln.line_no)
+        elif kw == "part":
+            self._handle_part_header(tail, ln.line_no)
+        elif kw == "play":
+            self._handle_play(tail, ln.line_no)
+        else:
+            raise ParseError(ln.line_no, f"unexpected statement {kw!r}")
+
+    # ------------------------------------------------------------------
+    # Block headers
+    # ------------------------------------------------------------------
+
+    def _handle_setup_header(self, tail: list[str], line_no: int) -> None:
+        if self.file.setup is not None:
+            raise ParseError(line_no, "more than one setup block in file")
+        if len(tail) != 1:
+            raise ParseError(line_no, 'expected: setup "name"')
+        name = _unquote(tail[0], line_no)
+        self.file.setup = SetupAST(name=name, line=line_no)
+
+    def _handle_song_header(self, tail: list[str], line_no: int) -> None:
+        if self.file.song is not None:
+            raise ParseError(line_no, "more than one song block in file")
+        if len(tail) != 1:
+            raise ParseError(line_no, 'expected: song "name"')
+        name = _unquote(tail[0], line_no)
+        self.file.song = SongAST(name=name, line=line_no)
+        self._open_block = "song"
+
+    # ------------------------------------------------------------------
+    # inst / kit
+    # ------------------------------------------------------------------
+
+    def _handle_inst(self, tail: list[str], line_no: int) -> None:
+        if self.file.setup is None:
+            raise ParseError(line_no, "inst outside of a setup block")
+        if not tail:
+            raise ParseError(line_no, "inst requires a name")
+        name, *rest = tail
+        knobs = _parse_kv_pairs(rest, allowed=_INST_KNOBS, line_no=line_no)
+        if "ch" not in knobs:
+            raise ParseError(line_no, "inst requires ch=<channel>")
+        self.file.setup.instruments.append(
+            InstDecl(name=name, knobs=knobs, line=line_no)
+        )
+
+    def _handle_kit_header(self, tail: list[str], line_no: int) -> None:
+        if self.file.setup is None:
+            raise ParseError(line_no, "kit outside of a setup block")
+        if not tail:
+            raise ParseError(line_no, "kit requires a name")
+        name, *rest = tail
+        knobs = _parse_kv_pairs(rest, allowed=_KIT_KNOBS, line_no=line_no)
+        if "ch" not in knobs:
+            raise ParseError(line_no, "kit requires ch=<channel>")
+        kit = KitDecl(name=name, knobs=knobs, overrides={}, line=line_no)
+        self.file.setup.kits.append(kit)
+        self._open_block = "kit"
+        self._open_kit = kit
+
+    # ------------------------------------------------------------------
+    # gen / part / play
+    # ------------------------------------------------------------------
+
+    def _handle_gen(self, tail: list[str], line_no: int) -> None:
+        if self.file.song is None:
+            raise ParseError(line_no, "gen outside of a song block")
+        if len(tail) < 3:
+            raise ParseError(line_no, "expected: gen <handle> <type> <style> [k=v...]")
+        handle, type_, style, *rest = tail
+        knobs = _parse_kv_pairs(rest, allowed=_GEN_KNOBS, line_no=line_no)
+        self.file.song.gens.append(
+            GenDecl(handle=handle, type_=type_, style=style, knobs=knobs, line=line_no)
+        )
+
+    def _handle_part_header(self, tail: list[str], line_no: int) -> None:
+        if self.file.song is None:
+            raise ParseError(line_no, "part outside of a song block")
+        if len(tail) < 2:
+            raise ParseError(line_no, "expected: part <name> <bars> [k=v...]")
+        name, bars_tok, *rest = tail
+        try:
+            bars = int(bars_tok)
+        except ValueError:
+            raise ParseError(line_no, f"bars must be an integer, got {bars_tok!r}") from None
+        knobs = _parse_kv_pairs(rest, allowed=_PART_KNOBS, line_no=line_no)
+        part = PartDecl(name=name, bars=bars, knobs=knobs, line=line_no)
+        self.file.song.parts.append(part)
+        self._open_block = "part"
+        self._open_part = part
+
+    def _handle_play(self, tail: list[str], line_no: int) -> None:
+        if self.file.song is None:
+            raise ParseError(line_no, "play outside of a song block")
+        if self.file.song.play is not None:
+            raise ParseError(line_no, "more than one play line in song")
+        atoms = _parse_arrangement(tail, line_no)
+        self.file.song.play = PlayLine(atoms=atoms, line=line_no)
+
+    # ------------------------------------------------------------------
+    # Indented (indent > 0) lines — children of the currently open block
+    # ------------------------------------------------------------------
+
+    def _handle_indented(self, ln: Line) -> None:
+        if self._open_block == "song":
+            self._handle_song_attr(ln)
+        elif self._open_block == "kit":
+            self._handle_kit_override(ln)
+        elif self._open_block == "part":
+            self._handle_part_gen(ln)
+        else:
+            raise ParseError(
+                ln.line_no, "indented line with no surrounding block"
+            )
+
+    def _handle_song_attr(self, ln: Line) -> None:
+        assert self.file.song is not None
+        toks = ln.tokens
+        if not toks:
+            return
+        kw = toks[0]
+        if kw == "setup":
+            if len(toks) != 2:
+                raise ParseError(ln.line_no, 'expected: setup "<name-or-path>"')
+            self.file.song.setup_ref = _unquote(toks[1], ln.line_no)
+        elif kw == "tempo":
+            if len(toks) != 2:
+                raise ParseError(ln.line_no, "expected: tempo <bpm>")
+            try:
+                self.file.song.tempo = int(toks[1])
+            except ValueError:
+                raise ParseError(ln.line_no, f"tempo must be int, got {toks[1]!r}") from None
+        elif kw == "key":
+            if len(toks) != 2:
+                raise ParseError(ln.line_no, "expected: key <name>")
+            self.file.song.key = toks[1]
+        elif kw == "seed":
+            if len(toks) != 2:
+                raise ParseError(ln.line_no, "expected: seed <int>")
+            try:
+                self.file.song.seed = int(toks[1])
+            except ValueError:
+                raise ParseError(ln.line_no, f"seed must be int, got {toks[1]!r}") from None
+        else:
+            raise ParseError(ln.line_no, f"unknown song attribute {kw!r}")
+
+    def _handle_kit_override(self, ln: Line) -> None:
+        assert self._open_kit is not None
+        if len(ln.tokens) != 2:
+            raise ParseError(ln.line_no, "expected: <drum-name> <note>")
+        name, note_tok = ln.tokens
+        try:
+            note = int(note_tok)
+        except ValueError:
+            raise ParseError(ln.line_no, f"note must be int, got {note_tok!r}") from None
+        if name in self._open_kit.overrides:
+            raise ParseError(ln.line_no, f"duplicate override for {name!r}")
+        self._open_kit.overrides[name] = note
+
+    def _handle_part_gen(self, ln: Line) -> None:
+        assert self._open_part is not None
+        if len(ln.tokens) != 1:
+            raise ParseError(
+                ln.line_no,
+                "expected a single gen handle (one per line)",
+            )
+        self._open_part.gens.append(ln.tokens[0])
+
+
+# --------------------------------------------------------------------------
+# Arrangement parsing (play line)
+# --------------------------------------------------------------------------
+
+def _parse_arrangement(tokens: list[str], line_no: int) -> list[ArrAtom]:
+    """Parse the token stream that follows `play`.
+
+    Supports IDENT, `*` N, `(` … `)`. Returns a list of :class:`ArrAtom`.
+    """
+    pos = 0
+
+    def fail(msg: str) -> "ParseError":
+        return ParseError(line_no, f"play: {msg}")
+
+    def parse_atoms(depth: int) -> list[ArrAtom]:
+        nonlocal pos
+        out: list[ArrAtom] = []
+        while pos < len(tokens):
+            tok = tokens[pos]
+            if tok == ")":
+                if depth == 0:
+                    raise fail("unmatched ')'")
+                return out
+            if tok == "(":
+                pos += 1
+                inner = parse_atoms(depth + 1)
+                if pos >= len(tokens) or tokens[pos] != ")":
+                    raise fail("missing ')'")
+                pos += 1
+                repeat = _maybe_repeat()
+                out.append(ArrAtom(group=inner, repeat=repeat))
+                continue
+            if tok == "*":
+                raise fail("'*' without preceding atom")
+            # IDENT atom
+            ref = tok
+            pos += 1
+            repeat = _maybe_repeat()
+            out.append(ArrAtom(ref=ref, repeat=repeat))
+        return out
+
+    def _maybe_repeat() -> int:
+        nonlocal pos
+        if pos < len(tokens) and tokens[pos] == "*":
+            pos += 1
+            if pos >= len(tokens):
+                raise fail("'*' at end of line — expected an integer")
+            try:
+                n = int(tokens[pos])
+            except ValueError:
+                raise fail(f"'*' followed by non-integer {tokens[pos]!r}") from None
+            if n < 1:
+                raise fail(f"'*{n}' — repeat count must be >= 1")
+            pos += 1
+            return n
+        return 1
+
+    atoms = parse_atoms(depth=0)
+    if not atoms:
+        raise ParseError(line_no, "play: expected at least one atom")
+    return atoms
+
+
+# --------------------------------------------------------------------------
+# Arrangement expansion — useful both at runtime and for tests
+# --------------------------------------------------------------------------
+
+def expand_arrangement(atoms: list[ArrAtom]) -> list[str]:
+    """Flatten a parsed arrangement into the linear sequence of part names.
+
+    >>> from slackbeatz.dsl.ast import ArrAtom
+    >>> expand_arrangement([
+    ...     ArrAtom(ref="intro"),
+    ...     ArrAtom(group=[ArrAtom(ref="build"), ArrAtom(ref="drop")], repeat=2),
+    ... ])
+    ['intro', 'build', 'drop', 'build', 'drop']
+    """
+    out: list[str] = []
+    for atom in atoms:
+        if atom.ref is not None:
+            out.extend([atom.ref] * atom.repeat)
+        else:
+            inner = expand_arrangement(atom.group)
+            for _ in range(atom.repeat):
+                out.extend(inner)
+    return out
