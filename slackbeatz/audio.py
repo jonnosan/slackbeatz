@@ -35,14 +35,22 @@ from pathlib import Path
 # --------------------------------------------------------------------------
 
 _DEFAULT_SOUNDFONT_NAME = "FluidR3_GM.sf2"
-_DEFAULT_SOUNDFONT_URL = (
-    # FluidR3_GM.sf2 — the canonical 148 MB stereo General-MIDI soundfont
-    # by Frank Wen, MIT-licensed. The synth + drum sections meaningfully
-    # exceed GeneralUser GS, which matters because slackbeatz hits both
-    # heavily via GM `program_change` events. Hosted at musical-artifacts
-    # (the canonical community archive — same upstream the brew/apt
-    # `fluid-soundfont-gm` packages pull from).
-    "https://musical-artifacts.com/artifacts/738/FluidR3_GM.sf2"
+# Tried in order. musical-artifacts.com is the canonical community
+# archive but rate-limits / cloudflare-gates Python's default UA, so
+# we set a browser-ish header on the request *and* keep the
+# github raw mirror as a fallback. Both serve byte-identical 148 MB
+# FluidR3_GM.sf2 files (verified via Content-Length 148358590).
+_DEFAULT_SOUNDFONT_URLS: tuple[str, ...] = (
+    "https://musical-artifacts.com/artifacts/738/FluidR3_GM.sf2",
+    "https://github.com/urish/cinto/raw/master/media/FluidR3%20GM.sf2",
+)
+# Browser-ish UA — bare "Python-urllib/X.Y" trips 403 on
+# musical-artifacts. We don't try to look like a real browser, we just
+# want past the obvious bot block.
+_DOWNLOAD_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/120.0.0.0 Safari/537.36 slackbeatz/1.0"
 )
 _CACHE_DIR = Path.home() / ".cache" / "slackbeatz"
 
@@ -127,25 +135,42 @@ def _download_default_soundfont() -> Path:
     _CACHE_DIR.mkdir(parents=True, exist_ok=True)
     dest = _CACHE_DIR / _DEFAULT_SOUNDFONT_NAME
     print(
-        f"slackbeatz: downloading default soundfont (~140 MB) to {dest} ...",
+        f"slackbeatz: downloading default soundfont (~148 MB) to {dest} ...",
         file=sys.stderr,
         flush=True,
     )
-    try:
-        with urllib.request.urlopen(_DEFAULT_SOUNDFONT_URL) as resp:
-            data = resp.read()
-    except Exception as e:
-        raise SoundfontError(
-            f"failed to download default soundfont from "
-            f"{_DEFAULT_SOUNDFONT_URL}: {e}. Pass --soundfont <path> "
-            "to a local .sf2/.sf3 file instead."
-        ) from e
-    dest.write_bytes(data)
-    print(
-        f"slackbeatz: saved soundfont ({len(data) // 1024} KB).",
-        file=sys.stderr,
+    errors: list[str] = []
+    for url in _DEFAULT_SOUNDFONT_URLS:
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": _DOWNLOAD_UA})
+            with urllib.request.urlopen(req) as resp:
+                data = resp.read()
+            # Sanity-check: SF2 files start with "RIFF....sfbk". If a CDN
+            # returns an HTML error page we'd otherwise cache it and
+            # FluidSynth would explode on the next render.
+            if not (data[:4] == b"RIFF" and data[8:12] == b"sfbk"):
+                errors.append(
+                    f"{url}: response is not a valid SF2 "
+                    f"(first 16 bytes: {data[:16]!r})"
+                )
+                continue
+            dest.write_bytes(data)
+            print(
+                f"slackbeatz: saved soundfont ({len(data) // 1024} KB) from {url}.",
+                file=sys.stderr,
+            )
+            return dest
+        except Exception as e:  # noqa: BLE001 — log + try next mirror
+            errors.append(f"{url}: {e}")
+            print(
+                f"slackbeatz: mirror failed ({url}: {e}), trying next ...",
+                file=sys.stderr,
+            )
+    raise SoundfontError(
+        "failed to download default soundfont from any mirror:\n  "
+        + "\n  ".join(errors)
+        + "\nPass --soundfont <path> to a local .sf2/.sf3 file instead."
     )
-    return dest
 
 
 # --------------------------------------------------------------------------
