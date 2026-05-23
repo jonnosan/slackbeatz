@@ -36,7 +36,7 @@ See `examples/dark_sunday.sb` and `examples/studio.sb` for a full example, or ru
 
 ## How it works
 
-Each generator is a chance-driven algorithm picked by `(type, style)` — e.g. `rhythm techno`, `bass techno`. Algorithms use a seeded PRNG, so the same `seed` always produces the same output. Seed can be set globally (CLI), per song, per part, or per generator. v1 algorithms lean on the Euclidean rhythm primitive carried forward from the Arduino prototype.
+Each generator is a chance-driven algorithm picked by `(type, style)` — e.g. `rhythm euclid`, `bass psytrance`. Algorithms use a seeded PRNG, so the same `seed` always produces the same output. Seed can be set globally (CLI), per song, per part, or per generator.
 
 ## Generator types
 
@@ -46,8 +46,18 @@ Each generator is a chance-driven algorithm picked by `(type, style)` — e.g. `
 | `drums` | A full coordinated drum kit (kick + snare + hat + clap) on one channel |
 | `bass` | Pitched bass-register patterns in the part's key |
 | `melody` | Pitched lead phrases; tracks chord progression if a `chords` gen is present |
-| `chords` | Polyphonic pad voicings on a 4-chord progression |
+| `chords` | Polyphonic pad voicings on a chord progression |
 | `candy` | Risers / sweeps / FX (CC + notes) at part transitions |
+
+## Generator styles
+
+| Style | Character |
+|---|---|
+| `euclid` | Arduino-derived defaults — Euclidean 4-on-the-floor, 4-bar fills, chord-following lead |
+| `deep_techno` | Slower, sparser, modal. Sustained pads, half-note bass, 1–2 melody notes per bar |
+| `psytrance` | 138–148 bpm, gallop 16th-note bass, offbeat hats, phrygian arpeggios |
+
+New styles are added by writing one small class per type (six in total) and registering them via `@register_generator("type", "newstyle")`.
 
 ## License
 
