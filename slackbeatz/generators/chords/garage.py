@@ -10,13 +10,12 @@ from typing import Iterator
 
 from slackbeatz.engine.event import Event, Note
 from slackbeatz.generators._shared import (
-    ChordProgression,
     apply_gate_jitter,
+    build_chord,
     evolution_multiplier,
     pick_evolution_direction,
     should_mute_bar,
     step_to_ticks,
-    transposed_pitch,
 )
 from slackbeatz.generators.base import Generator
 from slackbeatz.generators.defaults import (
@@ -24,16 +23,15 @@ from slackbeatz.generators.defaults import (
     base_vel_for,
     gate_for,
     gate_jitter_for,
+    inversion_for,
     macro_knobs,
+    progression_for,
     scale_for,
+    voicing_for,
 )
 from slackbeatz.generators.registry import register_generator
 from slackbeatz.model.context import PartContext
 from slackbeatz.theory.keys import parse_key
-from slackbeatz.theory.scales import scale_note
-
-
-_MIN7 = (0, 2, 4, 6)  # root, 3rd, 5th, 7th
 
 
 @register_generator("chords", "garage")
@@ -52,7 +50,9 @@ class ChordsGarage(Generator):
         scale = scale_for(self, ctx, fallback="minor")
 
         tonic, _ = parse_key(ctx.key)
-        prog = ChordProgression("i-VI-ii-IV", bars_per_chord=4)
+        prog = progression_for(self, default_name="i-VI-ii-IV", default_bars=4)
+        voicing = voicing_for(self, fallback="seventh")
+        inversion = inversion_for(self)
         ticks_per_bar = ctx.ticks_per_bar
 
         # Stab on beats 1 and 3 of each bar — quarter-bar grid.
@@ -67,6 +67,14 @@ class ChordsGarage(Generator):
             chord_root = prog.degree_at_bar(bar)
             evo_mult = evolution_multiplier(bar, ctx.bars, macro["evolution"], direction)
             base_dur = max(1, int(beat_step * (ctx.ppq // 4) * gate))  # ~beat duration * gate
+            # Build the chord pitches once for this chord; same set is
+            # stabbed on each beat across each bar of the chord.
+            chord_pitches = build_chord(
+                chord_root, tonic=tonic, scale=scale,
+                base_octave=4 + octave_off,
+                voicing=voicing, inversion=inversion,
+                transpose=ctx.transpose_semitones,
+            )
             # Stab for each bar of the chord placement.
             for stab_bar in range(prog.bars_per_chord):
                 if bar + stab_bar >= ctx.bars:
@@ -78,13 +86,7 @@ class ChordsGarage(Generator):
                     if step >= ctx.steps_per_bar:
                         continue
                     tick = bar_start + step_to_ticks(step, ctx.ppq)
-                    for off in _MIN7:
-                        pitch = transposed_pitch(
-                            scale_note(chord_root + off, tonic, scale, 4 + octave_off),
-                            ctx.transpose_semitones,
-                        )
-                        if not 0 <= pitch <= 127:
-                            continue
+                    for pitch in chord_pitches:
                         dur = apply_gate_jitter(base_dur, gate_jitter, ctx.rng)
                         yield Note(
                             tick=tick, duration=max(1, dur),

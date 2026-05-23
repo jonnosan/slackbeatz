@@ -443,7 +443,7 @@ def _knob_list_overrides(player) -> str:
 
 def _knob_list_all_specs() -> str:
     """Show the full registry of available knobs, organised by gen type."""
-    from slackbeatz.player import KNOB_SPECS
+    from slackbeatz.player import KNOB_CHOICES, KNOB_SPECS
 
     lines = ["knobs by gen type (range shown for /knob HANDLE NAME VALUE):"]
     for gen_type in ("rhythm", "drums", "bass", "melody", "chords", "candy"):
@@ -453,6 +453,9 @@ def _knob_list_all_specs() -> str:
                 f"{int(lo)}..{int(hi)}" if kind == "int" else f"{lo}..{hi}"
             )
             lines.append(f"    {name:14s}  {range_str:>14s}  default {default}")
+        # String-valued knobs for this gen type, if any.
+        for name, choices in KNOB_CHOICES.get(gen_type, {}).items():
+            lines.append(f"    {name:14s}  {'|'.join(choices)}")
     lines.append(
         "\n  Type `/knobs gens` to see your current song's gens, "
         "or `/knob HANDLE` for one gen's knobs + values."
@@ -462,7 +465,7 @@ def _knob_list_all_specs() -> str:
 
 def _knob_show_gen(player, handle: str) -> str:
     """Show the available knobs + current values for one gen."""
-    from slackbeatz.player import KNOB_SPECS
+    from slackbeatz.player import KNOB_CHOICES, KNOB_SPECS
 
     resolved = player.current_resolved
     if resolved is None:
@@ -472,10 +475,11 @@ def _knob_show_gen(player, handle: str) -> str:
         return f"unknown gen {handle!r}. available: {avail}"
     gen = resolved.gens[handle]
     specs = KNOB_SPECS.get(gen.type_, [])
+    choices = KNOB_CHOICES.get(gen.type_, {})
     overrides = player.get_knob_overrides().get(handle, {})
 
     lines = [f"{handle} ({gen.type_} / {gen.style}):"]
-    if not specs:
+    if not specs and not choices:
         lines.append("  (no tweakable knobs for this gen type)")
         return "\n".join(lines)
     for name, lo, hi, default, kind in specs:
@@ -494,6 +498,21 @@ def _knob_show_gen(player, handle: str) -> str:
             tag = "(default)"
         lines.append(
             f"  {name:14s}  {range_str:>14s}  = {current!s:<8s} {tag}"
+        )
+    # String-valued knobs (progression / voicing).
+    for name, valid_values in choices.items():
+        if name in overrides:
+            current = overrides[name]
+            tag = "(override)"
+        elif name in gen.knobs:
+            current = gen.knobs[name]
+            tag = "(from .sb)"
+        else:
+            current = "(style default)"
+            tag = ""
+        lines.append(
+            f"  {name:14s}  {'|'.join(valid_values)}\n"
+            f"  {'':14s}  current = {current} {tag}"
         )
     lines.append(
         f"\nUsage: /knob {handle} <name> <value> | /knob {handle} <name> (clear)"

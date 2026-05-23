@@ -439,6 +439,92 @@ class ChordProgression:
 
 
 # --------------------------------------------------------------------------
+# Chord voicings
+# --------------------------------------------------------------------------
+
+# Named voicings, expressed as scale-degree offsets from the chord root.
+# 0 = chord root in scale, 1 = next-scale-step up (= 2nd of the chord),
+# 2 = next-scale-step (= 3rd), etc. Because we pull degrees from the
+# part's scale (minor / dorian / phrygian / etc.), the same offset
+# produces mode-appropriate intervals automatically — `triad` over a
+# dorian chord root will use the dorian 3rd, which is minor; over a
+# major-key chord root it'd be major.
+VOICINGS: dict[str, tuple[int, ...]] = {
+    "triad":   (0, 2, 4),         # 1-3-5 — the basic triad
+    "seventh": (0, 2, 4, 6),      # 1-3-5-7 — m7 / maj7 depending on scale
+    "ninth":   (0, 2, 4, 6, 8),   # 1-3-5-7-9 — extended
+    "sus2":    (0, 1, 4),         # 1-2-5 — suspended-2nd (open, dreamy)
+    "sus4":    (0, 3, 4),         # 1-4-5 — suspended-4th (tense)
+    "shell":   (0, 6),            # 1-7 — jazz "shell" voicing (no 3rd)
+    "power":   (0, 4),            # 1-5 — rock power chord
+    "open":    (0, 4, 7),         # 1-5-1(oct) — quartal / Mc McLaughlin
+}
+
+
+def _resolve_voicing_offsets(voicing: str) -> tuple[int, ...]:
+    """Look up *voicing* in :data:`VOICINGS`, falling back to ``triad``
+    for unknown names rather than raising — keeps a typo in a DSL knob
+    from killing playback."""
+    return VOICINGS.get(voicing, VOICINGS["triad"])
+
+
+def build_chord(
+    chord_root_deg: int,
+    *,
+    tonic: int,
+    scale: str,
+    base_octave: int,
+    voicing: str = "triad",
+    inversion: int = 0,
+    transpose: int = 0,
+) -> list[int]:
+    """Build the MIDI pitches of one chord per the given voicing.
+
+    Parameters
+    ----------
+    chord_root_deg:
+        Scale degree of the chord root (0 = i, 5 = vi, etc.).
+    tonic, scale:
+        Used by ``scale_note`` to translate scale degrees into MIDI
+        pitches. *scale* is the part's scale name (``minor``,
+        ``dorian``, ``phrygian``, ...).
+    base_octave:
+        Octave the chord root sits in. Inversions raise individual
+        chord tones an octave above this.
+    voicing:
+        Name from :data:`VOICINGS` (``triad`` / ``seventh`` / ``ninth``
+        / ``sus2`` / ``sus4`` / ``shell`` / ``power`` / ``open``).
+        Unknown names fall back to ``triad``.
+    inversion:
+        Number of chord tones to lift an octave (0 = root position).
+        Clamped to ``len(voicing) - 1``.
+    transpose:
+        Per-arrangement semitone offset (forwarded to
+        :func:`transposed_pitch`).
+
+    Returns
+    -------
+    List of MIDI pitches in ascending order, filtered to 0..127.
+    """
+    # Local imports keep _shared.py independent of theory at module-
+    # load time (theory imports back).
+    from slackbeatz.theory.scales import scale_note
+
+    offsets = list(_resolve_voicing_offsets(voicing))
+    inversion = max(0, min(inversion, len(offsets) - 1))
+
+    pitches: list[int] = []
+    for i, off in enumerate(offsets):
+        # Lift the first ``inversion`` tones up one octave.
+        oct_bump = 1 if i < inversion else 0
+        pitch = scale_note(chord_root_deg + off, tonic, scale, base_octave + oct_bump)
+        pitch = transposed_pitch(pitch, transpose)
+        if 0 <= pitch <= 127:
+            pitches.append(pitch)
+    return sorted(pitches)
+
+
+# --------------------------------------------------------------------------
 # Drum fills
 # --------------------------------------------------------------------------
 

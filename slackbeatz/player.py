@@ -94,11 +94,36 @@ KNOB_SPECS: dict[str, list[tuple[str, float, float, float, str]]] = {
         ("mute_prob",     0.0,  0.5,   0.0,  "float"),
         ("arp_prob",      0.0,  0.5,   0.0,  "float"),
         ("evolution",     0.0,  1.0,   0.0,  "float"),
+        # Progression / voicing knobs — numeric sliders, but kept here
+        # so /knob HANDLE shows them. String-valued knobs (progression
+        # name, voicing name) are listed separately in KNOB_CHOICES so
+        # the user can see the legal values.
+        ("bars_per_chord", 1,    32,    4,    "int"),
+        ("inversion",     0,    3,     0,    "int"),
     ],
     "candy": [
         ("intensity",     0.0,  1.5,   1.0,  "float"),
         ("density",       0.0,  1.0,   0.5,  "float"),
     ],
+}
+
+
+# String-valued knobs — picked from a closed set of options instead
+# of a numeric range. Per gen type so /knob lists only what's
+# meaningful for that gen. Currently only ``chords`` has these
+# (progression name + voicing name); other types accept the knob
+# but the value just has to be a recognised string.
+KNOB_CHOICES: dict[str, dict[str, list[str]]] = {
+    "chords": {
+        "progression": [
+            "i-VI-ii-IV", "i-iv", "i-v", "i-VII-VI-V",
+            "ii-V-I", "I-V-vi-IV", "12-bar", "andalusian",
+        ],
+        "voicing": [
+            "triad", "seventh", "ninth", "sus2", "sus4",
+            "shell", "power", "open",
+        ],
+    },
 }
 
 
@@ -452,10 +477,18 @@ class Player:
         (the override silently no-ops on missing gens).
         """
         with self._lock:
-            # Coerce string values to int/float according to the knob's
-            # conventional kind. Lets /knob kick humanize 5 store an
-            # int (slackbeatz tests `isinstance(v, int)` in places).
-            if isinstance(value, str):
+            # String-valued knobs (progression, voicing): keep the
+            # string verbatim. Defaults helpers will validate against
+            # their option list and silently fall back if a typo
+            # creeps in, so we don't reject unknown values here.
+            string_knobs = {"progression", "voicing"}
+            if knob in string_knobs:
+                value = str(value)
+            elif isinstance(value, str):
+                # Coerce numeric strings to int/float per the knob's
+                # conventional kind. Lets /knob kick humanize 5 store
+                # an int (slackbeatz tests `isinstance(v, int)` in
+                # places).
                 kind = knob_kind(knob)
                 try:
                     value = int(value) if kind == "int" else float(value)

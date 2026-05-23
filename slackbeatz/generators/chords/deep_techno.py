@@ -10,14 +10,13 @@ from typing import Iterator
 
 from slackbeatz.engine.event import Event, Note
 from slackbeatz.generators._shared import (
-    ChordProgression,
     apply_gate_jitter,
+    build_chord,
     evolution_multiplier,
     expression_ramp,
     is_build_part,
     pick_evolution_direction,
     should_mute_bar,
-    transposed_pitch,
 )
 from slackbeatz.generators.base import Generator
 from slackbeatz.generators.defaults import (
@@ -25,17 +24,15 @@ from slackbeatz.generators.defaults import (
     base_vel_for,
     gate_for,
     gate_jitter_for,
+    inversion_for,
     macro_knobs,
+    progression_for,
     scale_for,
+    voicing_for,
 )
 from slackbeatz.generators.registry import register_generator
 from slackbeatz.model.context import PartContext
 from slackbeatz.theory.keys import parse_key
-from slackbeatz.theory.scales import scale_note
-
-
-# Min7 voicing offsets (root, m3, P5, m7) as scale-degree offsets.
-_MIN7 = (0, 2, 4, 6)
 
 
 @register_generator("chords", "deep_techno")
@@ -55,7 +52,12 @@ class ChordsDeepTechno(Generator):
         scale = scale_for(self, ctx, fallback="minor")
 
         tonic, _ = parse_key(ctx.key)
-        prog = ChordProgression("i-iv", bars_per_chord=8)
+        # Progression + voicing knobs (with style defaults). Users can
+        # override any of these per-gen, e.g.:
+        #   gen pad chords deep_techno progression=I-V-vi-IV voicing=ninth inversion=1
+        prog = progression_for(self, default_name="i-iv", default_bars=8)
+        voicing = voicing_for(self, fallback="seventh")  # min7 by default
+        inversion = inversion_for(self)
 
         ticks_per_bar = ctx.ticks_per_bar
         chord_ticks = prog.bars_per_chord * ticks_per_bar
@@ -72,14 +74,12 @@ class ChordsDeepTechno(Generator):
             evo_mult = evolution_multiplier(bar, ctx.bars, macro["evolution"], direction)
             vel = max(1, min(127, int(round(base_vel * intensity * evo_mult * ctx.tension)) + jitter))
 
-            chord_pitches = [
-                transposed_pitch(
-                    scale_note(chord_root + off, tonic, scale, 4 + octave_off),
-                    ctx.transpose_semitones,
-                )
-                for off in _MIN7
-            ]
-            chord_pitches = [p for p in chord_pitches if 0 <= p <= 127]
+            chord_pitches = build_chord(
+                chord_root, tonic=tonic, scale=scale,
+                base_octave=4 + octave_off,
+                voicing=voicing, inversion=inversion,
+                transpose=ctx.transpose_semitones,
+            )
             remaining = (ctx.bars - bar) * ticks_per_bar
 
             if arp_prob > 0 and ctx.rng.random() < arp_prob and chord_pitches:

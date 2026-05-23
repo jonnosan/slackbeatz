@@ -257,6 +257,64 @@ def pair_for(gen: Generator) -> str | None:
     return v if isinstance(v, str) else None
 
 
+# --------------------------------------------------------------------------
+# Chord-progression knobs — shared by every ``chords`` generator.
+# --------------------------------------------------------------------------
+
+def progression_for(
+    gen: Generator,
+    *,
+    default_name: str,
+    default_bars: int,
+):
+    """Build a :class:`ChordProgression` honouring per-gen overrides.
+
+    Knobs:
+
+    * ``progression=NAME`` — pick a progression from
+      :data:`slackbeatz.generators._shared.PROGRESSIONS`. Unknown
+      names fall back to the style's default rather than erroring.
+    * ``bars_per_chord=N`` — override the cadence at which the
+      progression advances. Clamped to 1..32 to keep chord changes
+      audible.
+
+    Both default to whatever the chord generator passed in (i.e. the
+    style's natural choice).
+    """
+    from slackbeatz.generators._shared import PROGRESSIONS, ChordProgression
+
+    name = gen.knobs.get("progression")
+    if not isinstance(name, str) or name not in PROGRESSIONS:
+        name = default_name
+    bars = gen.knobs.get("bars_per_chord")
+    if not isinstance(bars, int) or bars < 1:
+        bars = default_bars
+    bars = max(1, min(32, bars))
+    return ChordProgression(name=name, bars_per_chord=bars)
+
+
+def voicing_for(gen: Generator, fallback: str) -> str:
+    """Read the ``voicing=`` knob with the style's natural voicing
+    as fallback. Caller passes the style's hardcoded voicing (e.g.
+    ``"seventh"`` for deep_techno's min7, ``"triad"`` for euclid)."""
+    v = gen.knobs.get("voicing")
+    if isinstance(v, str):
+        from slackbeatz.generators._shared import VOICINGS
+        if v in VOICINGS:
+            return v
+    return fallback
+
+
+def inversion_for(gen: Generator, fallback: int = 0) -> int:
+    """Read the ``inversion=`` knob — 0 = root position, 1 = first
+    inversion, etc. Clamped to 0..3 (no real voicing has more than
+    four tones)."""
+    v = gen.knobs.get("inversion")
+    if isinstance(v, (int, float)):
+        return max(0, min(3, int(v)))
+    return fallback
+
+
 def scale_for(gen, ctx, fallback: str = "minor") -> str:
     """Resolve which scale this gen should draw from (issue #22).
 

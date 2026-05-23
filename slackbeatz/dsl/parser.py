@@ -55,7 +55,13 @@ _GEN_KNOBS = frozenset(
      #   pair          (melody call-and-response handle)
      "passing_tones", "voice_lead", "polyrhythm", "pair",
      # Round 6 — meter override for polymeter (per-gen meter):
-     "meter"}
+     "meter",
+     # Round 7 — chord-progression variation knobs:
+     #   progression      named chord progression (i-iv, i-VI-ii-IV, …)
+     #   bars_per_chord   how slowly the progression advances
+     #   voicing          chord voicing shape (triad, seventh, sus2, …)
+     #   inversion        which chord tone is in the bass (0-3)
+     "progression", "bars_per_chord", "voicing", "inversion"}
 )
 # Part-level knobs:
 #   transpose_prob — per-instance roll for transposition (issue #10)

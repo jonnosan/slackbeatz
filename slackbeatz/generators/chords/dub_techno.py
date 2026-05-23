@@ -16,14 +16,13 @@ from typing import Iterator
 
 from slackbeatz.engine.event import CC, Event, Note
 from slackbeatz.generators._shared import (
-    ChordProgression,
     apply_gate_jitter,
+    build_chord,
     evolution_multiplier,
     pick_evolution_direction,
     should_mute_bar,
     step_duration,
     step_to_ticks,
-    transposed_pitch,
 )
 from slackbeatz.generators.base import Generator
 from slackbeatz.generators.defaults import (
@@ -31,17 +30,15 @@ from slackbeatz.generators.defaults import (
     base_vel_for,
     gate_for,
     gate_jitter_for,
+    inversion_for,
     macro_knobs,
+    progression_for,
     scale_for,
+    voicing_for,
 )
 from slackbeatz.generators.registry import register_generator
 from slackbeatz.model.context import PartContext
 from slackbeatz.theory.keys import parse_key
-from slackbeatz.theory.scales import scale_note
-
-
-# Triad voicing — root + 3rd + 5th of the chord-root scale degree.
-_TRIAD = (0, 2, 4)
 
 # Off-beat 8ths: the second 16th of each beat.
 _OFFBEAT_STEPS = (2, 6, 10, 14)
@@ -64,7 +61,9 @@ class ChordsDubTechno(Generator):
         scale = scale_for(self, ctx, fallback="dorian")
 
         tonic, _ = parse_key(ctx.key)
-        prog = ChordProgression("i-iv", bars_per_chord=8)
+        prog = progression_for(self, default_name="i-iv", default_bars=8)
+        voicing = voicing_for(self, fallback="triad")
+        inversion = inversion_for(self)
         step_ticks = step_duration(ctx.ppq)
         # Short stab: gate × 2-step duration ≈ 1/8-note worth of sound.
         base_dur = max(1, int(step_ticks * 2 * gate))
@@ -82,16 +81,18 @@ class ChordsDubTechno(Generator):
             chord_root = prog.degree_at_bar(bar)
             evo_mult = evolution_multiplier(bar, ctx.bars, macro["evolution"], direction)
             bar_start = bar * ctx.ticks_per_bar
+            chord_pitches = build_chord(
+                chord_root, tonic=tonic, scale=scale,
+                base_octave=4 + octave_off,
+                voicing=voicing, inversion=inversion,
+                transpose=ctx.transpose_semitones,
+            )
             for step in _OFFBEAT_STEPS:
                 tick = bar_start + step_to_ticks(step, ctx.ppq)
                 jitter = ctx.rng.randint(-4, 4)
                 vel = max(1, min(127, int(round(base_vel * intensity * evo_mult * ctx.tension)) + jitter))
                 dur = apply_gate_jitter(base_dur, gate_jitter, ctx.rng)
-                for off in _TRIAD:
-                    pitch = scale_note(chord_root + off, tonic, scale, 4 + octave_off)
-                    pitch = transposed_pitch(pitch, ctx.transpose_semitones)
-                    if not 0 <= pitch <= 127:
-                        continue
+                for pitch in chord_pitches:
                     yield Note(
                         tick=tick, duration=dur,
                         channel=inst.channel, pitch=pitch, velocity=vel,
