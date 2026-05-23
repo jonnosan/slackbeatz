@@ -225,6 +225,12 @@ class Player:
         # {gen_handle: {knob_name: value}}.
         self._knob_overrides: dict[str, dict[str, object]] = {}
 
+        # MIDI Clock output. When True, the playback worker spawns a
+        # ClockEmitter sibling thread that broadcasts 0xF8 pulses at
+        # 24 PPQN plus Start/Stop/Continue bytes so downstream MIDI
+        # gear can lock to slackbeatz's tempo.
+        self.emit_clock: bool = False
+
         # Currently-loaded source. Either a phrase (composed) or a path
         # to a .sb file (live mode). One of these is non-None when a
         # song has been loaded.
@@ -619,6 +625,20 @@ class Player:
             self.loop = bool(on)
             return f"loop {'on' if self.loop else 'off'}"
 
+    def set_emit_clock(self, on: bool) -> str:
+        """Toggle MIDI Clock emission. Takes effect on the next song
+        restart (toggling mid-song is a no-op for the currently-playing
+        emitter — restart via /play or any param change to re-arm)."""
+        with self._lock:
+            self.emit_clock = bool(on)
+            was_playing = self.is_playing
+            # Restart so the new clock state takes effect immediately.
+            if was_playing:
+                self._restart_after_change(
+                    f"midi clock {'on' if self.emit_clock else 'off'}",
+                )
+            return f"midi clock {'on' if self.emit_clock else 'off'}"
+
     def reset_overrides(self) -> str:
         """Clear style / tempo / seed + per-gen knob overrides; restart
         with composer defaults restored."""
@@ -784,6 +804,17 @@ class Player:
                 clock = InternalClock(tempo_map)
                 scheduler = Scheduler(resolved, sink, clock)
                 self._current_scheduler = scheduler
+                # MIDI Clock output, if enabled.
+                emitter = None
+                if self.emit_clock:
+                    from slackbeatz.clock_emitter import ClockEmitter
+                    emitter = ClockEmitter(
+                        port_name=self.port_name,
+                        tempo_map=tempo_map,
+                        stop_event=self._stop_event,
+                        start_at_tick=first_iteration_from_tick,
+                    )
+                    emitter.start()
                 try:
                     scheduler.run(
                         stop_event=self._stop_event,
@@ -795,6 +826,8 @@ class Player:
                         print(f"playback error: {exc}", file=sys.stderr)
                     break
                 finally:
+                    if emitter is not None:
+                        emitter.stop()
                     self._current_scheduler = None
                 if self._stop_event.is_set() or not self.loop:
                     break

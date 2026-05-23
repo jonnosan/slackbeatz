@@ -333,6 +333,15 @@ def run_tweak_gui(
             command=lambda: player.set_preserve_position(bool(preserve_var.get())),
         ).pack(side="left", padx=8)
 
+        # MIDI Clock output.
+        clock_row = ttk.Frame(transport); clock_row.pack(fill="x", padx=10, pady=4)
+        clock_var = tk.IntVar(value=1 if player.emit_clock else 0)
+        ttk.Checkbutton(
+            clock_row, text="Send MIDI Clock (sync external gear)",
+            variable=clock_var,
+            command=lambda: player.set_emit_clock(bool(clock_var.get())),
+        ).pack(side="left", padx=2)
+
         ttk.Label(
             transport,
             text="Type a phrase at the REPL prompt to load a song. "

@@ -260,6 +260,19 @@ def cmd_live(args) -> int:
         tempo_map = build_tempo_map(resolved)
         clock = InternalClock(tempo_map)
         scheduler = Scheduler(resolved, sink, clock)
+        # Optional MIDI Clock emitter (driven by --emit-clock).
+        clock_emitter = None
+        clock_stop_event = None
+        if getattr(args, "emit_clock", False):
+            import threading as _threading
+            from slackbeatz.clock_emitter import ClockEmitter
+            clock_stop_event = _threading.Event()
+            clock_emitter = ClockEmitter(
+                port_name=new_port,
+                tempo_map=tempo_map,
+                stop_event=clock_stop_event,
+            )
+            clock_emitter.start()
         if args.gui:
             # Tk needs the main thread, so run playback in a daemon
             # thread and open the tweak window here. Closing the window
@@ -295,6 +308,10 @@ def cmd_live(args) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 1
     finally:
+        if clock_emitter is not None:
+            if clock_stop_event is not None:
+                clock_stop_event.set()
+            clock_emitter.stop()
         fs_proc.terminate()
         try:
             fs_proc.wait(timeout=2)
@@ -573,6 +590,8 @@ def cmd_repl(args) -> int:
         # mutate the same transport state.
         player = Player(port_name=port_name, setup_arg=args.setup)
         player.seed_offset = args.seed
+        if getattr(args, "emit_clock", False):
+            player.emit_clock = True
 
         def _stop_now() -> None:
             player.stop()
@@ -633,6 +652,8 @@ def _repl_input_loop(
     if player is None:
         player = Player(port_name=port_name, setup_arg=args.setup)
         player.seed_offset = args.seed
+        if getattr(args, "emit_clock", False):
+            player.emit_clock = True
 
     try:
         while True:
@@ -663,6 +684,7 @@ def _repl_input_loop(
                     "  /knob H N V         set knob N on gen H to V (e.g. /knob kick humanize 5)\n"
                     "  /knob H [N]         clear knob override (or all on gen H)\n"
                     "  /knobs              show all active knob overrides\n"
+                    "  /clock on|off       send MIDI Clock (0xF8 + Start/Stop) for downstream gear\n"
                     "  /mute N             mute channel N (1-16)\n"
                     "  /unmute N | all     unmute channel(s)\n"
                     "  /solo N             toggle solo on channel N (additive)\n"
@@ -825,6 +847,12 @@ def _handle_transport_command(line: str, player) -> str | None:
     if cmd == "/knobs":
         # Alias for `/knob` with no args — list the override table.
         return _handle_transport_command("/knob", player)
+    if cmd == "/clock":
+        if arg.lower() in ("on", "true", "1"):
+            return player.set_emit_clock(True)
+        if arg.lower() in ("off", "false", "0"):
+            return player.set_emit_clock(False)
+        return "usage: /clock on|off"
     return None
 
 
@@ -936,6 +964,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--gui", action="store_true",
         help="open a Tk tweak window with sliders for gain / reverb / chorus",
     )
+    sp.add_argument(
+        "--emit-clock", action="store_true",
+        help="broadcast MIDI Clock (0xF8 + Start/Stop) so external gear can sync",
+    )
     sp.set_defaults(func=cmd_live)
 
     # repl — interactive text → audio loop
@@ -963,6 +995,10 @@ def _build_parser() -> argparse.ArgumentParser:
     sp.add_argument(
         "--gui", action="store_true",
         help="also open the live tweak window in the background",
+    )
+    sp.add_argument(
+        "--emit-clock", action="store_true",
+        help="broadcast MIDI Clock (0xF8 + Start/Stop) so external gear can sync",
     )
     sp.set_defaults(func=cmd_repl)
 
