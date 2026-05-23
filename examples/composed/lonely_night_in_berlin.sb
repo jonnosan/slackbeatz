@@ -1,0 +1,49 @@
+# Auto-composed from text — sentiment=-3, style=deep_techno
+# Title derived from first phrase of the input.
+
+song "Lonely night in Berlin"
+  setup "gm"
+  tempo 116
+  key   Em
+  seed  266977654733147
+
+gen kick   rhythm  deep_techno humanize=4 accent=4
+gen hats   rhythm  deep_techno humanize=4 drop_prob=0.06 accent=4
+gen clap   rhythm  deep_techno humanize=4 drop_prob=0.06
+gen bass   bass    deep_techno octave_jump=0.05
+gen lead   melody  deep_techno passing_tones=0.1 seed=345
+gen pad    chords  deep_techno
+gen riser  candy   deep_techno
+
+part intro 16 role=intro
+  pad
+  riser
+
+part main 32 role=main
+  kick
+  hats
+  clap
+  bass
+  lead
+  pad
+  riser
+
+part break 16 role=break
+  lead
+  pad
+  riser
+
+part main2 32 role=main
+  kick
+  hats
+  clap
+  bass
+  lead
+  pad
+  riser
+
+part outro 16 role=outro
+  pad
+  riser
+
+play intro main break main2 outro

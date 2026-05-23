@@ -1,0 +1,31 @@
+# Auto-composed from text — sentiment=+0, style=dub_techno
+# Title derived from first phrase of the input.
+
+song "Smoke and fog submerged"
+  setup "gm"
+  tempo 119
+  key   Dm
+  seed  150596815365107
+
+gen kick   rhythm  dub_techno humanize=5 accent=4
+gen hats   rhythm  dub_techno humanize=5 drop_prob=0.09 accent=4
+gen drone  bass    dub_techno inst=bass octave_jump=0.05
+gen stab   chords  dub_techno inst=pad voice_lead=1
+gen tex    candy   dub_techno inst=riser
+
+part intro 16 role=intro
+  stab
+  tex
+
+part main 64 role=main
+  kick
+  hats
+  drone
+  stab
+  tex
+
+part outro 16 role=outro
+  stab
+  tex
+
+play intro main outro

@@ -16,6 +16,7 @@ from slackbeatz.audio import (
     find_soundfont,
     render_audio,
 )
+from slackbeatz.compose import compose_from_text
 from slackbeatz.dsl.parser import ParseError, parse_file
 from slackbeatz.engine.clock_source import ClockSource, ExternalClock, InternalClock
 from slackbeatz.engine.midifile import write_midifile
@@ -202,6 +203,61 @@ def cmd_audio(args) -> int:
     return 0
 
 
+def cmd_from_text(args) -> int:
+    """Compose a `.sb` from an arbitrary input string.
+
+    Lands the composed file on disk; optionally also renders an audio
+    file (.wav / .mp3) when ``-o`` ends in an audio extension.
+    """
+    sb_content = compose_from_text(args.text)
+    out = Path(args.output) if args.output else None
+    if out is None:
+        # No --output → print the .sb to stdout (compose-only mode).
+        print(sb_content)
+        return 0
+    ext = out.suffix.lower()
+    if ext in (".sb", ""):
+        out.write_text(sb_content)
+        print(f"wrote {out}")
+        return 0
+    if ext in (".wav", ".mp3"):
+        # Compose + render in one step. Stash the .sb next to the audio
+        # so the user can re-render / tweak.
+        sb_path = out.with_suffix(".sb")
+        sb_path.write_text(sb_content)
+        try:
+            file_ast = parse_file(sb_path)
+            assert file_ast.song is not None
+            setup = _load_setup_for_song(sb_path, file_ast, None)
+            resolved = resolve_song(file_ast.song, setup, cli_seed=0)
+        except (ParseError, ResolveError, SetupError) as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
+        try:
+            soundfont = find_soundfont(None)
+        except SoundfontError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 1
+        with tempfile.NamedTemporaryFile(suffix=".mid", delete=False) as tmp:
+            tmp_mid = Path(tmp.name)
+        try:
+            from slackbeatz.engine.midifile import write_midifile
+            write_midifile(resolved, tmp_mid)
+            render_audio(tmp_mid, out, soundfont)
+        except MissingToolError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 1
+        except subprocess.CalledProcessError as e:
+            print(f"error: subprocess failed (exit {e.returncode}): {e.cmd[0]}", file=sys.stderr)
+            return 1
+        finally:
+            tmp_mid.unlink(missing_ok=True)
+        print(f"wrote {sb_path} + {out}")
+        return 0
+    print(f"error: unsupported output extension {ext!r} (use .sb / .wav / .mp3)", file=sys.stderr)
+    return 2
+
+
 def cmd_render(args) -> int:
     song_path = Path(args.song_file)
     try:
@@ -275,6 +331,18 @@ def _build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--seed", type=int, default=0)
     sp.add_argument("-o", "--output", required=True, help="output .mid path")
     sp.set_defaults(func=cmd_render)
+
+    # from-text
+    sp = sub.add_parser(
+        "from-text",
+        help="compose a .sb (or render audio) from an arbitrary input string",
+    )
+    sp.add_argument("text", help="input string — first phrase becomes the title")
+    sp.add_argument(
+        "-o", "--output",
+        help="output path. .sb writes the source file; .wav/.mp3 composes + renders. Omit to print the .sb to stdout.",
+    )
+    sp.set_defaults(func=cmd_from_text)
 
     # audio
     sp = sub.add_parser(

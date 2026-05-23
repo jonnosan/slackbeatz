@@ -1,0 +1,45 @@
+# Auto-composed from text — sentiment=+0, style=drum_and_bass
+# Title derived from first phrase of the input.
+
+song "Jungle rolling neurofunk"
+  setup "gm"
+  tempo 170
+  key   F#m
+  seed  165176969454170
+
+gen kick   rhythm  drum_and_bass humanize=4
+gen snare  rhythm  drum_and_bass humanize=4 drop_prob=0.07
+gen hats   rhythm  drum_and_bass humanize=4 drop_prob=0.07
+gen sub    bass    drum_and_bass inst=bass
+gen lead   melody  drum_and_bass seed=575
+gen pad    chords  drum_and_bass voice_lead=1
+gen tex    candy   drum_and_bass inst=riser
+
+part intro 8 role=intro
+  pad
+  tex
+
+part main 32 role=main
+  kick
+  snare
+  hats
+  sub
+  lead
+  pad
+  tex
+
+part break 8 role=break
+  lead
+  pad
+  tex
+
+part main2 32 role=main
+  kick
+  snare
+  hats
+  sub
+  lead
+  pad
+  tex
+
+play intro main break main2

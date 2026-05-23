@@ -1,0 +1,46 @@
+# Auto-composed from text — sentiment=+0, style=garage
+# Title derived from first phrase of the input.
+
+song "UK 2step london garage"
+  setup "gm"
+  tempo 132
+  key   Em
+  seed  12507015748872
+  scale blues_minor
+
+gen kick   rhythm  garage humanize=4 accent=4
+gen snare  rhythm  garage humanize=4 drop_prob=0.03
+gen hats   rhythm  garage humanize=4 drop_prob=0.03 accent=4
+gen sub    bass    garage inst=bass octave_jump=0.05
+gen vocal  melody  garage inst=lead motif_memory=4
+gen wurli  chords  garage inst=pad voice_lead=1
+gen tex    candy   garage inst=riser
+
+part intro 8 role=intro
+  wurli
+  tex
+
+part main 32 role=main
+  kick
+  snare
+  hats
+  sub
+  vocal
+  wurli
+  tex
+
+part break 8 role=break
+  vocal
+  wurli
+  tex
+
+part main2 32 role=main
+  kick
+  snare
+  hats
+  sub
+  vocal
+  wurli
+  tex
+
+play intro main break main2

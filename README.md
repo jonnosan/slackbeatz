@@ -27,6 +27,40 @@ Pre-rendered audio for each bundled example lives under [`examples/rendered/`](e
 | `jungle` | `drum_and_bass` (170 bpm, Amen-break) | [.mid](examples/rendered/jungle.mid) | [.mp3](examples/rendered/jungle.mp3) |
 | `polymeter` | polymeter demo — drums in 4/4 over bass in 3/4 | [.mid](examples/rendered/polymeter.mid) | [.mp3](examples/rendered/polymeter.mp3) |
 
+## Compose from text
+
+`slackbeatz from-text "<phrase>"` takes an arbitrary input string and produces a complete `.sb` (or audio) deterministically:
+
+1. The first phrase becomes the **song title**.
+2. The title's keywords + sentiment pick a **style + scale + key + tempo**.
+3. The **full input** is hashed (SHA-256) to seed every PRNG decision. A single character change — including capitalisation — produces a different song with the same overall shape.
+
+```bash
+# Print the composed .sb to stdout
+slackbeatz from-text "Lonely night in Berlin"
+
+# Write a .sb file
+slackbeatz from-text "Cosmic mushroom dance" -o /tmp/cosmic.sb
+
+# Compose + render audio in one step (writes both .sb and .mp3)
+slackbeatz from-text "Acid trax forever — take 2" -o /tmp/acid.mp3
+```
+
+Style-picker keyword examples:
+
+| Input phrase | Picked style | Why |
+|---|---|---|
+| "Lonely night in Berlin" | `deep_techno` | berlin + night + lonely |
+| "Cosmic mushroom dance" | `psytrance` | cosmic + mushroom |
+| "Sunset over Plaza" | `vaporwave` | sunset + plaza |
+| "Acid trax forever" | `acid` | acid + trax |
+| "Smoke and fog submerged" | `dub_techno` | submerge + fog + smoke |
+| "Jungle rolling neurofunk" | `drum_and_bass` | jungle + neurofunk |
+| "UK 2step london garage" | `garage` | 2step + london + garage |
+| Anything with no recognised keywords | `euclid` | safe techno fallback |
+
+Pre-composed demos live under [`examples/composed/`](examples/composed/) — one `.sb` + `.mp3` for each style.
+
 The MP3s are rendered through **GeneralUser GS** (free GM soundfont, ~30 MB, auto-downloaded on first use) with per-channel GM program selection — bass = Synth Bass, lead = Saw Lead / Square Lead, pad = Warm Pad, candy = FX patches — picked per `(type, style)` so each style sits in a recognisably different timbral space. It's still a GM rendering, not production audio: plug a real synth in for that.
 
 ## Quick start

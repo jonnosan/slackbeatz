@@ -1,0 +1,67 @@
+# Auto-composed from text — sentiment=+0, style=acid
+# Title derived from first phrase of the input.
+
+song "Acid trax forever"
+  setup "gm"
+  tempo 125
+  key   F#m
+  seed  214222990300064
+
+gen kick   rhythm  acid humanize=2
+gen clap   rhythm  acid humanize=2 drop_prob=0.08
+gen hats   rhythm  acid humanize=2 drop_prob=0.08
+gen bass   bass    acid octave_jump=0.05
+gen organ  chords  acid inst=pad
+gen sweep  candy   acid inst=riser
+
+part intro 16 role=intro
+  organ
+  sweep
+
+part main 32 role=main
+  kick
+  clap
+  hats
+  bass
+  organ
+  sweep
+
+part build 8 role=build
+  kick
+  clap
+  hats
+  organ
+  sweep
+
+part drop 32 role=drop
+  kick
+  clap
+  hats
+  bass
+  organ
+  sweep
+
+part main2 32 role=main
+  kick
+  clap
+  hats
+  bass
+  organ
+  sweep
+
+part build2 8 role=build
+  kick
+  clap
+  hats
+  organ
+  sweep
+
+part drop2 32 role=drop
+  kick
+  clap
+  hats
+  bass
+  organ
+  sweep
+
+play intro main build drop main2 build2 drop2

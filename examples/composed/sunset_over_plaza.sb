@@ -1,0 +1,44 @@
+# Auto-composed from text — sentiment=+1, style=vaporwave
+# Title derived from first phrase of the input.
+
+song "Sunset over Plaza"
+  setup "gm"
+  tempo 71
+  key   Bbm
+  seed  46319003191243
+
+gen kick   rhythm  vaporwave humanize=4
+gen snare  rhythm  vaporwave humanize=4 drop_prob=0.09
+gen hats   rhythm  vaporwave humanize=4 drop_prob=0.09
+gen bass   bass    vaporwave octave_jump=0.05
+gen lead   melody  vaporwave motif_memory=4 passing_tones=0.1 seed=54
+gen pad    chords  vaporwave arp_prob=0.1
+gen bells  candy   vaporwave inst=riser
+
+part intro 16 role=intro
+  pad
+  bells
+
+part main 32 role=main
+  kick
+  snare
+  hats
+  bass
+  lead
+  pad
+  bells
+
+part main2 32 role=main
+  kick
+  snare
+  hats
+  bass
+  lead
+  pad
+  bells
+
+part outro 16 role=outro
+  pad
+  bells
+
+play intro main main2 outro

@@ -1,0 +1,59 @@
+# Auto-composed from text — sentiment=+0, style=euclid
+# Title derived from first phrase of the input.
+
+song "Hello world"
+  setup "gm"
+  tempo 130
+  key   Dm
+  seed  110967069999282
+
+gen kick   rhythm  euclid humanize=5
+gen snare  rhythm  euclid humanize=5 drop_prob=0.08
+gen hats   rhythm  euclid humanize=5 drop_prob=0.08
+gen bass   bass    euclid octave_jump=0.05
+gen lead   melody  euclid motif_memory=4 seed=778
+gen pad    chords  euclid
+gen riser  candy   euclid
+
+part intro 16 role=intro
+  pad
+  riser
+
+part build 8 role=build
+  kick
+  snare
+  hats
+  pad
+  riser
+
+part drop 32 role=drop
+  kick
+  snare
+  hats
+  bass
+  lead
+  pad
+  riser
+
+part break 16 role=break
+  lead
+  pad
+  riser
+
+part build2 8 role=build
+  kick
+  snare
+  hats
+  pad
+  riser
+
+part drop2 32 role=drop
+  kick
+  snare
+  hats
+  bass
+  lead
+  pad
+  riser
+
+play intro build drop break build2 drop2

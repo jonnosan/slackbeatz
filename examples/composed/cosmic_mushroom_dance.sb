@@ -1,0 +1,61 @@
+# Auto-composed from text — sentiment=+1, style=psytrance
+# Title derived from first phrase of the input.
+
+song "Cosmic mushroom dance"
+  setup "gm"
+  tempo 144
+  key   Am
+  seed  281440764047807
+
+gen kick   rhythm  psytrance humanize=4
+gen hats   rhythm  psytrance humanize=4 drop_prob=0.07
+gen clap   rhythm  psytrance humanize=4 drop_prob=0.07
+gen bass   bass    psytrance
+gen lead   melody  psytrance motif_memory=4 passing_tones=0.1 seed=944
+gen pad    chords  psytrance
+gen riser  candy   psytrance
+
+part intro 8 role=intro
+  pad
+  riser
+
+part build 8 role=build
+  kick
+  hats
+  clap
+  pad
+  riser
+
+part drop 32 role=drop
+  kick
+  hats
+  clap
+  bass
+  lead
+  pad
+  riser
+
+part bridge 16 role=bridge
+  kick
+  hats
+  clap
+  bass
+  pad
+
+part build2 8 role=build
+  kick
+  hats
+  clap
+  pad
+  riser
+
+part drop2 32 role=drop
+  kick
+  hats
+  clap
+  bass
+  lead
+  pad
+  riser
+
+play intro build drop bridge build2 drop2
