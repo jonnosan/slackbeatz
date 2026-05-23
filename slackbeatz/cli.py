@@ -6,9 +6,19 @@ import argparse
 import sys
 from pathlib import Path
 
+import subprocess
+import tempfile
+
 import slackbeatz.generators  # noqa: F401 — trigger algorithm registrations
+from slackbeatz.audio import (
+    MissingToolError,
+    SoundfontError,
+    find_soundfont,
+    render_audio,
+)
 from slackbeatz.dsl.parser import ParseError, parse_file
 from slackbeatz.engine.clock_source import ClockSource, ExternalClock, InternalClock
+from slackbeatz.engine.midifile import write_midifile
 from slackbeatz.engine.scheduler import Scheduler, build_tempo_map
 from slackbeatz.generators.registry import list_generators
 from slackbeatz.setup.loader import (
@@ -146,6 +156,52 @@ def cmd_list_ports(_args) -> int:
     return 0
 
 
+def cmd_audio(args) -> int:
+    song_path = Path(args.song_file)
+    try:
+        file_ast = parse_file(song_path)
+        if file_ast.song is None:
+            print(f"error: {song_path}: no song block found", file=sys.stderr)
+            return 2
+        setup = _load_setup_for_song(song_path, file_ast, args.setup)
+        resolved = resolve_song(file_ast.song, setup, cli_seed=args.seed)
+    except (ParseError, ResolveError, SetupError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+
+    try:
+        soundfont = find_soundfont(args.soundfont)
+    except SoundfontError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+
+    output_path = Path(args.output)
+    # Write the MIDI to a temp file so fluidsynth can read it.
+    with tempfile.NamedTemporaryFile(suffix=".mid", delete=False) as tmp:
+        tmp_mid = Path(tmp.name)
+    try:
+        write_midifile(resolved, tmp_mid)
+        render_audio(
+            tmp_mid,
+            output_path,
+            soundfont,
+            sample_rate=args.sample_rate,
+            bitrate=args.bitrate,
+        )
+    except MissingToolError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    except subprocess.CalledProcessError as e:
+        print(f"error: subprocess failed (exit {e.returncode}): {e.cmd[0]}", file=sys.stderr)
+        return 1
+    finally:
+        tmp_mid.unlink(missing_ok=True)
+
+    size_kb = output_path.stat().st_size // 1024
+    print(f"wrote {output_path} ({size_kb} KB)")
+    return 0
+
+
 def cmd_render(args) -> int:
     song_path = Path(args.song_file)
     try:
@@ -219,6 +275,30 @@ def _build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--seed", type=int, default=0)
     sp.add_argument("-o", "--output", required=True, help="output .mid path")
     sp.set_defaults(func=cmd_render)
+
+    # audio
+    sp = sub.add_parser(
+        "audio",
+        help="render a song to a .wav or .mp3 audio file via FluidSynth + ffmpeg",
+    )
+    sp.add_argument("song_file")
+    sp.add_argument("--setup")
+    sp.add_argument("--seed", type=int, default=0)
+    sp.add_argument(
+        "--soundfont",
+        help="path to a .sf2/.sf3 file (default: auto-discover or download)",
+    )
+    sp.add_argument(
+        "--bitrate", default="192k", help="MP3 bitrate when output is .mp3 (default 192k)"
+    )
+    sp.add_argument(
+        "--sample-rate", type=int, default=44100, help="audio sample rate (default 44100)"
+    )
+    sp.add_argument(
+        "-o", "--output", required=True,
+        help="output path; .wav stops after FluidSynth, .mp3 (or other ffmpeg fmts) goes through ffmpeg",
+    )
+    sp.set_defaults(func=cmd_audio)
 
     return p
 

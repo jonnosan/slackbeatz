@@ -12,6 +12,18 @@ pip install slackbeatz                  # or: pipx install slackbeatz / uv pip i
 
 Requires Python 3.11+. On macOS, enable the IAC Driver in **Audio MIDI Setup → MIDI Studio** to get a virtual MIDI port to route into a DAW or external synth.
 
+## Listen first
+
+Pre-rendered audio for each bundled example lives under [`examples/rendered/`](examples/rendered/), one MIDI and one MP3 per song:
+
+| Song | Style | MIDI | MP3 |
+|---|---|---|---|
+| `dark_sunday` | `euclid` (Arduino-derived defaults) | [.mid](examples/rendered/dark_sunday.mid) | [.mp3](examples/rendered/dark_sunday.mp3) |
+| `deep_set` | `deep_techno` | [.mid](examples/rendered/deep_set.mid) | [.mp3](examples/rendered/deep_set.mp3) |
+| `goa` | `psytrance` | [.mid](examples/rendered/goa.mid) | [.mp3](examples/rendered/goa.mp3) |
+
+The MP3s use a free General MIDI soundfont (`TimGM6mb.sf2`) — the goal is to make the **structure** audible (kicks land where they should, the gallop bass rolls correctly, transitions sit right), not to sound production-quality. Plug a real synth in for that.
+
 ## Quick start
 
 ```bash
@@ -23,7 +35,27 @@ slackbeatz play examples/dark_sunday.sb
 
 # Same song on a different rig (every drum on its own channel)
 slackbeatz play examples/dark_sunday.sb --setup multitimbral
+
+# Render to an .mp3 you can play in any audio player
+slackbeatz audio examples/dark_sunday.sb -o /tmp/dark.mp3
 ```
+
+### Audio rendering setup
+
+`slackbeatz audio` shells out to **FluidSynth** + **ffmpeg** and uses a General MIDI soundfont (auto-downloaded to `~/.cache/slackbeatz/` on first use, ~6 MB).
+
+```bash
+# macOS
+brew install fluid-synth ffmpeg
+
+# Linux
+apt install fluidsynth ffmpeg            # or dnf, pacman, etc.
+
+# Windows
+choco install fluidsynth ffmpeg          # or scoop install fluidsynth ffmpeg
+```
+
+`-o foo.wav` stops after FluidSynth; `-o foo.mp3` (or any other ffmpeg-supported format) continues through the ffmpeg encode step. Override the soundfont via `--soundfont <path>` or `$SLACKBEATZ_SOUNDFONT`.
 
 ## The DSL
 
