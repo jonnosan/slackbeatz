@@ -140,7 +140,7 @@ def run_tweak_gui(
     try:
         import tkinter as tk
         from tkinter import ttk
-    except ImportError as e:
+    except ImportError as e:  # noqa: PERF203 — error message is what matters here
         # The Homebrew python@3.x formulas don't bundle Tk — `import
         # tkinter` raises ModuleNotFoundError: No module named '_tkinter'.
         # macOS users typically need `brew install python-tk@3.12` (or
@@ -163,6 +163,43 @@ def run_tweak_gui(
         except (BrokenPipeError, OSError):
             # FluidSynth already gone; the parent will handle shutdown.
             pass
+
+    # CRITICAL: the Homebrew python-tk@3.12 Tcl 9 build is *non-threaded*
+    # (``tcl_platform(threaded)`` is undefined). Any Tcl call from a
+    # non-main thread aborts the process with:
+    #
+    #   Tcl_WaitForEvent: Notifier not initialized
+    #   zsh: trace trap
+    #
+    # CPython's cyclic garbage collector can run on *any* thread that
+    # crosses an allocation threshold. If a tkinter.Variable (or any
+    # tk widget) gets reclaimed by cyclic-GC on the REPL daemon thread
+    # or the Player worker thread, its __del__ calls Tcl_UnsetVar /
+    # Tcl_DeleteCommand from the wrong thread and the process dies.
+    #
+    # Mitigation strategy:
+    #
+    # 1. Disable cyclic GC for the lifetime of the GUI. Reference
+    #    counting (which is per-thread but deterministic-on-the-decref
+    #    thread) still works for non-cyclic cleanup. Widget destroy()
+    #    calls happen on the main thread, so widget refcount drops
+    #    happen there.
+    #
+    # 2. Keep every tk.Variable we ever create alive in a permanent
+    #    list. Variables form the most common cycles (widget ↔ command
+    #    closure ↔ var), so denying them GC eligibility removes the
+    #    biggest hazard. The memory cost is bounded (~50 vars per song
+    #    layout × a few layouts per session ≈ few KB).
+    import gc
+    gc.disable()
+    _persistent_vars: list = []
+
+    def _var(cls, *args, **kwargs):
+        """Create a tk.Variable subclass instance and pin it so cyclic
+        GC can never touch it on the wrong thread."""
+        v = cls(*args, **kwargs)
+        _persistent_vars.append(v)
+        return v
 
     root = tk.Tk()
     root.title("slackbeatz live — tweak")
@@ -218,14 +255,14 @@ def run_tweak_gui(
         notebook.add(transport, text="Transport")
 
         # Now-playing label + Play/Stop button.
-        nowplaying_var = tk.StringVar(value="(no song loaded)")
+        nowplaying_var = _var(tk.StringVar, value="(no song loaded)")
         nowplaying_lbl = ttk.Label(
             transport, textvariable=nowplaying_var,
             font=("TkDefaultFont", 12, "bold"),
         )
         nowplaying_lbl.pack(padx=10, pady=(10, 4), anchor="w")
 
-        playstop_var = tk.StringVar(value="▶ Play")
+        playstop_var = _var(tk.StringVar, value="▶ Play")
 
         def _refresh_nowplaying() -> None:
             # Called on player state change.
@@ -286,7 +323,7 @@ def run_tweak_gui(
         ttk.Separator(transport, orient="horizontal").pack(fill="x", padx=10, pady=8)
         tempo_row = ttk.Frame(transport); tempo_row.pack(fill="x", padx=10, pady=2)
         ttk.Label(tempo_row, text="Tempo (BPM)", width=14, anchor="w").pack(side="left")
-        tempo_var = tk.IntVar(value=120 if player.tempo_override is None else player.tempo_override)
+        tempo_var = _var(tk.IntVar, value=120 if player.tempo_override is None else player.tempo_override)
 
         def _on_tempo(value):
             v = int(float(value))
@@ -306,7 +343,7 @@ def run_tweak_gui(
         style_row = ttk.Frame(transport); style_row.pack(fill="x", padx=10, pady=4)
         ttk.Label(style_row, text="Style", width=14, anchor="w").pack(side="left")
         style_choices = ["(auto)"] + list(KNOWN_STYLES)
-        style_var = tk.StringVar(value="(auto)")
+        style_var = _var(tk.StringVar, value="(auto)")
         style_cb = ttk.Combobox(
             style_row, values=style_choices, state="readonly",
             textvariable=style_var, width=20,
@@ -321,7 +358,7 @@ def run_tweak_gui(
         # Seed offset entry.
         seed_row = ttk.Frame(transport); seed_row.pack(fill="x", padx=10, pady=4)
         ttk.Label(seed_row, text="Seed offset", width=14, anchor="w").pack(side="left")
-        seed_var = tk.StringVar(value=str(player.seed_offset))
+        seed_var = _var(tk.StringVar, value=str(player.seed_offset))
         seed_entry = ttk.Entry(seed_row, textvariable=seed_var, width=14)
         seed_entry.pack(side="left", padx=2)
 
@@ -336,10 +373,10 @@ def run_tweak_gui(
         # Seek to bar input.
         seek_row = ttk.Frame(transport); seek_row.pack(fill="x", padx=10, pady=4)
         ttk.Label(seek_row, text="Seek to bar", width=14, anchor="w").pack(side="left")
-        seek_bar_var = tk.StringVar(value="1")
+        seek_bar_var = _var(tk.StringVar, value="1")
         ttk.Entry(seek_row, textvariable=seek_bar_var, width=6).pack(side="left", padx=2)
         ttk.Label(seek_row, text=" beat ").pack(side="left")
-        seek_beat_var = tk.StringVar(value="0")
+        seek_beat_var = _var(tk.StringVar, value="0")
         ttk.Entry(seek_row, textvariable=seek_beat_var, width=6).pack(side="left", padx=2)
 
         def _on_seek():
@@ -354,12 +391,12 @@ def run_tweak_gui(
 
         # Loop + preserve-position toggles on one row.
         toggle_row = ttk.Frame(transport); toggle_row.pack(fill="x", padx=10, pady=4)
-        loop_var = tk.IntVar(value=1 if player.loop else 0)
+        loop_var = _var(tk.IntVar, value=1 if player.loop else 0)
         ttk.Checkbutton(
             toggle_row, text="Loop on song end", variable=loop_var,
             command=lambda: player.set_loop(bool(loop_var.get())),
         ).pack(side="left", padx=2)
-        preserve_var = tk.IntVar(value=1 if player.preserve_position else 0)
+        preserve_var = _var(tk.IntVar, value=1 if player.preserve_position else 0)
         ttk.Checkbutton(
             toggle_row, text="Preserve bar across param changes",
             variable=preserve_var,
@@ -368,7 +405,7 @@ def run_tweak_gui(
 
         # MIDI Clock output.
         clock_row = ttk.Frame(transport); clock_row.pack(fill="x", padx=10, pady=4)
-        clock_var = tk.IntVar(value=1 if player.emit_clock else 0)
+        clock_var = _var(tk.IntVar, value=1 if player.emit_clock else 0)
         ttk.Checkbutton(
             clock_row, text="Send MIDI Clock (sync external gear)",
             variable=clock_var,
@@ -496,10 +533,10 @@ def run_tweak_gui(
                         value = default
                     is_int = kind == "int"
                     if is_int:
-                        var = tk.IntVar(value=int(value))
+                        var = _var(tk.IntVar, value=int(value))
                         resolution = 1
                     else:
-                        var = tk.DoubleVar(value=float(value))
+                        var = _var(tk.DoubleVar, value=float(value))
                         resolution = (hi - lo) / 100 if hi > lo else 0.01
 
                     # Debounce — Tk's Scale command fires on every pixel
@@ -564,7 +601,7 @@ def run_tweak_gui(
         row = ttk.Frame(effects)
         row.pack(fill="x", padx=10, pady=2)
         ttk.Label(row, text=label, width=18, anchor="w").pack(side="left")
-        var = tk.DoubleVar(value=value)
+        var = _var(tk.DoubleVar, value=value)
         resolution = (high - low) / 200 if (high - low) > 0 else 0.01
         scale = tk.Scale(
             row, from_=low, to=high,
@@ -577,8 +614,8 @@ def run_tweak_gui(
 
     toggles = ttk.Frame(effects)
     toggles.pack(fill="x", padx=10, pady=(8, 4))
-    rev_var = tk.IntVar(value=1)
-    cho_var = tk.IntVar(value=1)
+    rev_var = _var(tk.IntVar, value=1)
+    cho_var = _var(tk.IntVar, value=1)
     ttk.Checkbutton(
         toggles, text="Reverb on", variable=rev_var,
         command=lambda: send(f"set synth.reverb.active {rev_var.get()}"),
@@ -644,7 +681,7 @@ def run_tweak_gui(
         # channel makes all of them audible together; everything else
         # gets muted. Clicking a lit Solo unlights it.
         if player is not None:
-            mute_var = tk.IntVar(value=1 if ch in player._user_mutes else 0)
+            mute_var = _var(tk.IntVar, value=1 if ch in player._user_mutes else 0)
 
             def _on_mute(channel=ch, var=mute_var):
                 if var.get():
@@ -655,7 +692,7 @@ def run_tweak_gui(
                 row, text="mute", variable=mute_var, command=_on_mute,
             ).pack(side="left", padx=(0, 4))
 
-            solo_var = tk.IntVar(value=1 if ch in player._solo else 0)
+            solo_var = _var(tk.IntVar, value=1 if ch in player._solo else 0)
 
             def _on_solo(channel=ch, var=solo_var):
                 if var.get():
