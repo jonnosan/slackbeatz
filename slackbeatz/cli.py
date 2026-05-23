@@ -8,6 +8,7 @@ from pathlib import Path
 
 import subprocess
 import tempfile
+import time
 
 import slackbeatz.generators  # noqa: F401 — trigger algorithm registrations
 from slackbeatz.audio import (
@@ -15,6 +16,7 @@ from slackbeatz.audio import (
     SoundfontError,
     find_soundfont,
     render_audio,
+    require_tool,
 )
 from slackbeatz.compose import compose_from_text
 from slackbeatz.dsl.parser import ParseError, parse_file
@@ -203,6 +205,103 @@ def cmd_audio(args) -> int:
     return 0
 
 
+def cmd_live(args) -> int:
+    """Play a song via a spawned FluidSynth — single command, audio out
+    of the speakers, no DAW required."""
+    # Resolve source: explicit .sb file or compose from text.
+    if args.text:
+        sb_content = compose_from_text(args.text)
+        with tempfile.NamedTemporaryFile(
+            suffix=".sb", delete=False, mode="w", encoding="utf-8",
+        ) as tf:
+            tf.write(sb_content)
+            song_path = Path(tf.name)
+        cleanup_song = True
+    elif args.song_file:
+        song_path = Path(args.song_file)
+        cleanup_song = False
+    else:
+        print("error: pass either a .sb file or --text \"phrase\"", file=sys.stderr)
+        return 2
+
+    try:
+        file_ast = parse_file(song_path)
+        if file_ast.song is None:
+            print(f"error: {song_path}: no song block found", file=sys.stderr)
+            return 2
+        setup = _load_setup_for_song(song_path, file_ast, args.setup)
+        resolved = resolve_song(file_ast.song, setup, cli_seed=args.seed)
+    except (ParseError, ResolveError, SetupError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+
+    try:
+        soundfont = find_soundfont(args.soundfont)
+        fluidsynth_bin = require_tool("fluidsynth")
+    except (SoundfontError, MissingToolError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+
+    # Snapshot existing MIDI output ports so we can identify the new one
+    # FluidSynth registers when it starts.
+    before_ports = set(available_ports())
+    fs_proc = subprocess.Popen(
+        [
+            fluidsynth_bin,
+            "-a", "coreaudio",
+            "-m", "coremidi",
+            "-o", f"synth.gain={args.gain}",
+            "-o", f"synth.reverb.room-size={args.reverb}",
+            "-o", "synth.chorus.active=1",
+            "-q",
+            "-ni",
+            str(soundfont),
+        ],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    # Poll for the new MIDI port (up to ~4 seconds).
+    new_port = None
+    for _ in range(40):
+        time.sleep(0.1)
+        if fs_proc.poll() is not None:
+            print("error: fluidsynth exited before opening its MIDI port", file=sys.stderr)
+            return 1
+        diff = set(available_ports()) - before_ports
+        if diff:
+            new_port = next(iter(diff))
+            break
+
+    if new_port is None:
+        fs_proc.terminate()
+        fs_proc.wait(timeout=2)
+        print("error: fluidsynth started but didn't expose a MIDI port", file=sys.stderr)
+        return 1
+
+    print(f"slackbeatz: streaming to FluidSynth on {new_port!r} — press Ctrl+C to stop")
+    try:
+        sink = RealtimeSink(port_name=new_port)
+        tempo_map = build_tempo_map(resolved)
+        clock = InternalClock(tempo_map)
+        Scheduler(resolved, sink, clock).run()
+    except KeyboardInterrupt:
+        print("\nslackbeatz: interrupted")
+    except NoMidiPortError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    finally:
+        fs_proc.terminate()
+        try:
+            fs_proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            fs_proc.kill()
+        if cleanup_song:
+            song_path.unlink(missing_ok=True)
+    return 0
+
+
 def cmd_from_text(args) -> int:
     """Compose a `.sb` from an arbitrary input string.
 
@@ -331,6 +430,38 @@ def _build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--seed", type=int, default=0)
     sp.add_argument("-o", "--output", required=True, help="output .mid path")
     sp.set_defaults(func=cmd_render)
+
+    # live — single-command realtime audio via spawned FluidSynth
+    sp = sub.add_parser(
+        "live",
+        help="play a song to audio via spawned FluidSynth — no DAW required",
+    )
+    sp.add_argument(
+        "song_file", nargs="?",
+        help="path to a .sb file (omit if using --text)",
+    )
+    sp.add_argument(
+        "--text",
+        help="compose from text and play directly — alternative to song_file",
+    )
+    sp.add_argument("--setup", help="bundled name or path to a setup file")
+    sp.add_argument(
+        "--soundfont",
+        help="path to a .sf2/.sf3 (default: auto-discover or download)",
+    )
+    sp.add_argument(
+        "--gain", type=float, default=0.6,
+        help="FluidSynth output gain 0.0–1.0 (default 0.6)",
+    )
+    sp.add_argument(
+        "--reverb", type=float, default=0.8,
+        help="FluidSynth reverb room-size 0.0–1.0 (default 0.8)",
+    )
+    sp.add_argument(
+        "--seed", type=int, default=0,
+        help="fallback seed when the song doesn't set one (default 0)",
+    )
+    sp.set_defaults(func=cmd_live)
 
     # from-text
     sp = sub.add_parser(
