@@ -10,9 +10,13 @@ song "Goa"
   key   Em
   seed  13
 
-gen kick    rhythm psytrance
-gen hats    rhythm psytrance
-gen clap    rhythm psytrance
+# Psytrance is robotic — keep humanize tiny (1-2 ticks); never drop a
+# hit (drop_prob defaults to 0). Accent the downbeat-of-each-half-bar
+# kick for extra punch into drops. Bass gets heavy auto-sidechain
+# (duck default 0.45) for the signature psytrance pump.
+gen kick    rhythm psytrance humanize=1 accent=8
+gen hats    rhythm psytrance humanize=2
+gen clap    rhythm psytrance humanize=2
 gen bass    bass   psytrance octave=-1
 gen lead    melody psytrance octave=1
 gen pad     chords psytrance

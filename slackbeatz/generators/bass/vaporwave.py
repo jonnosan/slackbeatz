@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Iterator
 
 from slackbeatz.engine.event import Event, Note
-from slackbeatz.generators._shared import ChordProgression
+from slackbeatz.generators._shared import ChordProgression, sidechain_envelope
 from slackbeatz.generators.base import Generator
 from slackbeatz.generators.registry import register_generator
 from slackbeatz.model.context import PartContext
@@ -29,6 +29,10 @@ class BassVaporwave(Generator):
         octave_off = self.knob_int("octave", -1)
         intensity = self.knob_float("intensity", 1.0)
         gate = self.knob_float("gate", 0.9)
+        # Vaporwave is half-time — kick lands only on beats 1 & 3, so
+        # the techno sidechain envelope is the wrong shape. Default off
+        # (1.0); opt in with `duck=0.7` for a subtle pulse.
+        duck = self.knob_float("duck", 1.0)
         base_vel = 75
 
         tonic, _ = parse_key(ctx.key)
@@ -52,7 +56,9 @@ class BassVaporwave(Generator):
                     break
                 tick = (bar + offset_bars) * ticks_per_bar
                 jitter = ctx.rng.randint(-3, 3)
-                vel = max(1, min(127, int(round(base_vel * intensity)) + jitter))
+                vel_base = int(round(base_vel * intensity)) + jitter
+                env = sidechain_envelope(tick % ticks_per_bar, ctx.ppq, duck=duck)
+                vel = max(1, min(127, int(round(vel_base * env))))
                 remaining = (ctx.bars - bar - offset_bars) * ticks_per_bar
                 yield Note(
                     tick=tick, duration=min(dur, remaining - 1),

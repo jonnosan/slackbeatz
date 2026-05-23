@@ -46,12 +46,21 @@ class CandyEuclid(Generator):
         for i in range(steps):
             frac = i / (steps - 1) if steps > 1 else 1.0
             tick = ramp_start + int((total_ticks - ramp_start) * frac)
-            value = int(round(20 + 100 * frac * intensity))
+            cutoff = int(round(20 + 100 * frac * intensity))
             yield CC(
                 tick=tick,
                 channel=inst.channel,
                 controller=controller,
-                value=max(0, min(127, value)),
+                value=max(0, min(127, cutoff)),
+            )
+            # CC 11 expression: crescendo over the same span. Goes from
+            # 60 (subdued) to 127 (full) tracking the build's energy
+            # curve so the riser actually swells in perceived loudness,
+            # not just brightness.
+            expression = int(round(60 + 67 * frac * intensity))
+            yield CC(
+                tick=tick, channel=inst.channel, controller=11,
+                value=max(0, min(127, expression)),
             )
 
         # Noise burst note on the downbeat of the *next* part — but we

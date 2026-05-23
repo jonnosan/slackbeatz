@@ -10,7 +10,11 @@ from __future__ import annotations
 from typing import Iterator
 
 from slackbeatz.engine.event import Event, Note
-from slackbeatz.generators._shared import ChordProgression
+from slackbeatz.generators._shared import (
+    ChordProgression,
+    expression_ramp,
+    is_build_part,
+)
 from slackbeatz.generators.base import Generator
 from slackbeatz.generators.registry import register_generator
 from slackbeatz.model.context import PartContext
@@ -60,3 +64,7 @@ class ChordsPsytrance(Generator):
                     channel=inst.channel, pitch=pitch, velocity=vel,
                 )
             bar += prog.bars_per_chord
+
+        # Psytrance build → drop: maximum swell — full ramp to 127.
+        if is_build_part(ctx):
+            yield from expression_ramp(ctx, inst.channel, start=70, end=127)

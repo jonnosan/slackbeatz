@@ -10,7 +10,11 @@ from __future__ import annotations
 from typing import Iterator
 
 from slackbeatz.engine.event import Event, Note
-from slackbeatz.generators._shared import ChordProgression
+from slackbeatz.generators._shared import (
+    ChordProgression,
+    expression_ramp,
+    is_build_part,
+)
 from slackbeatz.generators.base import Generator
 from slackbeatz.generators.registry import register_generator
 from slackbeatz.model.context import PartContext
@@ -60,3 +64,8 @@ class ChordsEuclid(Generator):
                     channel=inst.channel, pitch=pitch, velocity=vel,
                 )
             bar += progression.bars_per_chord
+
+        # Build → drop: swell the chord channel via CC 11 so the
+        # transition has actual loudness motion, not just brightness.
+        if is_build_part(ctx):
+            yield from expression_ramp(ctx, inst.channel, start=80, end=127)

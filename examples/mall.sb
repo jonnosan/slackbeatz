@@ -12,9 +12,14 @@ song "Mall"
   key   Em
   seed  88
 
-gen kick    rhythm vaporwave
-gen snare   rhythm vaporwave
-gen hats    rhythm vaporwave
+# Heavy humanization for the "drunken lounge-musician" feel; light
+# drop_prob across the drums means the player misses the occasional
+# hit. Accent the on-beat hats with accent=4 for a soft backbeat
+# emphasis. Bass stays un-ducked (vaporwave is half-time so the techno
+# sidechain envelope is the wrong shape).
+gen kick    rhythm vaporwave humanize=8 drop_prob=0.04
+gen snare   rhythm vaporwave humanize=8 drop_prob=0.05
+gen hats    rhythm vaporwave humanize=6 drop_prob=0.06 accent=4
 gen bass    bass   vaporwave
 gen lead    melody vaporwave
 gen pad     chords vaporwave

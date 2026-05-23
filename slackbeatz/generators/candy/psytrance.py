@@ -46,12 +46,21 @@ class CandyPsytrance(Generator):
         for i in range(int(n_events)):
             tick = ramp_start + i * step_ticks
             frac = i / max(1, n_events - 1)
-            value = int(round(10 + 110 * frac * intensity * density))
+            cutoff = int(round(10 + 110 * frac * intensity * density))
             yield CC(
                 tick=tick, channel=inst.channel, controller=cc_num,
-                value=max(0, min(127, value)),
+                value=max(0, min(127, cutoff)),
             )
-        # Snap back to low at the very end so the drop starts clean.
+            # CC 11 expression climbs alongside the filter sweep so the
+            # build feels louder, not just brighter. Goes 50 → 127.
+            expression = int(round(50 + 77 * frac * intensity))
+            yield CC(
+                tick=tick, channel=inst.channel, controller=11,
+                value=max(0, min(127, expression)),
+            )
+        # Snap CC 74 (filter) back to low at the very end so the drop
+        # starts with a clean transient; expression stays at full so
+        # the next part hits hard.
         if total_ticks > 0:
             yield CC(
                 tick=total_ticks - 1, channel=inst.channel,

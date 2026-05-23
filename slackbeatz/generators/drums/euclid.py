@@ -14,8 +14,10 @@ from typing import Iterator
 
 from slackbeatz.engine.event import Event, Note
 from slackbeatz.generators._shared import (
+    HitParams,
     euclid,
     fill_perturb,
+    humanize_hit,
     is_fill_bar,
     step_duration,
     step_to_ticks,
@@ -42,10 +44,19 @@ class DrumsEuclid(Generator):
         assert kit is not None, "drums gen needs a kit"
 
         intensity = self.knob_float("intensity", 1.0)
+        humanize = self.knob_int("humanize", 0)
+        drop_prob = self.knob_float("drop_prob", 0.0)
+        accent = self.knob_int("accent", 0)
         swing = self.knob_float("swing", 0.0)
         step_ticks = step_duration(ctx.ppq)
         swing_offset = int(step_ticks * swing * 0.5)
         dur = max(1, step_ticks // 2)
+
+        def _drum_params(base_vel: int) -> HitParams:
+            return HitParams(
+                base_vel=base_vel, intensity=intensity, vel_jitter=8,
+                humanize=humanize, drop_prob=drop_prob, accent=accent,
+            )
 
         # Big-fill flag — last bar of the part if heading into a drop.
         big_fill = ctx.next_role == "drop"
@@ -82,19 +93,19 @@ class DrumsEuclid(Generator):
 
                 if kick_pat[step]:
                     yield from _emit(kit.drum_notes.get("kick"), kit.channel,
-                                      tick, dur, _KICK[2], intensity, ctx)
+                                      tick, dur, _drum_params(_KICK[2]), step, ctx)
                 if snare_pat[step]:
                     yield from _emit(kit.drum_notes.get("snare"), kit.channel,
-                                      tick, dur, _SNARE[2], intensity, ctx)
+                                      tick, dur, _drum_params(_SNARE[2]), step, ctx)
                 if clap_pat[step]:
                     yield from _emit(kit.drum_notes.get("clap"), kit.channel,
-                                      tick, dur, _CLAP[2], intensity, ctx)
+                                      tick, dur, _drum_params(_CLAP[2]), step, ctx)
                 if hat_pat[step]:
                     yield from _emit(kit.drum_notes.get("hat"), kit.channel,
-                                      tick, dur, _HAT[2], intensity, ctx)
+                                      tick, dur, _drum_params(_HAT[2]), step, ctx)
                 if ohat_pat[step]:
                     yield from _emit(kit.drum_notes.get("ohat"), kit.channel,
-                                      tick, dur, _OHAT[2], intensity, ctx)
+                                      tick, dur, _drum_params(_OHAT[2]), step, ctx)
 
 
 def _emit(
@@ -102,15 +113,18 @@ def _emit(
     channel: int,
     tick: int,
     duration: int,
-    base_vel: int,
-    intensity: float,
+    params: HitParams,
+    step: int,
     ctx: PartContext,
 ):
-    """Yield a humanised Note. Skips silently if the kit doesn't define the drum."""
+    """Yield a humanised Note. Skips silently if the kit doesn't define
+    the drum or the drop_prob roll dropped it."""
     if note is None:
         return
-    jitter = ctx.rng.randint(-8, 8)
-    vel = max(1, min(127, int(round(base_vel * intensity)) + jitter))
+    shaped = humanize_hit(params, ctx.rng, step, tick)
+    if shaped is None:
+        return
+    vel, tick = shaped
     yield Note(
         tick=tick, duration=duration, channel=channel, pitch=note, velocity=vel
     )

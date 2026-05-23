@@ -14,7 +14,11 @@ from __future__ import annotations
 from typing import Iterator
 
 from slackbeatz.engine.event import Event, Note
-from slackbeatz.generators._shared import step_duration, step_to_ticks
+from slackbeatz.generators._shared import (
+    sidechain_envelope,
+    step_duration,
+    step_to_ticks,
+)
 from slackbeatz.generators.base import Generator
 from slackbeatz.generators.registry import register_generator
 from slackbeatz.model.context import PartContext
@@ -31,12 +35,18 @@ class BassPsytrance(Generator):
         octave_off = self.knob_int("octave", -1)
         intensity = self.knob_float("intensity", 1.0)
         gate = self.knob_float("gate", 0.3)
+        # Psytrance bass benefits from heavy sidechain — the gallop's
+        # first 16th-after-each-kick is already softer because of the
+        # rest, and ducking the next two 16ths a bit reinforces the
+        # pumping feel.
+        duck = self.knob_float("duck", 0.45)
         base_vel = 105
 
         tonic, _ = parse_key(ctx.key)
         root = midi_note(tonic, 2 + octave_off)
 
         step_ticks = step_duration(ctx.ppq)
+        ticks_per_bar = 4 * ctx.ppq
         dur = max(1, int(step_ticks * gate))
 
         # Gallop: pulses on every 16th *except* the first 16th of each beat.
@@ -44,11 +54,13 @@ class BassPsytrance(Generator):
         gallop_steps = [s for s in range(16) if s % 4 != 0]
 
         for bar in range(ctx.bars):
-            bar_start = bar * 4 * ctx.ppq
+            bar_start = bar * ticks_per_bar
             for step in gallop_steps:
                 tick = bar_start + step_to_ticks(step, ctx.ppq)
                 jitter = ctx.rng.randint(-4, 4)
-                vel = max(1, min(127, int(round(base_vel * intensity)) + jitter))
+                vel_base = int(round(base_vel * intensity)) + jitter
+                env = sidechain_envelope(tick - bar_start, ctx.ppq, duck=duck)
+                vel = max(1, min(127, int(round(vel_base * env))))
                 yield Note(
                     tick=tick, duration=dur,
                     channel=inst.channel, pitch=root, velocity=vel,

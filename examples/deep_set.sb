@@ -10,9 +10,12 @@ song "Deep Set"
   key   Am
   seed  7
 
-gen kick    rhythm deep_techno
-gen hats    rhythm deep_techno
-gen clap    rhythm deep_techno
+# Very subtle humanization — deep techno sits flat dynamically but
+# benefits from a small timing wobble. Drop the occasional quarter-note
+# hat (drop_prob=0.05). Bass auto-ducks lightly (duck default 0.7).
+gen kick    rhythm deep_techno humanize=3
+gen hats    rhythm deep_techno humanize=3 drop_prob=0.05
+gen clap    rhythm deep_techno humanize=3
 gen bass    bass   deep_techno octave=-1
 gen lead    melody deep_techno
 gen pad     chords deep_techno

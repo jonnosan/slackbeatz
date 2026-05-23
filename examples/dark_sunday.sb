@@ -11,10 +11,13 @@ song "Dark Sunday"
   key   Am
   seed  42
 
-gen kick    rhythm euclid
-gen snare   rhythm euclid
-gen hats    rhythm euclid swing=0.08
-gen clap    rhythm euclid
+# humanize/drop_prob/accent knobs are subtle here — classic drum-machine
+# techno wants tightness with just enough wobble to sound alive. Bass
+# auto-sidechain ducks on each beat (duck default 0.55 for euclid).
+gen kick    rhythm euclid humanize=2 accent=8
+gen snare   rhythm euclid humanize=4
+gen hats    rhythm euclid swing=0.08 humanize=4 drop_prob=0.06 accent=4
+gen clap    rhythm euclid humanize=4
 gen bass    bass   euclid octave=-1
 gen lead    melody euclid octave=1  seed=7
 gen pad     chords euclid

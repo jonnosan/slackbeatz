@@ -9,7 +9,11 @@ from __future__ import annotations
 from typing import Iterator
 
 from slackbeatz.engine.event import Event, Note
-from slackbeatz.generators._shared import ChordProgression
+from slackbeatz.generators._shared import (
+    ChordProgression,
+    expression_ramp,
+    is_build_part,
+)
 from slackbeatz.generators.base import Generator
 from slackbeatz.generators.registry import register_generator
 from slackbeatz.model.context import PartContext
@@ -55,3 +59,9 @@ class ChordsDeepTechno(Generator):
                     channel=inst.channel, pitch=pitch, velocity=vel,
                 )
             bar += prog.bars_per_chord
+
+        # Gentle expression swell on build → drop. Deep techno wants a
+        # smaller dynamic range than euclid (75 → 110 instead of
+        # 80 → 127) — it should feel restrained, not climactic.
+        if is_build_part(ctx):
+            yield from expression_ramp(ctx, inst.channel, start=75, end=110)

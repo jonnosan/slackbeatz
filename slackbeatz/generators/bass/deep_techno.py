@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Iterator
 
 from slackbeatz.engine.event import Event, Note
+from slackbeatz.generators._shared import sidechain_envelope
 from slackbeatz.generators.base import Generator
 from slackbeatz.generators.registry import register_generator
 from slackbeatz.model.context import PartContext
@@ -25,6 +26,9 @@ class BassDeepTechno(Generator):
         octave_off = self.knob_int("octave", -1)
         intensity = self.knob_float("intensity", 1.0)
         gate = self.knob_float("gate", 0.9)
+        # Deep techno wants a *light* sidechain on the long sustained
+        # notes — just enough to feel the kick under the bass.
+        duck = self.knob_float("duck", 0.7)
         base_vel = 80
 
         tonic, _ = parse_key(ctx.key)
@@ -42,7 +46,13 @@ class BassDeepTechno(Generator):
             cell_idx = (bar // 2) % 2
             pitch = root if cell_idx == 0 else fifth
             jitter = ctx.rng.randint(-4, 4)
-            vel = max(1, min(127, int(round(base_vel * intensity)) + jitter))
+            vel_base = int(round(base_vel * intensity)) + jitter
+            # Long sustained notes start on a downbeat (tick_in_bar=0),
+            # so sidechain ducks them at note-on. The synth's envelope
+            # smooths the rest — this is the right pumping feel here
+            # without needing finer-grained per-tick CC modulation.
+            env = sidechain_envelope(tick % ticks_per_bar, ctx.ppq, duck=duck)
+            vel = max(1, min(127, int(round(vel_base * env))))
             # Clamp duration to part end.
             remaining = (ctx.bars - bar) * ticks_per_bar
             yield Note(

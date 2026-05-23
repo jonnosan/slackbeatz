@@ -14,7 +14,13 @@ from __future__ import annotations
 from typing import Iterator
 
 from slackbeatz.engine.event import Event, Note
-from slackbeatz.generators._shared import euclid, step_duration, step_to_ticks
+from slackbeatz.generators._shared import (
+    HitParams,
+    euclid,
+    humanize_hit,
+    step_duration,
+    step_to_ticks,
+)
 from slackbeatz.generators.base import Generator
 from slackbeatz.generators.registry import register_generator
 from slackbeatz.model.context import PartContext
@@ -61,14 +67,19 @@ class RhythmEuclid(Generator):
         name = self.handle.lower()
         pulses, offset = _DEFAULTS.get(name, (4, 0))
         base_vel = _DEFAULT_VEL.get(name, 100)
-        intensity = self.knob_float("intensity", 1.0)
+        params = HitParams(
+            base_vel=base_vel,
+            intensity=self.knob_float("intensity", 1.0),
+            vel_jitter=8,
+            humanize=self.knob_int("humanize", 0),
+            drop_prob=self.knob_float("drop_prob", 0.0),
+            accent=self.knob_int("accent", 0),
+        )
         swing = self.knob_float("swing", 0.0)
 
         pattern = euclid(pulses, 16, offset)
         step_ticks = step_duration(ctx.ppq)
-        # Swing pushes offbeat steps later by a fraction of a step.
         swing_offset = int(step_ticks * swing * 0.5)
-        # Short staccato hit for drum voices.
         dur = max(1, step_ticks // 2)
 
         for bar in range(ctx.bars):
@@ -79,13 +90,11 @@ class RhythmEuclid(Generator):
                 tick = bar_start + step_to_ticks(step, ctx.ppq)
                 if step % 2 == 1:
                     tick += swing_offset
-                # ±8 velocity jitter for human feel.
-                jitter = ctx.rng.randint(-8, 8)
-                vel = max(1, min(127, int(round(base_vel * intensity)) + jitter))
+                shaped = humanize_hit(params, ctx.rng, step, tick)
+                if shaped is None:
+                    continue
+                vel, tick = shaped
                 yield Note(
-                    tick=tick,
-                    duration=dur,
-                    channel=inst.channel,
-                    pitch=inst.note,
-                    velocity=vel,
+                    tick=tick, duration=dur,
+                    channel=inst.channel, pitch=inst.note, velocity=vel,
                 )

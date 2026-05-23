@@ -19,9 +19,82 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
+from typing import Iterator, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from slackbeatz.engine.event import CC
+    from slackbeatz.model.context import PartContext
 
 # Every algorithm uses a 16-step grid per bar (the Arduino convention).
 STEPS_PER_BAR = 16
+
+
+# --------------------------------------------------------------------------
+# Per-hit shaping (humanize / drop / accent / velocity jitter)
+# --------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class HitParams:
+    """Bundle of per-hit chance knobs all rhythm/drums gens read.
+
+    These are uniform across styles so every rhythm/drums voice can wear
+    the same set of small humanising knobs in the DSL.
+    """
+
+    base_vel: int = 100
+    intensity: float = 1.0
+    vel_jitter: int = 8         # ±N velocity points (random)
+    humanize: int = 0           # ±N tick offset per hit
+    drop_prob: float = 0.0      # chance to drop a hit entirely
+    accent: int = 0             # every accent-th step gets +12 velocity
+
+
+def humanize_hit(
+    params: HitParams,
+    rng: random.Random,
+    step: int,
+    tick: int,
+) -> tuple[int, int] | None:
+    """Apply the chance knobs to one rhythmic hit.
+
+    Returns ``(velocity, tick)`` or ``None`` if the hit was dropped by
+    ``drop_prob``. Algorithms call this once per pattern position they
+    intend to emit a note at.
+    """
+    if params.drop_prob > 0 and rng.random() < params.drop_prob:
+        return None
+    vel = int(round(params.base_vel * params.intensity))
+    if params.vel_jitter > 0:
+        vel += rng.randint(-params.vel_jitter, params.vel_jitter)
+    if params.accent > 0 and step % params.accent == 0:
+        vel += 12
+    vel = max(1, min(127, vel))
+    new_tick = tick
+    if params.humanize > 0:
+        new_tick = max(0, tick + rng.randint(-params.humanize, params.humanize))
+    return (vel, new_tick)
+
+
+# --------------------------------------------------------------------------
+# Sidechain ducking envelope (kick-on-each-beat assumption)
+# --------------------------------------------------------------------------
+
+def sidechain_envelope(tick_in_bar: int, ppq: int, duck: float = 0.5) -> float:
+    """Velocity multiplier in ``[duck, 1.0]`` for a tick inside a bar.
+
+    Assumes 4-on-the-floor kicks land on every quarter beat (the
+    overwhelming default in techno-derived styles). At each beat the
+    multiplier is ``duck`` (so ``duck=0.5`` means "halve velocity on
+    the downbeat"); it ramps linearly back to ``1.0`` by the midpoint
+    of the beat. ``duck=1.0`` disables the envelope.
+    """
+    if duck >= 1.0:
+        return 1.0
+    pos = tick_in_bar % ppq
+    half_beat = ppq // 2
+    if pos >= half_beat or half_beat == 0:
+        return 1.0
+    return duck + (1.0 - duck) * (pos / half_beat)
 
 
 def euclid(pulses: int, steps: int = STEPS_PER_BAR, offset: int = 0) -> list[bool]:
@@ -151,3 +224,50 @@ def fill_perturb(
 def is_fill_bar(bar: int, group: int = 4) -> bool:
     """Is *bar* (0-indexed) the last bar of a *group*-bar group?"""
     return (bar % group) == (group - 1)
+
+
+_BUILD_ROLES = frozenset({"build", "buildup"})
+
+
+def is_build_part(ctx: "PartContext") -> bool:
+    """True if this part should swell into the next — either its role
+    is build-shaped, or it sits directly before a drop."""
+    return ctx.role in _BUILD_ROLES or ctx.next_role == "drop"
+
+
+def expression_ramp(
+    ctx: "PartContext",
+    channel: int,
+    *,
+    start: int = 70,
+    end: int = 127,
+    events_per_bar: int = 4,
+    bars_to_ramp: int | None = None,
+) -> Iterator["CC"]:
+    """Yield CC 11 (Expression) events ramping ``start`` → ``end`` over
+    the last ``bars_to_ramp`` bars (defaults to *all* bars of the part).
+
+    Algorithms call this only when :func:`is_build_part` returns True,
+    so the expression curve sells the build → drop transition. The
+    final value persists into the next part (no snap-back).
+    """
+    # Local import to avoid the cycle the TYPE_CHECKING guard documents.
+    from slackbeatz.engine.event import CC
+
+    ticks_per_bar = 4 * ctx.ppq
+    total_ticks = ctx.bars * ticks_per_bar
+    ramp_bars = min(ctx.bars, bars_to_ramp) if bars_to_ramp else ctx.bars
+    ramp_start = total_ticks - ramp_bars * ticks_per_bar
+    n = max(2, ramp_bars * events_per_bar)
+    span = total_ticks - ramp_start
+    step = max(1, span // (n - 1))
+    for i in range(n):
+        tick = ramp_start + i * step
+        if tick >= total_ticks:
+            tick = total_ticks - 1
+        frac = i / (n - 1)
+        value = int(round(start + (end - start) * frac))
+        yield CC(
+            tick=max(0, tick), channel=channel, controller=11,
+            value=max(0, min(127, value)),
+        )
