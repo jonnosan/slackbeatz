@@ -143,6 +143,32 @@ def _bars_for(
     return random.Random(seed).randint(part.bars, part.bars_max)
 
 
+# Issue #14: per-role default tension (energy) when a part doesn't set
+# `tension=N` explicitly. The values aim to match how the role labels
+# feel in arrangement context — intro/break/outro pull back, drop is
+# full energy, build sits in between because it ramps via `evolution`.
+_ROLE_TENSION_DEFAULTS: dict[str, float] = {
+    "intro":     0.55,
+    "build":     0.80,
+    "buildup":   0.80,
+    "drop":      1.00,
+    "main":      0.90,
+    "verse":     0.85,
+    "chorus":    0.95,
+    "break":     0.50,
+    "bridge":    0.65,
+    "outro":     0.55,
+    "transition": 0.85,  # issue #20 — fills should hit
+}
+
+
+def _tension_for(part) -> float:
+    """Resolve the part's tension multiplier — explicit > role default > 1.0."""
+    if part.tension is not None:
+        return part.tension
+    return _ROLE_TENSION_DEFAULTS.get(part.role, 1.0)
+
+
 def _build_context(
     song: ResolvedSong,
     arrangement_index: int,
@@ -165,6 +191,7 @@ def _build_context(
     scale_override = part.scale_override or song.scale_override
     transpose_semitones = _transposition_for(song, arrangement_index, part_name)
     bars = _bars_for(song, arrangement_index, part_name)
+    tension = _tension_for(part)
     return PartContext(
         name=part.name,
         role=part.role,
@@ -179,6 +206,7 @@ def _build_context(
         rng=random.Random(seed),
         scale_override=scale_override,
         transpose_semitones=transpose_semitones,
+        tension=tension,
     )
 
 

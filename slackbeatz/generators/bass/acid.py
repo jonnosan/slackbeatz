@@ -144,7 +144,7 @@ class BassAcid(Generator):
                 # vel — the unmistakable acid accent pattern.
                 accent_boost = 15 if step % 4 == 0 else 0
                 jitter = ctx.rng.randint(-4, 4)
-                vel_base = int(round(base_vel * intensity * evo_mult)) + jitter + accent_boost
+                vel_base = int(round(base_vel * intensity * evo_mult * ctx.tension)) + jitter + accent_boost
                 env = sidechain_envelope(tick - bar_start, ctx.ppq, duck=duck)
                 vel = max(1, min(127, int(round(vel_base * env))))
                 # Pitch wobble per note for that analogue character.

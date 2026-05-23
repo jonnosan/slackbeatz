@@ -19,6 +19,7 @@ from slackbeatz.generators._shared import (
     pick_evolution_direction,
     should_mute_bar,
     transposed_pitch,
+    voice_lead,
 )
 from slackbeatz.generators.base import Generator
 from slackbeatz.generators.defaults import (
@@ -28,6 +29,7 @@ from slackbeatz.generators.defaults import (
     gate_jitter_for,
     macro_knobs,
     scale_for,
+    voice_lead_for,
 )
 from slackbeatz.generators.registry import register_generator
 from slackbeatz.model.context import PartContext
@@ -51,6 +53,11 @@ class ChordsEuclid(Generator):
         base_vel = base_vel_for(self)
         gate_jitter = gate_jitter_for(self)
         arp_prob = self.knob_float("arp_prob", 0.0)
+        # Issue #6: when set, snap each chord tone to the nearest pitch
+        # in the next chord rather than emitting at the literal voicing
+        # offset. Smoother chord-to-chord motion.
+        do_voice_lead = voice_lead_for(self)
+        prev_pitches: list[int] = []
         macro = macro_knobs(self)
         direction = pick_evolution_direction(ctx.rng, macro["evolution"])
         scale = scale_for(self, ctx, fallback="minor")
@@ -72,7 +79,7 @@ class ChordsEuclid(Generator):
             tick = bar * ticks_per_bar
             jitter = ctx.rng.randint(-4, 4)
             evo_mult = evolution_multiplier(bar, bars, macro["evolution"], direction)
-            vel = max(1, min(127, int(round(base_vel * intensity * evo_mult)) + jitter))
+            vel = max(1, min(127, int(round(base_vel * intensity * evo_mult * ctx.tension)) + jitter))
 
             # Build the chord's pitches once. Used both for held and arp.
             chord_pitches = [
@@ -83,6 +90,11 @@ class ChordsEuclid(Generator):
                 for deg_off in _TRIAD
             ]
             chord_pitches = [p for p in chord_pitches if 0 <= p <= 127]
+            # Voice leading: re-voice the new chord so each tone is the
+            # nearest octave equivalent to the previous chord's tones.
+            if do_voice_lead and prev_pitches and chord_pitches:
+                chord_pitches = voice_lead(prev_pitches, chord_pitches)
+            prev_pitches = list(chord_pitches)
             remaining = (bars - bar) * ticks_per_bar
 
             if arp_prob > 0 and ctx.rng.random() < arp_prob and chord_pitches:

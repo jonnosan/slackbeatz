@@ -42,3 +42,9 @@ class PartContext:
     # Semitone offset applied per arrangement-instance — picked by the
     # scheduler from the part's `transpose_prob` knob. 0 = no shift.
     transpose_semitones: int = 0
+    # Issue #14: part-level "energy" multiplier all gens see. Default
+    # 1.0; auto-derived from role when the part doesn't set it
+    # explicitly (intro=0.5, build=ramps 0.5→1.0 — though gens still
+    # apply that ramp themselves via `evolution`, drop=1.0,
+    # break/outro=0.5).
+    tension: float = 1.0

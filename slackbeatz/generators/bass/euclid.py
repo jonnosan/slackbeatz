@@ -83,7 +83,7 @@ class BassEuclid(Generator):
                     continue
                 tick = bar_start + step_to_ticks(step, ctx.ppq)
                 jitter = ctx.rng.randint(-6, 6)
-                vel_base = int(round(base_vel * intensity * evo_mult)) + jitter
+                vel_base = int(round(base_vel * intensity * evo_mult * ctx.tension)) + jitter
                 env = sidechain_envelope(tick - bar_start, ctx.ppq, duck=duck)
                 vel = max(1, min(127, int(round(vel_base * env))))
                 dur = apply_gate_jitter(base_dur, gate_jitter, ctx.rng)

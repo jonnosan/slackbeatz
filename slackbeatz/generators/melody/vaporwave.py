@@ -20,8 +20,10 @@ from slackbeatz.generators._shared import (
     ChordProgression,
     MotifMemory,
     apply_gate_jitter,
+    call_response_active,
     evolution_multiplier,
     maybe_octave_jump,
+    maybe_passing_tone,
     pick_evolution_direction,
     should_mute_bar,
     transposed_pitch,
@@ -35,6 +37,8 @@ from slackbeatz.generators.defaults import (
     macro_knobs,
     motif_memory_for,
     octave_jump_for,
+    pair_for,
+    passing_tones_for,
     scale_for,
 )
 from slackbeatz.generators.registry import register_generator
@@ -64,6 +68,8 @@ class MelodyVaporwave(Generator):
         pan_center = self.knob_int("pan", 64)
         gate_jitter = gate_jitter_for(self)
         octave_jump = octave_jump_for(self)
+        passing_tones = passing_tones_for(self)
+        pair = pair_for(self)
         memory = MotifMemory(motif_memory_for(self))
         macro = macro_knobs(self)
         direction = pick_evolution_direction(ctx.rng, macro["evolution"])
@@ -96,6 +102,9 @@ class MelodyVaporwave(Generator):
             if should_mute_bar(ctx.rng, macro["mute_prob"]):
                 bar += prog.bars_per_chord
                 continue
+            if not call_response_active(self.handle, pair, bar):
+                bar += prog.bars_per_chord
+                continue
             chord_root_deg = prog.degree_at_bar(bar)
             evo_mult = evolution_multiplier(bar, ctx.bars, macro["evolution"], direction)
 
@@ -122,6 +131,7 @@ class MelodyVaporwave(Generator):
                     ctx.transpose_semitones,
                 )
                 pitch = maybe_octave_jump(pitch, octave_jump, ctx.rng)
+                pitch = maybe_passing_tone(pitch, passing_tones, ctx.rng)
                 if not 0 <= pitch <= 127:
                     continue
                 # Note lands on a quarter-note grid relative to chord start.
@@ -130,7 +140,7 @@ class MelodyVaporwave(Generator):
                 base_dur = max(1, int(2 * ppq * gate))
                 dur = apply_gate_jitter(base_dur, gate_jitter, ctx.rng)
                 jitter = ctx.rng.randint(-4, 4)
-                vel = max(1, min(127, int(round(base_vel * intensity * evo_mult)) + jitter))
+                vel = max(1, min(127, int(round(base_vel * intensity * evo_mult * ctx.tension)) + jitter))
                 yield Note(
                     tick=tick, duration=dur,
                     channel=inst.channel, pitch=pitch, velocity=vel,

@@ -65,7 +65,7 @@ class BassDubTechno(Generator):
             tick = bar * ticks_per_bar
             evo_mult = evolution_multiplier(bar, ctx.bars, macro["evolution"], direction)
             jitter = ctx.rng.randint(-3, 3)
-            vel_base = int(round(base_vel * intensity * evo_mult)) + jitter
+            vel_base = int(round(base_vel * intensity * evo_mult * ctx.tension)) + jitter
             env = sidechain_envelope(0, ctx.ppq, duck=duck)
             vel = max(1, min(127, int(round(vel_base * env))))
             # Use the chord-root scale degree at octave 2 + octave_off,

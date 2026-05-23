@@ -15,8 +15,10 @@ from slackbeatz.engine.event import Event, Note
 from slackbeatz.generators._shared import (
     MotifMemory,
     apply_gate_jitter,
+    call_response_active,
     evolution_multiplier,
     maybe_octave_jump,
+    maybe_passing_tone,
     pick_evolution_direction,
     should_mute_bar,
     step_duration,
@@ -32,6 +34,8 @@ from slackbeatz.generators.defaults import (
     macro_knobs,
     motif_memory_for,
     octave_jump_for,
+    pair_for,
+    passing_tones_for,
     scale_for,
 )
 from slackbeatz.generators.registry import register_generator
@@ -56,6 +60,8 @@ class MelodyPsytrance(Generator):
         base_vel = base_vel_for(self)
         gate_jitter = gate_jitter_for(self)
         octave_jump = octave_jump_for(self)
+        passing_tones = passing_tones_for(self)
+        pair = pair_for(self)
         # motif_memory: with N>0, the gen reuses recent degrees with a
         # probability proportional to N — making the motif repetition
         # more pronounced. Default 0 = the original deterministic motif.
@@ -72,6 +78,8 @@ class MelodyPsytrance(Generator):
         # The rotation index advances every 4 bars.
         for bar in range(ctx.bars):
             if should_mute_bar(ctx.rng, macro["mute_prob"]):
+                continue
+            if not call_response_active(self.handle, pair, bar):
                 continue
             evo_mult = evolution_multiplier(bar, ctx.bars, macro["evolution"], direction)
             bar_start = bar * 4 * ctx.ppq
@@ -91,11 +99,12 @@ class MelodyPsytrance(Generator):
                         ctx.transpose_semitones,
                     )
                     pitch = maybe_octave_jump(pitch, octave_jump, ctx.rng)
+                    pitch = maybe_passing_tone(pitch, passing_tones, ctx.rng)
                     if not 0 <= pitch <= 127:
                         continue
                     tick = bar_start + step_to_ticks(step, ctx.ppq)
                     jitter = ctx.rng.randint(-5, 5)
-                    vel = max(1, min(127, int(round(base_vel * intensity * evo_mult)) + jitter))
+                    vel = max(1, min(127, int(round(base_vel * intensity * evo_mult * ctx.tension)) + jitter))
                     dur = apply_gate_jitter(base_dur, gate_jitter, ctx.rng)
                     yield Note(
                         tick=tick, duration=dur,

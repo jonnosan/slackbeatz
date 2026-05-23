@@ -150,6 +150,11 @@ Every `gen` line accepts a small whitelisted set of `key=value` knobs after the 
 | `octave_jump` | 0..1 | Per-note probability of jumping ±1 octave | Bass + melody |
 | `motif_memory` | int N | Markov-like — recent degrees reuse with probability ~N×0.1 | Melody (psytrance / vaporwave) |
 | `kick_env` | 0..1 | Per-beat CC 74 envelope (filter dips on kick) | Bass deep_techno |
+| `passing_tones` | 0..1 | Per-note chance to swap the pitch for a chromatic neighbour | Melody |
+| `voice_lead` | bool | Snap each chord tone to the nearest pitch in the next chord | Chords euclid |
+| `polyrhythm` | int N | Secondary euclid layer of N pulses at lower velocity | Rhythm |
+| `pair` | gen handle | Call-and-response partner — this gen plays alternate 2-bar windows | Melody |
+| `arp_period` | int N | Deterministic arpeggio every Nth chord (default 2 for vaporwave) | Chords vaporwave |
 | `scale` | scale name | Override the gen's hardcoded scale (e.g. `scale=dorian`) | All pitched |
 | `seed` | int | Override the resolved seed for this gen | All |
 
@@ -160,8 +165,11 @@ Part-level knobs (on the `part <name> <bars>` line):
 | `tempo=N` / `key=NAME` / `role=R` / `seed=N` | Per-part overrides of the song defaults |
 | `scale=NAME` | Override the scale for all pitched gens in this part |
 | `transpose_prob=0..1` | Per-arrangement-instance roll for transposition (±N semitones); shared across all gens in the part so harmony stays coherent |
+| `tension=0..1` | Part-level energy scalar; multiplies every gen's velocity. Auto-derived from role if unset (intro/break/outro = 0.5, drop = 1.0, etc.) |
 
 `<bars>` itself can be a range — `part main 32..48` — and the scheduler picks an integer in the range per arrangement-instance (deterministic per seed). Real DJ-style arrangements vary section lengths constantly.
+
+`role=transition` (or `role=fill`) marks a short transitional part — drums gens force-fill every bar; candy gens trigger their sweep behaviour.
 
 Song-level (under the `song "..."` block):
 

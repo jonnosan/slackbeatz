@@ -47,6 +47,7 @@ class ResolvedPart:
     scale_override: str | None = None  # set if `scale=` on the part
     transpose_prob: float = 0.0  # per-arrangement-instance roll
     bars_max: int | None = None   # issue #21: upper bound for bars=N..M
+    tension: float | None = None  # issue #14: explicit override; else derive
     gen_handles: list[str] = field(default_factory=list)
 
 

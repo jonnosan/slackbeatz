@@ -7,7 +7,9 @@ from typing import Iterator
 from slackbeatz.engine.event import Event, Note
 from slackbeatz.generators._shared import (
     apply_gate_jitter,
+    call_response_active,
     evolution_multiplier,
+    maybe_passing_tone,
     pick_evolution_direction,
     should_mute_bar,
     transposed_pitch,
@@ -19,6 +21,8 @@ from slackbeatz.generators.defaults import (
     gate_for,
     gate_jitter_for,
     macro_knobs,
+    pair_for,
+    passing_tones_for,
     scale_for,
 )
 from slackbeatz.generators.registry import register_generator
@@ -44,6 +48,8 @@ class MelodyDeepTechno(Generator):
         gate = gate_for(self)
         base_vel = base_vel_for(self)
         gate_jitter = gate_jitter_for(self)
+        passing_tones = passing_tones_for(self)
+        pair = pair_for(self)
         macro = macro_knobs(self)
         direction = pick_evolution_direction(ctx.rng, macro["evolution"])
         scale = scale_for(self, ctx, fallback="dorian")
@@ -54,6 +60,8 @@ class MelodyDeepTechno(Generator):
         last_deg: int | None = None
         for bar in range(ctx.bars):
             if should_mute_bar(ctx.rng, macro["mute_prob"]):
+                continue
+            if not call_response_active(self.handle, pair, bar):
                 continue
             evo_mult = evolution_multiplier(bar, ctx.bars, macro["evolution"], direction)
             # 1 or 2 notes per bar, randomly placed on a quarter-note grid.
@@ -68,13 +76,14 @@ class MelodyDeepTechno(Generator):
                     scale_note(deg, tonic, scale, 4 + octave_off),
                     ctx.transpose_semitones,
                 )
+                pitch = maybe_passing_tone(pitch, passing_tones, ctx.rng)
                 if not 0 <= pitch <= 127:
                     continue
                 tick = bar * ticks_per_bar + beat * ctx.ppq
                 base_dur = max(1, int(ctx.ppq * 2 * gate))  # half-note-ish
                 dur = apply_gate_jitter(base_dur, gate_jitter, ctx.rng)
                 jitter = ctx.rng.randint(-4, 4)
-                vel = max(1, min(127, int(round(base_vel * intensity * evo_mult)) + jitter))
+                vel = max(1, min(127, int(round(base_vel * intensity * evo_mult * ctx.tension)) + jitter))
                 yield Note(
                     tick=tick, duration=dur,
                     channel=inst.channel, pitch=pitch, velocity=vel,

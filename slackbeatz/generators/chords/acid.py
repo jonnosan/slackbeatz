@@ -68,7 +68,7 @@ class ChordsAcid(Generator):
         octave_up = transposed_pitch(root_raw + 12, ctx.transpose_semitones)
         evo_mult = evolution_multiplier(enter_bar, ctx.bars, macro["evolution"], direction)
         jitter = ctx.rng.randint(-3, 3)
-        vel = max(1, min(127, int(round(base_vel * intensity * evo_mult)) + jitter))
+        vel = max(1, min(127, int(round(base_vel * intensity * evo_mult * ctx.tension)) + jitter))
         for pitch in (root, fifth, octave_up):
             if not 0 <= pitch <= 127:
                 continue

@@ -21,6 +21,7 @@ from slackbeatz.generators._shared import (
     fill_perturb,
     humanize_hit,
     is_fill_bar,
+    is_transition_part,
     pick_evolution_direction,
     should_mute_bar,
     step_duration,
@@ -85,13 +86,16 @@ class DrumsEuclid(Generator):
 
         # Big-fill flag — last bar of the part if heading into a drop.
         big_fill = ctx.next_role == "drop"
+        # Issue #20: if this part is a transition / fill, every bar
+        # should sound like a fill bar.
+        is_transition = is_transition_part(ctx)
 
         for bar in range(ctx.bars):
             if should_mute_bar(ctx.rng, macro["mute_prob"]):
                 continue
-            evo_mult = evolution_multiplier(bar, ctx.bars, macro["evolution"], direction)
+            evo_mult = evolution_multiplier(bar, ctx.bars, macro["evolution"], direction) * ctx.tension
             bar_start = bar * 4 * ctx.ppq
-            is_fill = is_fill_bar(bar, group=4)
+            is_fill = is_transition or is_fill_bar(bar, group=4)
             is_last_bar = bar == ctx.bars - 1
 
             # Default patterns with optional density drift applied

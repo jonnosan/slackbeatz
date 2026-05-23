@@ -61,7 +61,7 @@ class DrumsVaporwave(Generator):
             kick_pat = euclid(drift_pulses(_KICK[0], drift, ctx.rng), 16, _KICK[1])
             snare_pat = euclid(drift_pulses(_SNARE[0], drift, ctx.rng), 16, _SNARE[1])
             hat_pat = euclid(drift_pulses(_HAT[0], drift, ctx.rng), 16, _HAT[1])
-            evo_mult = evolution_multiplier(bar, ctx.bars, macro["evolution"], direction)
+            evo_mult = evolution_multiplier(bar, ctx.bars, macro["evolution"], direction) * ctx.tension
             bar_start = bar * 4 * ctx.ppq
             for step in range(16):
                 tick = bar_start + step_to_ticks(step, ctx.ppq)

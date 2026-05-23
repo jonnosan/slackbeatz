@@ -105,7 +105,7 @@ class BassDeepTechno(Generator):
             pitch = root if cell_idx == 0 else fifth
             jitter = ctx.rng.randint(-4, 4)
             evo_mult = evolution_multiplier(bar, ctx.bars, macro["evolution"], direction)
-            vel_base = int(round(base_vel * intensity * evo_mult)) + jitter
+            vel_base = int(round(base_vel * intensity * evo_mult * ctx.tension)) + jitter
             env = sidechain_envelope(tick % ticks_per_bar, ctx.ppq, duck=duck)
             vel = max(1, min(127, int(round(vel_base * env))))
             # Clamp duration to part end + apply gate jitter.

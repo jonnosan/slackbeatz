@@ -170,6 +170,7 @@ def _resolve_part(
     scale_raw = knobs.pop("scale", None)
     transpose_prob_raw = knobs.pop("transpose_prob", None)
     bars_max_raw = knobs.pop("bars_max", None)  # synthetic from `bars=N..M`
+    tension_raw = knobs.pop("tension", None)  # issue #14
 
     if tempo_raw is None:
         tempo = song_tempo
@@ -224,6 +225,16 @@ def _resolve_part(
             )
         bars_max = bars_max_raw
 
+    tension: float | None = None
+    if tension_raw is not None:
+        if not isinstance(tension_raw, (int, float)):
+            raise ResolveError(part.line, f"part {part.name!r}: tension must be a number")
+        tension = float(tension_raw)
+        if not 0.0 <= tension <= 1.0:
+            raise ResolveError(
+                part.line, f"part {part.name!r}: tension must be 0..1, got {tension}",
+            )
+
     return ResolvedPart(
         name=part.name,
         bars=part.bars,
@@ -234,6 +245,7 @@ def _resolve_part(
         scale_override=scale_override,
         transpose_prob=transpose_prob,
         bars_max=bars_max,
+        tension=tension,
         gen_handles=list(part.gens),
     )
 

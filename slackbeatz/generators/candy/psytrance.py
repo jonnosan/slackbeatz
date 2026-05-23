@@ -19,7 +19,8 @@ from slackbeatz.generators.registry import register_generator
 from slackbeatz.model.context import PartContext
 
 
-_BUILD_ROLES = {"build", "buildup"}
+# Issue #20: include transition / fill roles.
+_BUILD_ROLES = {"build", "buildup", "transition", "fill"}
 
 
 @register_generator("candy", "psytrance")

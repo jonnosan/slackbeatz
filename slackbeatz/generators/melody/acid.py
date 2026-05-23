@@ -69,7 +69,7 @@ class MelodyAcid(Generator):
             tick = bar * ticks_per_bar
             evo_mult = evolution_multiplier(bar, ctx.bars, macro["evolution"], direction)
             jitter = ctx.rng.randint(-3, 3)
-            vel = max(1, min(127, int(round(base_vel * intensity * evo_mult)) + jitter))
+            vel = max(1, min(127, int(round(base_vel * intensity * evo_mult * ctx.tension)) + jitter))
             base_dur = max(1, int(2 * ppq * gate))
             dur = apply_gate_jitter(base_dur, gate_jitter, ctx.rng)
             yield Note(

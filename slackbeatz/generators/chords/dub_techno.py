@@ -85,7 +85,7 @@ class ChordsDubTechno(Generator):
             for step in _OFFBEAT_STEPS:
                 tick = bar_start + step_to_ticks(step, ctx.ppq)
                 jitter = ctx.rng.randint(-4, 4)
-                vel = max(1, min(127, int(round(base_vel * intensity * evo_mult)) + jitter))
+                vel = max(1, min(127, int(round(base_vel * intensity * evo_mult * ctx.tension)) + jitter))
                 dur = apply_gate_jitter(base_dur, gate_jitter, ctx.rng)
                 for off in _TRIAD:
                     pitch = scale_note(chord_root + off, tonic, scale, 4 + octave_off)

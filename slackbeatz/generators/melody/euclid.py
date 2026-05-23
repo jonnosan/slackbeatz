@@ -15,8 +15,10 @@ from slackbeatz.engine.event import Event, Note
 from slackbeatz.generators._shared import (
     ChordProgression,
     apply_gate_jitter,
+    call_response_active,
     euclid,
     evolution_multiplier,
+    maybe_passing_tone,
     pick_evolution_direction,
     should_mute_bar,
     step_duration,
@@ -30,6 +32,8 @@ from slackbeatz.generators.defaults import (
     gate_for,
     gate_jitter_for,
     macro_knobs,
+    pair_for,
+    passing_tones_for,
     scale_for,
 )
 from slackbeatz.generators.registry import register_generator
@@ -60,6 +64,8 @@ class MelodyEuclid(Generator):
         gate = gate_for(self)
         base_vel = base_vel_for(self)
         gate_jitter = gate_jitter_for(self)
+        passing_tones = passing_tones_for(self)
+        pair = pair_for(self)  # call-and-response partner handle, if any
         macro = macro_knobs(self)
         direction = pick_evolution_direction(ctx.rng, macro["evolution"])
         scale = scale_for(self, ctx, fallback="minor")
@@ -74,6 +80,9 @@ class MelodyEuclid(Generator):
         # earlier ones at conflicting steps).
         for bar in range(ctx.bars):
             if should_mute_bar(ctx.rng, macro["mute_prob"]):
+                continue
+            # Issue #13: skip bars where the paired gen is "speaking".
+            if not call_response_active(self.handle, pair, bar):
                 continue
             evo_mult = evolution_multiplier(bar, ctx.bars, macro["evolution"], direction)
             chord_root_deg = progression.degree_at_bar(bar)
@@ -95,11 +104,14 @@ class MelodyEuclid(Generator):
                     scale_note(deg, tonic, scale, 4 + octave_off),
                     ctx.transpose_semitones,
                 )
+                # Issue #4: optional chromatic neighbour substitution.
+                pitch = maybe_passing_tone(pitch, passing_tones, ctx.rng)
                 if not 0 <= pitch <= 127:
                     continue
                 tick = bar_start + step_to_ticks(step, ctx.ppq)
                 jitter = ctx.rng.randint(-5, 5)
-                vel = max(1, min(127, int(round(base_vel * intensity * evo_mult)) + jitter))
+                # Issue #14: ctx.tension is the part-level energy scalar.
+                vel = max(1, min(127, int(round(base_vel * intensity * evo_mult * ctx.tension)) + jitter))
                 dur = apply_gate_jitter(base_dur, gate_jitter, ctx.rng)
                 yield Note(
                     tick=tick, duration=dur, channel=inst.channel,

@@ -71,7 +71,7 @@ class ChordsPsytrance(Generator):
             tick = bar * ticks_per_bar
             jitter = ctx.rng.randint(-3, 3)
             evo_mult = evolution_multiplier(bar, ctx.bars, macro["evolution"], direction)
-            vel = max(1, min(127, int(round(base_vel * intensity * evo_mult)) + jitter))
+            vel = max(1, min(127, int(round(base_vel * intensity * evo_mult * ctx.tension)) + jitter))
 
             chord_pitches = [
                 transposed_pitch(

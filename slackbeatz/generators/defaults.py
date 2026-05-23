@@ -202,6 +202,32 @@ def motif_memory_for(gen: Generator) -> int:
     return int(v) if isinstance(v, (int, float)) else 0
 
 
+def passing_tones_for(gen: Generator) -> float:
+    """Issue #4 — read the passing_tones knob. Defaults to 0."""
+    v = gen.knobs.get("passing_tones", 0.0)
+    return float(v) if isinstance(v, (int, float)) else 0.0
+
+
+def polyrhythm_for(gen: Generator) -> int:
+    """Issue #12 — read the polyrhythm knob. Defaults to 0 (off)."""
+    v = gen.knobs.get("polyrhythm", 0)
+    return int(v) if isinstance(v, (int, float)) else 0
+
+
+def voice_lead_for(gen: Generator) -> bool:
+    """Issue #6 — read the voice_lead knob. Defaults to False."""
+    v = gen.knobs.get("voice_lead", 0)
+    if isinstance(v, bool):
+        return v
+    return bool(v) if isinstance(v, (int, float)) else False
+
+
+def pair_for(gen: Generator) -> str | None:
+    """Issue #13 — read the pair= knob (call-and-response partner)."""
+    v = gen.knobs.get("pair")
+    return v if isinstance(v, str) else None
+
+
 def scale_for(gen, ctx, fallback: str = "minor") -> str:
     """Resolve which scale this gen should draw from (issue #22).
 

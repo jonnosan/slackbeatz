@@ -22,7 +22,9 @@ from slackbeatz.theory.keys import parse_key
 from slackbeatz.theory.scales import midi_note
 
 
-_BUILD_ROLES = {"build", "buildup"}
+# Issue #20: include transition / fill roles so candy gen swoops over
+# short transitional parts too.
+_BUILD_ROLES = {"build", "buildup", "transition", "fill"}
 
 
 @register_generator("candy", "euclid")

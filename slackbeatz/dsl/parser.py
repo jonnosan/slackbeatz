@@ -47,13 +47,22 @@ _GEN_KNOBS = frozenset(
      # #17 (deep_techno kick-triggered filter env):
      "octave_jump", "motif_memory", "kick_env",
      # Round 4 — issue #16 (vaporwave 8-bar arpeggio period):
-     "arp_period"}
+     "arp_period",
+     # Round 5 — issues #4, #6, #12, #13:
+     #   passing_tones (melody chromatic neighbours)
+     #   voice_lead    (chords nearest-tone snapping)
+     #   polyrhythm    (rhythm secondary euclid layer)
+     #   pair          (melody call-and-response handle)
+     "passing_tones", "voice_lead", "polyrhythm", "pair"}
 )
-# Part-level knobs include the new transpose_prob (issue #10): a per-
-# part-instance roll for transposition that the scheduler applies
-# uniformly across all gens in that part. Also `scale` lets a single
-# part swap to a different mode without song-wide effect.
-_PART_KNOBS = frozenset({"tempo", "key", "role", "seed", "transpose_prob", "scale"})
+# Part-level knobs:
+#   transpose_prob — per-instance roll for transposition (issue #10)
+#   scale          — single-part scale override (issue #22)
+#   tension        — part-level energy scalar (issue #14); default
+#                    auto-derived from role if not set
+_PART_KNOBS = frozenset(
+    {"tempo", "key", "role", "seed", "transpose_prob", "scale", "tension"}
+)
 _INST_KNOBS = frozenset({"ch", "note"})
 _KIT_KNOBS = frozenset({"ch", "preset"})
 

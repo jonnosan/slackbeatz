@@ -22,7 +22,11 @@ from slackbeatz.generators._shared import (
     step_to_ticks,
 )
 from slackbeatz.generators.base import Generator
-from slackbeatz.generators.defaults import macro_knobs, vel_jitter_for
+from slackbeatz.generators.defaults import (
+    macro_knobs,
+    polyrhythm_for,
+    vel_jitter_for,
+)
 from slackbeatz.generators.registry import register_generator
 from slackbeatz.model.context import PartContext
 
@@ -74,6 +78,9 @@ class RhythmPsytrance(Generator):
             accent=self.knob_int("accent", 0),
         )
         direction = pick_evolution_direction(ctx.rng, macro["evolution"])
+        polyrhythm = polyrhythm_for(self)
+        # Issue #12: optional secondary euclid layer (cross-rhythm). 0 = off.
+        poly_pattern = euclid(polyrhythm, 16, 0) if polyrhythm > 0 else None
         step_ticks = step_duration(ctx.ppq)
         dur = max(1, step_ticks // 2)
 
@@ -82,7 +89,7 @@ class RhythmPsytrance(Generator):
                 continue
             bar_pulses = drift_pulses(pulses, macro["density_drift"], ctx.rng)
             pattern = euclid(bar_pulses, 16, offset)
-            evo_mult = evolution_multiplier(bar, ctx.bars, macro["evolution"], direction)
+            evo_mult = evolution_multiplier(bar, ctx.bars, macro["evolution"], direction) * ctx.tension
             bar_start = bar * 4 * ctx.ppq
             for step, hit in enumerate(pattern):
                 if not hit:
@@ -96,3 +103,11 @@ class RhythmPsytrance(Generator):
                     tick=tick, duration=dur,
                     channel=inst.channel, pitch=inst.note, velocity=vel,
                 )
+            # Polyrhythm overlay (issue #12).
+            if poly_pattern is not None:
+                for ps, ph in enumerate(poly_pattern):
+                    if not ph:
+                        continue
+                    pt = bar_start + step_to_ticks(ps, ctx.ppq)
+                    pv = max(1, min(127, int(round(base_vel * params.intensity * evo_mult * 0.65))))
+                    yield Note(tick=pt, duration=dur, channel=inst.channel, pitch=inst.note, velocity=pv)

@@ -182,6 +182,86 @@ def maybe_octave_jump(
     return result
 
 
+# Issue #20: roles that should trigger fill / transition behaviour in
+# drums and candy gens regardless of bar position.
+TRANSITION_ROLES: frozenset[str] = frozenset({"transition", "fill"})
+
+
+def is_transition_part(ctx) -> bool:
+    """True if this part is a 1-2 bar transition fill (issue #20)."""
+    return ctx.role in TRANSITION_ROLES
+
+
+def maybe_passing_tone(pitch: int, passing_tones: float, rng: random.Random) -> int:
+    """Issue #4 — with probability *passing_tones*, replace *pitch*
+    with a chromatic neighbour (±1 semitone).
+
+    Result is clamped to ``[0, 127]`` by reversing direction if needed.
+    """
+    if passing_tones <= 0 or rng.random() >= passing_tones:
+        return pitch
+    direction = rng.choice([-1, 1])
+    new_pitch = pitch + direction
+    if new_pitch < 0 or new_pitch > 127:
+        new_pitch = pitch - direction
+    return new_pitch
+
+
+def call_response_active(
+    self_handle: str,
+    pair_handle: str | None,
+    bar: int,
+    window_bars: int = 2,
+) -> bool:
+    """Issue #13 — for two gens sharing a call-and-response pair, decide
+    whether *this* gen plays in the current bar.
+
+    Convention: both gens set ``pair=other_handle`` on their gen line.
+    The alphabetically-first handle plays the even windows; the other
+    plays the odd. ``window_bars`` defaults to 2 (the classic call-and-
+    response cadence).
+
+    If ``pair_handle`` is ``None``, returns True (no pairing in play).
+    """
+    if not pair_handle:
+        return True
+    sorted_handles = sorted([self_handle, pair_handle])
+    am_first = (self_handle == sorted_handles[0])
+    window = bar // window_bars
+    even_window = (window % 2 == 0)
+    return even_window if am_first else (not even_window)
+
+
+def voice_lead(
+    prev_pitches: list[int],
+    next_chord_pitches: list[int],
+) -> list[int]:
+    """Issue #6 — return ``next_chord_pitches`` re-voiced so each note
+    is the nearest octave equivalent to the corresponding *prev_pitches*.
+
+    For each previous pitch, search the next chord's note set (extended
+    with ±1 and ±2 octave shifts) and pick the closest. Result preserves
+    the relative order of the prev voicing.
+
+    On the first chord (no previous pitches), returns the unchanged
+    *next_chord_pitches* — voice leading has nothing to lead from.
+    """
+    if not prev_pitches:
+        return list(next_chord_pitches)
+    # Build the candidate pool: each chord tone at octave shifts -24..+24.
+    pool: list[int] = []
+    for p in next_chord_pitches:
+        for shift in (-24, -12, 0, 12, 24):
+            candidate = p + shift
+            if 0 <= candidate <= 127:
+                pool.append(candidate)
+    voiced: list[int] = []
+    for pp in prev_pitches:
+        nearest = min(pool, key=lambda c: abs(c - pp))
+        voiced.append(nearest)
+    return voiced
+
+
 class MotifMemory:
     """Issue #11 — sliding-window degree memory for melody gens.
 
@@ -372,12 +452,13 @@ def is_fill_bar(bar: int, group: int = 4) -> bool:
     return (bar % group) == (group - 1)
 
 
-_BUILD_ROLES = frozenset({"build", "buildup"})
+_BUILD_ROLES = frozenset({"build", "buildup", "transition", "fill"})
 
 
 def is_build_part(ctx: "PartContext") -> bool:
     """True if this part should swell into the next — either its role
-    is build-shaped, or it sits directly before a drop."""
+    is build-shaped, transitional (issue #20), or it sits directly
+    before a drop."""
     return ctx.role in _BUILD_ROLES or ctx.next_role == "drop"
 
 
