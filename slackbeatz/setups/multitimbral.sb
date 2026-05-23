@@ -1,0 +1,23 @@
+# multitimbral.sb — every drum on its own channel.
+#
+# For users with separate physical drum modules (a dedicated kick box,
+# a dedicated snare box, …) where the "channel" is the routing to a
+# specific device. Each drum keeps its GM note number so re-routing a
+# channel back onto a multi-drum module still hits the right voice.
+#
+# The melodic voices land on channels 1-4 as in the GM layout. No `kit`
+# block — `drums`-type gens won't resolve on this rig; use individual
+# `rhythm` gens instead.
+
+setup "Multitimbral"
+
+inst kick    ch=10 note=36
+inst snare   ch=11 note=38
+inst clap    ch=12 note=39
+inst hats    ch=13 note=42
+inst ohats   ch=14 note=46
+
+inst bass    ch=2
+inst lead    ch=1
+inst pad     ch=3
+inst riser   ch=4

@@ -1,0 +1,20 @@
+# 909.sb — Roland TR-909 layout.
+#
+# Same channel layout as `gm` / `808`; kit reference uses the `909`
+# preset (also GM-compatible by default — see `808.sb` for the
+# rationale).
+
+setup "TR-909"
+
+inst kick   ch=10 note=36
+inst snare  ch=10 note=38
+inst clap   ch=10 note=39
+inst hats   ch=10 note=42
+inst ohats  ch=10 note=46
+
+inst bass   ch=2
+inst lead   ch=1
+inst pad    ch=3
+inst riser  ch=4
+
+kit kit ch=10 preset=909

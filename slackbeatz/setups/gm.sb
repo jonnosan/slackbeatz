@@ -1,0 +1,23 @@
+# gm.sb — General-MIDI conventional layout.
+#
+# Drums on channel 10 (the GM percussion convention), four melodic
+# voices on the first four channels, and a kit alias so `gen drums`
+# resolves to the same channel with the GM drum-note map.
+
+setup "General MIDI"
+
+# Drum voices on channel 10 at their GM notes.
+inst kick   ch=10 note=36
+inst snare  ch=10 note=38
+inst clap   ch=10 note=39
+inst hats   ch=10 note=42
+inst ohats  ch=10 note=46
+
+# Melodic voices.
+inst bass   ch=2
+inst lead   ch=1
+inst pad    ch=3
+inst riser  ch=4
+
+# Full kit reference for `drums`-type gens.
+kit kit ch=10 preset=gm

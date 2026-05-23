@@ -1,0 +1,22 @@
+# 808.sb — Roland TR-808 layout.
+#
+# Identical channel layout to `gm` (drums on ch 10, melodics on ch 1-4)
+# but the kit reference uses the `808` preset. Modern 808-emulating
+# hardware follows GM note assignments closely, so the preset is GM-
+# compatible by default; users with quirky 808 modules can override
+# individual drum notes per-kit in their own setup file.
+
+setup "TR-808"
+
+inst kick   ch=10 note=36
+inst snare  ch=10 note=38
+inst clap   ch=10 note=39
+inst hats   ch=10 note=42
+inst ohats  ch=10 note=46
+
+inst bass   ch=2
+inst lead   ch=1
+inst pad    ch=3
+inst riser  ch=4
+
+kit kit ch=10 preset=808
