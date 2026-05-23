@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -502,29 +503,92 @@ def cmd_repl(args) -> int:
         f"Type a phrase + Enter to play. /help, /quit.",
     )
 
-    # Optional GUI runs on its own thread so the REPL loop stays on
-    # main. The whole session shares one tweak window.
+    def cleanup_fs() -> None:
+        fs_proc.terminate()
+        try:
+            fs_proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            fs_proc.kill()
+
+    # macOS Tk constraint: NSWindow must be created + driven from the
+    # main thread (AppKit raises 'NSWindow should only be instantiated
+    # on the main thread!' otherwise). So when --gui is set + Tk is
+    # available, the threading flips: REPL input loop on a daemon
+    # thread, Tk.mainloop on main. When either side decides to quit,
+    # it triggers process exit via _stop_now (which terminates
+    # FluidSynth and os._exits — os._exit because sys.exit from a
+    # daemon thread would only kill that thread, leaving Tk's mainloop
+    # hung in the parent).
+    #
+    # Probe Tk *before* spawning the REPL daemon thread: if Tk import
+    # fails, we fall back to running the REPL on the main thread,
+    # which avoids two competing input() loops racing for stdin.
+    tk_available = False
     if args.gui:
+        try:
+            import tkinter  # noqa: F401 — probe-only import
+            tk_available = True
+        except ImportError as e:
+            py_minor = f"{sys.version_info.major}.{sys.version_info.minor}"
+            print(
+                f"(gui unavailable — falling back to /gain /reverb /chorus "
+                f"REPL commands)\n"
+                f"  {e}. On macOS: brew install python-tk@{py_minor}",
+                file=sys.stderr,
+            )
+
+    if args.gui and tk_available:
         import threading
 
         from slackbeatz.gui import run_tweak_gui
 
-        def _gui_thread() -> None:
-            try:
-                run_tweak_gui(
-                    fs_proc.stdin,
-                    initial_gain=args.gain,
-                    initial_reverb_room=args.reverb,
-                )
-            except Exception as exc:  # noqa: BLE001
-                print(
-                    f"\n(gui unavailable — falling back to /gain /reverb /chorus "
-                    f"REPL commands)\n  {exc}",
-                    file=sys.stderr,
-                )
+        def _stop_now() -> None:
+            cleanup_fs()
+            os._exit(0)
 
-        threading.Thread(target=_gui_thread, daemon=True).start()
+        repl_thread = threading.Thread(
+            target=_repl_input_loop,
+            args=(fs_proc, port_name, args, _stop_now),
+            daemon=True,
+        )
+        repl_thread.start()
+        try:
+            run_tweak_gui(
+                fs_proc.stdin,
+                initial_gain=args.gain,
+                initial_reverb_room=args.reverb,
+                on_close=_stop_now,
+            )
+        except Exception as e:  # noqa: BLE001 — surface unexpected Tk runtime errors
+            print(f"(gui error: {e})", file=sys.stderr)
+        # If we reach here, Tk mainloop exited but _stop_now wasn't
+        # called (e.g. unexpected Tk teardown). Clean up defensively.
+        cleanup_fs()
+        return 0
 
+    # Fall-through path: --gui not set, OR Tk import failed. The REPL
+    # runs on the main thread (no Tk involved).
+    try:
+        _repl_input_loop(fs_proc, port_name, args, None)
+    finally:
+        cleanup_fs()
+    return 0
+
+
+def _repl_input_loop(
+    fs_proc: subprocess.Popen,
+    port_name: str,
+    args,
+    on_quit,
+) -> None:
+    """The REPL's read-eval-play loop. Used directly on the main thread
+    in the no-GUI case, or on a daemon thread when ``--gui`` is set
+    (because macOS Tk needs main).
+
+    *on_quit* is called when the loop exits normally (user typed
+    ``/quit`` or hit EOF). The GUI path uses it to terminate the
+    process so the Tk mainloop on the main thread stops too.
+    """
     seed_offset = args.seed
     try:
         while True:
@@ -594,20 +658,15 @@ def cmd_repl(args) -> int:
                 Scheduler(resolved, sink, clock).run()
             except KeyboardInterrupt:
                 print("  (skipped)")
-                # Ensure no notes hang on the synth between songs.
                 try:
                     sink.close()
                 except Exception:
                     pass
     except KeyboardInterrupt:
         print()  # newline after Ctrl+C at the prompt
-    finally:
-        fs_proc.terminate()
-        try:
-            fs_proc.wait(timeout=2)
-        except subprocess.TimeoutExpired:
-            fs_proc.kill()
-    return 0
+
+    if on_quit is not None:
+        on_quit()
 
 
 def cmd_render(args) -> int:
