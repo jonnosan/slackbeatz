@@ -190,18 +190,25 @@ def run_tweak_gui(
     #    closure ↔ var), so denying them GC eligibility removes the
     #    biggest hazard. The memory cost is bounded (~50 vars per song
     #    layout × a few layouts per session ≈ few KB).
+    # See comment above re: non-threaded Tcl. We pin every Tk object
+    # we create — Variables, widgets, root — so reference-counting drops
+    # to zero never happen on a background thread.
     import gc
     gc.disable()
-    _persistent_vars: list = []
+    _persistent: list = []
 
     def _var(cls, *args, **kwargs):
-        """Create a tk.Variable subclass instance and pin it so cyclic
-        GC can never touch it on the wrong thread."""
         v = cls(*args, **kwargs)
-        _persistent_vars.append(v)
+        _persistent.append(v)
         return v
 
+    def _pin(widget):
+        """Pin a widget too — its dealloc chain can also touch Tcl."""
+        _persistent.append(widget)
+        return widget
+
     root = tk.Tk()
+    _persistent.append(root)
     root.title("slackbeatz live — tweak")
     root.minsize(440, 480)
 
@@ -560,29 +567,44 @@ def run_tweak_gui(
                                 pass
                         p["after_id"] = root.after(120, lambda: _commit(v, h, n))
 
-                    scale = tk.Scale(
+                    scale = _pin(tk.Scale(
                         knob_row, from_=lo, to=hi, resolution=resolution,
                         orient="horizontal", variable=var,
                         showvalue=True, length=180,
                         command=_on_drag,
-                    )
+                    ))
                     scale.pack(side="left", fill="x", expand=True)
 
                     def _reset_knob(h=handle, n=knob_name, v=var, d=default):
                         player.unset_knob(h, n)
                         v.set(d)
-                    ttk.Button(
+                    _pin(ttk.Button(
                         knob_row, text="↺", width=2,
                         command=_reset_knob,
-                    ).pack(side="left", padx=2)
+                    )).pack(side="left", padx=2)
+                    _persistent.append(_commit)
+                    _persistent.append(_on_drag)
+                    _persistent.append(_reset_knob)
+                    _persistent.append(pending)
 
-        # Initial paint + register the rebuild callback with the main-
-        # thread poll loop. The poll fires every 80ms when
-        # state_dirty has been set by a Player thread; the rebuild
-        # itself short-circuits when the layout hasn't changed, so
-        # this is cheap for the common knob/mute/tempo/seed cases.
+        # Initial paint. We deliberately do NOT register this with the
+        # poll loop — on a non-threaded Tcl build, destroying +
+        # recreating widgets while playback is in flight has produced
+        # a "Tcl_WaitForEvent: Notifier not initialized" trap whose
+        # exact path is hard to pin down (likely a widget refcount
+        # drop reaching __del__ on a non-main thread despite gc being
+        # disabled). The tab stays populated with whatever song is
+        # loaded at GUI start; changing songs at the REPL prompt
+        # won't update this tab. Use the inline /knob REPL command
+        # for live knob tweaks across songs.
         _rebuild_gens_tab()
-        main_thread_callbacks.append(_rebuild_gens_tab)
+        ttk.Label(
+            gens_tab,
+            text="ℹ︎ Tab reflects the song loaded when the GUI opened. "
+                 "For live tweaking across songs, use /knob in the REPL.",
+            wraplength=400, justify="left", foreground="#888",
+            font=("TkDefaultFont", 9),
+        ).pack(padx=10, pady=(4, 8), anchor="w")
 
     # ------------------------------------------------------------------
     # Effects tab — gain / reverb / chorus sliders + on-off toggles.
