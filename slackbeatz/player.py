@@ -84,6 +84,18 @@ class Player:
         # thread while a playback thread is mid-stop.
         self._lock = threading.RLock()
 
+        # Mute set (1-indexed channels). Mutated under _lock; read by
+        # the scheduler thread on every event.
+        self.muted_channels: set[int] = set()
+        # Reference to the currently-running Scheduler. Used by the
+        # transport to read its ``current_tick`` for seek-preserving
+        # parameter changes.
+        self._current_scheduler = None
+        # Whether parameter changes (tempo/style/seed) restart from
+        # the current bar (True) or from tick 0 (False). Default True
+        # for the "live tweaking" feel — toggleable from the GUI / CLI.
+        self.preserve_position: bool = True
+
         # Currently-loaded source. Either a phrase (composed) or a path
         # to a .sb file (live mode). One of these is non-None when a
         # song has been loaded.
@@ -127,9 +139,12 @@ class Player:
     def is_playing(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
 
-    def play(self) -> str:
+    def play(self, *, from_tick: int = 0) -> str:
         """Compose/resolve the current source and start the playback
         thread. Stops any in-flight playback first.
+
+        *from_tick* (default 0) resumes playback at a non-zero tick —
+        used by parameter changes when :attr:`preserve_position` is on.
 
         Returns a one-line status string suitable for printing.
         """
@@ -144,11 +159,96 @@ class Player:
             self.title = resolved.name
             self._stop_event.clear()
             self._thread = threading.Thread(
-                target=self._play_loop, args=(resolved,), daemon=True,
+                target=self._play_loop, args=(resolved, from_tick), daemon=True,
             )
             self._thread.start()
             self.on_state_change()
-            return f'playing "{self.title}" ({self._params_summary()})'
+            extra = ""
+            if from_tick > 0:
+                bar = self._tick_to_bar_label(resolved, from_tick)
+                extra = f" (from bar {bar})"
+            return f'playing "{self.title}" ({self._params_summary()}){extra}'
+
+    # ------------------------------------------------------------------
+    # Per-channel mute
+    # ------------------------------------------------------------------
+
+    def mute(self, channel: int) -> str:
+        with self._lock:
+            self.muted_channels.add(int(channel))
+            self._silence_channel(channel)
+            self.on_state_change()
+            return f"muted ch {channel} (active mutes: {sorted(self.muted_channels)})"
+
+    def unmute(self, channel: int) -> str:
+        with self._lock:
+            self.muted_channels.discard(int(channel))
+            self.on_state_change()
+            return (
+                f"unmuted ch {channel} (active mutes: {sorted(self.muted_channels)})"
+                if self.muted_channels else
+                f"unmuted ch {channel} (no active mutes)"
+            )
+
+    def toggle_mute(self, channel: int) -> str:
+        with self._lock:
+            if int(channel) in self.muted_channels:
+                return self.unmute(channel)
+            return self.mute(channel)
+
+    def solo(self, channel: int) -> str:
+        """Mute every channel except *channel*. Slackbeatz uses ch 1
+        (lead), 2 (bass), 3 (pad), 4 (candy), 10 (drums) by default —
+        solo'ing one of these gives you that part in isolation."""
+        with self._lock:
+            target = int(channel)
+            self.muted_channels = {ch for ch in range(1, 17) if ch != target}
+            for ch in self.muted_channels:
+                self._silence_channel(ch)
+            self.on_state_change()
+            return f"solo ch {target} (muted: {sorted(self.muted_channels)})"
+
+    def unsolo(self) -> str:
+        with self._lock:
+            self.muted_channels.clear()
+            self.on_state_change()
+            return "unmuted all channels"
+
+    # ------------------------------------------------------------------
+    # Seek
+    # ------------------------------------------------------------------
+
+    def seek(self, *, bar: int = 0, beat: float = 0.0) -> str:
+        """Jump the playhead to a specific (bar, beat) position.
+
+        *bar* is 1-indexed (bar 1 = start of song). *beat* is a
+        fractional beat offset within that bar (e.g. ``beat=0.5`` =
+        half-way through the first beat). If the song isn't playing,
+        ``play(from_tick=...)`` is called to start it at the target.
+        Otherwise the worker thread is stopped + restarted at the new
+        position.
+        """
+        with self._lock:
+            if self.current_phrase is None and self.current_song_path is None:
+                return "no song loaded"
+            try:
+                resolved = self._resolve_current()
+            except (ParseError, ResolveError, SetupError) as e:
+                return f"error: {e}"
+            tick = self._bar_beat_to_tick(resolved, bar=bar, beat=beat)
+            was_playing = self.is_playing
+            self._stop_locked()
+            if not was_playing:
+                # Still rebuild the song below so play() picks up new params.
+                return f"seek queued to bar {bar} beat {beat:.1f} — type /play"
+            return self.play(from_tick=tick)
+
+    def set_preserve_position(self, on: bool) -> str:
+        with self._lock:
+            self.preserve_position = bool(on)
+            return (
+                f"preserve position {'on' if self.preserve_position else 'off'}"
+            )
 
     def stop(self) -> str:
         """Stop the playback thread, send all-notes-off, return."""
@@ -255,13 +355,36 @@ class Player:
     # ------------------------------------------------------------------
 
     def _restart_after_change(self, status: str) -> str:
-        """If a song is loaded, regenerate + restart with new params."""
+        """If a song is loaded, regenerate + restart with new params.
+
+        When :attr:`preserve_position` is on (the default), the new
+        worker resumes at the previous scheduler's current tick rounded
+        down to the bar boundary — so changing tempo / style / seed
+        mid-bar doesn't jolt back to the start.
+        """
         if self.current_phrase is None and self.current_song_path is None:
             return status  # nothing to restart
         was_playing = self.is_playing
+        # Capture current tick *before* stopping so it survives the
+        # scheduler instance going away.
+        resume_tick = 0
+        if (
+            self.preserve_position
+            and was_playing
+            and self._current_scheduler is not None
+        ):
+            resume_tick = max(0, int(self._current_scheduler.current_tick))
         self._stop_locked()
         if was_playing:
-            extra = self.play()
+            # Round resume_tick down to the bar boundary so we restart
+            # cleanly. For a freshly-composed song the part meter may
+            # change, but bar-aligned is still the right snap.
+            try:
+                resolved = self._resolve_current()
+                resume_tick = self._round_to_bar(resolved, resume_tick)
+            except Exception:
+                pass
+            extra = self.play(from_tick=resume_tick)
             return f"{status}\n  {extra}"
         return status
 
@@ -320,23 +443,33 @@ class Player:
         # need it, which is the right behaviour.
         return load_setup("gm", base_path=song_path)
 
-    def _play_loop(self, resolved) -> None:
+    def _play_loop(self, resolved, from_tick: int = 0) -> None:
         """Worker thread body. Plays *resolved* once (or repeatedly if
         loop is True), respecting :attr:`_stop_event`."""
+        first_iteration_from_tick = from_tick
         try:
             while True:
                 sink = RealtimeSink(port_name=self.port_name)
                 tempo_map = build_tempo_map(resolved)
                 clock = InternalClock(tempo_map)
                 scheduler = Scheduler(resolved, sink, clock)
+                self._current_scheduler = scheduler
                 try:
-                    scheduler.run(stop_event=self._stop_event)
+                    scheduler.run(
+                        stop_event=self._stop_event,
+                        resume_from_tick=first_iteration_from_tick,
+                        muted_channels=self.muted_channels,
+                    )
                 except Exception as exc:  # noqa: BLE001
                     if not self._stop_event.is_set():
                         print(f"playback error: {exc}", file=sys.stderr)
                     break
+                finally:
+                    self._current_scheduler = None
                 if self._stop_event.is_set() or not self.loop:
                     break
+                # Subsequent loop iterations always start from 0.
+                first_iteration_from_tick = 0
                 # Loop: re-resolve so seed / overrides re-apply if the
                 # user changed something while this iteration was
                 # running. (Stop wasn't requested, so just continue.)
@@ -355,6 +488,82 @@ class Player:
                 tmp.close()  # close() sends all-notes-off across all channels
             except Exception:
                 pass
+
+    # ------------------------------------------------------------------
+    # Helpers — bar/tick conversion + channel-silence on mute
+    # ------------------------------------------------------------------
+
+    def _silence_channel(self, channel: int) -> None:
+        """Send CC 123 (all-notes-off) on *channel* so muting takes
+        effect immediately for currently-held notes."""
+        try:
+            import mido
+            tmp = RealtimeSink(port_name=self.port_name)
+            tmp.open()
+            tmp._port.send(  # type: ignore[union-attr]
+                mido.Message("control_change", channel=channel - 1, control=123, value=0)
+            )
+            tmp.close()
+        except Exception:
+            pass  # synth gone, port closed, etc.
+
+    def _bar_beat_to_tick(self, resolved, *, bar: int, beat: float) -> int:
+        """Resolve a (1-indexed bar, fractional beat) to an absolute
+        tick in *resolved*'s arrangement. Bars cumulate per part using
+        each part's meter."""
+        from slackbeatz.engine.clock import PPQ, bars_to_ticks
+
+        # Bar 1 = start of song. Walk parts until we've consumed the
+        # requested bar count.
+        bars_left = max(0, bar - 1)
+        cursor = 0
+        for part_name in resolved.arrangement:
+            part = resolved.parts[part_name]
+            part_bars = part.bars
+            if bars_left >= part_bars:
+                cursor += bars_to_ticks(part_bars, meter=part.meter)
+                bars_left -= part_bars
+                continue
+            # Land inside this part.
+            cursor += bars_to_ticks(bars_left, meter=part.meter)
+            # Convert beat fraction to ticks (beat = quarter note = PPQ ticks).
+            cursor += int(beat * PPQ)
+            return cursor
+        # Past end of song — clamp to start of last bar.
+        return max(0, cursor - 1)
+
+    def _round_to_bar(self, resolved, tick: int) -> int:
+        """Round *tick* down to the nearest bar boundary in *resolved*."""
+        from slackbeatz.engine.clock import bars_to_ticks
+
+        cursor = 0
+        for part_name in resolved.arrangement:
+            part = resolved.parts[part_name]
+            ticks_per_bar = bars_to_ticks(1, meter=part.meter)
+            for _ in range(part.bars):
+                if cursor + ticks_per_bar > tick:
+                    return cursor
+                cursor += ticks_per_bar
+        return cursor
+
+    def _tick_to_bar_label(self, resolved, tick: int) -> str:
+        """Pretty 'bar N' (or 'bar N beat M') label for a tick."""
+        from slackbeatz.engine.clock import PPQ, bars_to_ticks
+
+        cursor = 0
+        bar_idx = 1
+        for part_name in resolved.arrangement:
+            part = resolved.parts[part_name]
+            ticks_per_bar = bars_to_ticks(1, meter=part.meter)
+            for _ in range(part.bars):
+                if cursor + ticks_per_bar > tick:
+                    beats = (tick - cursor) / PPQ
+                    if beats < 0.05:
+                        return f"{bar_idx}"
+                    return f"{bar_idx} beat {beats + 1:.1f}"
+                cursor += ticks_per_bar
+                bar_idx += 1
+        return f"end ({bar_idx})"
 
     def _stop_locked(self) -> None:
         """Internal: stop the playback thread. Must hold ``_lock``."""

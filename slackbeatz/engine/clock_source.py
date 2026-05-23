@@ -30,8 +30,13 @@ class ClockSource(ABC):
         """Hook for releasing resources."""
 
     @abstractmethod
-    def start(self) -> None:
-        """Mark tick 0 as 'now'. Must be called before :meth:`wait_until`."""
+    def start(self, initial_tick: int = 0) -> None:
+        """Mark *initial_tick* as 'now'. Must be called before
+        :meth:`wait_until`. ``initial_tick > 0`` is used to resume a
+        song mid-arrangement: ``wait_until(initial_tick)`` returns
+        immediately, and subsequent events play in real time as if the
+        song had been running long enough for the playhead to already
+        be at that position."""
 
     @abstractmethod
     def wait_until(self, abs_tick: int) -> None:
@@ -50,8 +55,15 @@ class InternalClock(ClockSource):
         self._tempo_map = tempo_map
         self._t0: float | None = None
 
-    def start(self) -> None:
-        self._t0 = time.perf_counter()
+    def start(self, initial_tick: int = 0) -> None:
+        # By back-dating _t0 by the wall-time the song would have
+        # consumed to reach initial_tick, wait_until(initial_tick)
+        # returns immediately and subsequent events stay in correct
+        # real-time relationship to each other.
+        offset_secs = (
+            self._tempo_map.time_at(initial_tick) if initial_tick > 0 else 0.0
+        )
+        self._t0 = time.perf_counter() - offset_secs
 
     def wait_until(self, abs_tick: int) -> None:
         if self._t0 is None:
@@ -95,7 +107,7 @@ class ExternalClock(ClockSource):
             "mode lands — see the class docstring for the planned contract."
         )
 
-    def start(self) -> None:  # pragma: no cover — guarded by open()
+    def start(self, initial_tick: int = 0) -> None:  # pragma: no cover — guarded by open()
         raise NotImplementedError
 
     def wait_until(self, abs_tick: int) -> None:  # pragma: no cover

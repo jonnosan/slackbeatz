@@ -648,21 +648,23 @@ def _repl_input_loop(
             if line == "/help":
                 print(
                     "  <phrase>            compose + play that phrase\n"
-                    "  /play               start playback of current song\n"
-                    "  /stop               stop playback (notes off)\n"
+                    "  /play, /stop        transport\n"
                     "  /status             show current transport state\n"
-                    "  /tempo N            override BPM (or /tempo auto)\n"
-                    "  /style NAME         force style (or /style auto)\n"
+                    "  /seek BAR[:BEAT]    jump playhead to bar (1-indexed)\n"
+                    "  /tempo N | auto     override BPM\n"
+                    "  /style NAME | auto  force style\n"
                     f"                       known: {', '.join(KNOWN_STYLES)}\n"
                     "  /seed N             set seed offset\n"
                     "  /reroll             pick a random seed + restart\n"
                     "  /loop on|off        loop the current song on end\n"
+                    "  /preserve on|off    keep current bar across param changes\n"
                     "  /reset              clear style/tempo/seed overrides\n"
+                    "  /mute N             mute channel N (1-16)\n"
+                    "  /unmute N | all     unmute channel(s)\n"
+                    "  /solo N | off       solo channel N (mute everything else)\n"
                     "  /gain N             master gain (0–2; default 0.6)\n"
-                    "  /reverb N           reverb room size (0–1)\n"
-                    "  /reverb on|off      enable / disable reverb\n"
-                    "  /chorus N           chorus depth (0–50)\n"
-                    "  /chorus on|off      enable / disable chorus\n"
+                    "  /reverb N | on|off  reverb room (0–1) or active toggle\n"
+                    "  /chorus N | on|off  chorus depth (0–50) or active toggle\n"
                     "  /quit               end session"
                 )
                 continue
@@ -741,6 +743,52 @@ def _handle_transport_command(line: str, player) -> str | None:
         if arg.lower() in ("off", "false", "0"):
             return player.set_loop(False)
         return "usage: /loop on|off"
+    if cmd == "/seek":
+        # /seek <bar>           — bar N, beat 0
+        # /seek <bar>:<beat>    — bar N, fractional beat
+        if not arg:
+            return "usage: /seek <bar> | /seek <bar>:<beat>"
+        if ":" in arg:
+            bar_s, beat_s = arg.split(":", 1)
+            try:
+                bar = int(bar_s)
+                beat = float(beat_s)
+            except ValueError:
+                return "usage: /seek <bar> | /seek <bar>:<beat>"
+        else:
+            try:
+                bar = int(arg)
+                beat = 0.0
+            except ValueError:
+                return "usage: /seek <bar> | /seek <bar>:<beat>"
+        return player.seek(bar=bar, beat=beat)
+    if cmd == "/mute":
+        if not arg:
+            return f"muted channels: {sorted(player.muted_channels) or 'none'}"
+        try:
+            return player.mute(int(arg))
+        except ValueError:
+            return "usage: /mute <1-16>"
+    if cmd == "/unmute":
+        if not arg or arg.lower() == "all":
+            return player.unsolo()
+        try:
+            return player.unmute(int(arg))
+        except ValueError:
+            return "usage: /unmute <1-16> | /unmute all"
+    if cmd == "/solo":
+        if not arg or arg.lower() == "off":
+            return player.unsolo()
+        try:
+            return player.solo(int(arg))
+        except ValueError:
+            return "usage: /solo <1-16> | /solo off"
+    if cmd == "/preserve":
+        if arg.lower() in ("on", "true", "1"):
+            return player.set_preserve_position(True)
+        if arg.lower() in ("off", "false", "0"):
+            return player.set_preserve_position(False)
+        return "usage: /preserve on|off"
     return None
 
 

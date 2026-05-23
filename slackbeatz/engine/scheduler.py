@@ -332,20 +332,47 @@ class Scheduler:
         self.song = song
         self.sink = sink
         self.clock = clock
+        # Updated as events fire — the live transport reads this to
+        # implement "resume from current bar" after a parameter change.
+        self.current_tick: int = 0
 
-    def run(self, stop_event=None) -> None:
+    def run(
+        self,
+        stop_event=None,
+        *,
+        resume_from_tick: int = 0,
+        muted_channels=None,
+    ) -> None:
         """Render the song to MIDI events and stream them via the sink.
 
-        If *stop_event* (a :class:`threading.Event`) is provided, the
-        loop checks it between events and exits early when set. Used by
-        the live transport (REPL/GUI) to interrupt playback for
-        re-composition, tempo change, seek, etc.
+        Parameters
+        ----------
+        stop_event:
+            Optional :class:`threading.Event`. When set, the loop exits
+            after the next event boundary. Used by the live transport
+            to interrupt playback for re-composition / tempo change /
+            seek / etc.
+        resume_from_tick:
+            Skip events whose absolute tick is below this value (but
+            still issue the initial ``program_change`` events so the
+            destination synth picks the right patches). The clock is
+            also fast-forwarded so the first wait_until at or above
+            this tick returns immediately. Used by the Player to
+            implement "preserve current bar across parameter changes".
+        muted_channels:
+            Optional ``set[int]`` (1-indexed) of muted channels. Read
+            by reference on every event — the caller can mutate it
+            mid-playback and the scheduler honours it from the next
+            event onward. Channel-10 (drums) is muteable like any other.
         """
         events = render_events(self.song)
+        self.current_tick = resume_from_tick
         self.sink.open()
         self.clock.open()
         try:
-            self.clock.start()
+            # Start the clock at resume_from_tick so wait_until calls
+            # before / at that tick return immediately.
+            self.clock.start(initial_tick=resume_from_tick)
             # Send GM program_change up front so the destination synth
             # picks the right patch per channel — without this every
             # pitched channel stays on whatever default it powered up on
@@ -358,7 +385,22 @@ class Scheduler:
             for abs_tick, msg in events:
                 if stop_event is not None and stop_event.is_set():
                     break
+                if abs_tick < resume_from_tick:
+                    # Skip pre-seek events. The notes we drop here are
+                    # those that should already have been playing — we
+                    # accept that they won't be re-triggered (held pad
+                    # notes etc. will start at the next note_on in the
+                    # generator's stream).
+                    continue
                 self.clock.wait_until(abs_tick)
+                self.current_tick = abs_tick
+                # Per-channel mute. Skip every event on a muted channel
+                # — including note_off, which means held notes need to
+                # be silenced explicitly by the caller via CC 123. The
+                # Player does this when the mute set grows.
+                if muted_channels is not None and hasattr(msg, "channel"):
+                    if (msg.channel + 1) in muted_channels:
+                        continue
                 self.sink.send(msg)
         finally:
             self.clock.close()

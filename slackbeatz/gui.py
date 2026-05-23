@@ -278,19 +278,45 @@ def run_tweak_gui(
         ttk.Button(seed_row, text="Apply", width=8, command=_on_seed_apply).pack(side="left", padx=2)
         seed_entry.bind("<Return>", lambda _e: _on_seed_apply())
 
-        # Loop toggle.
-        loop_row = ttk.Frame(transport); loop_row.pack(fill="x", padx=10, pady=4)
+        # Seek to bar input.
+        seek_row = ttk.Frame(transport); seek_row.pack(fill="x", padx=10, pady=4)
+        ttk.Label(seek_row, text="Seek to bar", width=14, anchor="w").pack(side="left")
+        seek_bar_var = tk.StringVar(value="1")
+        ttk.Entry(seek_row, textvariable=seek_bar_var, width=6).pack(side="left", padx=2)
+        ttk.Label(seek_row, text=" beat ").pack(side="left")
+        seek_beat_var = tk.StringVar(value="0")
+        ttk.Entry(seek_row, textvariable=seek_beat_var, width=6).pack(side="left", padx=2)
+
+        def _on_seek():
+            try:
+                bar = int(seek_bar_var.get())
+                beat = float(seek_beat_var.get() or 0)
+            except ValueError:
+                return
+            player.seek(bar=bar, beat=beat)
+            _refresh_nowplaying()
+        ttk.Button(seek_row, text="Go", width=6, command=_on_seek).pack(side="left", padx=4)
+
+        # Loop + preserve-position toggles on one row.
+        toggle_row = ttk.Frame(transport); toggle_row.pack(fill="x", padx=10, pady=4)
         loop_var = tk.IntVar(value=1 if player.loop else 0)
         ttk.Checkbutton(
-            loop_row, text="Loop on song end", variable=loop_var,
+            toggle_row, text="Loop on song end", variable=loop_var,
             command=lambda: player.set_loop(bool(loop_var.get())),
         ).pack(side="left", padx=2)
+        preserve_var = tk.IntVar(value=1 if player.preserve_position else 0)
+        ttk.Checkbutton(
+            toggle_row, text="Preserve bar across param changes",
+            variable=preserve_var,
+            command=lambda: player.set_preserve_position(bool(preserve_var.get())),
+        ).pack(side="left", padx=8)
 
         ttk.Label(
             transport,
             text="Type a phrase at the REPL prompt to load a song. "
                  "Tempo / Style / Seed restart the current song with the "
-                 "new value.",
+                 "new value — by default at the current bar (uncheck "
+                 "‘Preserve bar’ to restart from bar 1).",
             wraplength=400, justify="left", foreground="#666",
         ).pack(padx=10, pady=(10, 4), anchor="w")
 
@@ -387,13 +413,27 @@ def run_tweak_gui(
         label_text = f"ch {ch:>2}" + (f" — {role}" if role else "")
         ttk.Label(row, text=label_text, width=18, anchor="w").pack(side="left")
 
+        # Per-channel mute checkbox — only meaningful when a Player
+        # is wired in (otherwise there's nothing to mute against).
+        if player is not None:
+            mute_var = tk.IntVar(value=1 if ch in player.muted_channels else 0)
+
+            def _on_mute(channel=ch, var=mute_var):
+                if var.get():
+                    player.mute(channel)
+                else:
+                    player.unmute(channel)
+            ttk.Checkbutton(
+                row, text="mute", variable=mute_var, command=_on_mute,
+            ).pack(side="left", padx=(0, 6))
+
         if ch == 10:
             # Drum bank picker (bank 128 preset).
             initial_kit = initial_programs.get(10, 0)
             current_label = drum_kit_label_by_idx.get(initial_kit, drum_kit_choices[0])
             cb = ttk.Combobox(
                 row, values=drum_kit_choices, state="readonly",
-                width=28,
+                width=24,
             )
             cb.set(current_label)
 
@@ -410,7 +450,7 @@ def run_tweak_gui(
             display_choices = [f"{i:>3}  {name}" for i, name in enumerate(_GM_PROGRAMS)]
             cb = ttk.Combobox(
                 row, values=display_choices, state="readonly",
-                width=28,
+                width=24,
             )
             cb.set(display_choices[initial_prog])
 
