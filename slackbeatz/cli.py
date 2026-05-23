@@ -570,47 +570,21 @@ def cmd_repl(args) -> int:
     if args.gui:
         try:
             import tkinter  # noqa: F401 — probe-only import
-            # Empirical thread-safety probe. We can't simply check
-            # ``tcl_platform(threaded)`` because Tcl 9 removed that
-            # variable; we can't trust ``info exists`` either because
-            # python.org's Tcl 9.0.3 is "apartment-threaded" (each
-            # interpreter pinned to a thread, with _tkinter raising a
-            # catchable RuntimeError on cross-thread calls). What we
-            # actually need to know is: does a worker-thread Tcl call
-            # crash the process or surface as a normal exception?
+            tk_available = True
+            # NOTE: we used to create a tkinter.Tk() here as a thread-
+            # safety probe before deciding whether to launch the real
+            # GUI. That probe was the cause of an EXC_BREAKPOINT trap
+            # in Tk_MacOSXGetTkWindow → objc_opt_respondsToSelector
+            # later in the actual mainloop: destroying the probe Tk
+            # root left Tcl-internal idle callbacks queued referencing
+            # the now-freed NSWindow, and the real mainloop's
+            # TclServiceIdle picked them up and crashed.
             #
-            # We spawn a worker, ask it to do a trivial ``expr 1+1``,
-            # and check whether the worker survived and whether _tkinter
-            # raised. Three outcomes:
-            #
-            #   (a) Worker returns "2" → fully threaded Tcl. Safe.
-            #   (b) Worker raises a Python exception → apartment-guarded
-            #       (python.org's Tcl 9). The guard catches all
-            #       cross-thread Tcl calls, so the GUI is still safe.
-            #   (c) Process crashes here → unsafe Tcl (Homebrew's
-            #       non-threaded Tcl 8). We never reach the next line.
-            #
-            # If we reach the post-probe check, we're in (a) or (b),
-            # both of which are safe enough to launch the GUI.
-            import threading
-            _probe = tkinter.Tk()
-            try:
-                _probe_result: list = [None]
-
-                def _probe_worker():
-                    try:
-                        _probe_result[0] = _probe.tk.eval("expr 1+1")
-                    except Exception as exc:  # noqa: BLE001 — any exception is fine
-                        _probe_result[0] = ("guarded", type(exc).__name__)
-
-                _t = threading.Thread(target=_probe_worker, daemon=True)
-                _t.start()
-                _t.join(timeout=2.0)
-                # Reaching this line means the process didn't abort.
-                # Either path (a) or (b) → safe.
-                tk_available = True
-            finally:
-                _probe.destroy()
+            # Replaced with a simple import check. If a user's Tcl
+            # really is unsafe (Homebrew non-threaded), they'll hit
+            # the original Tcl_WaitForEvent abort once playback
+            # starts — same outcome they got before the empirical
+            # probe existed.
         except ImportError as e:
             py_minor = f"{sys.version_info.major}.{sys.version_info.minor}"
             print(
