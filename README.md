@@ -22,7 +22,7 @@ Pre-rendered audio for each bundled example lives under [`examples/rendered/`](e
 | `deep_set` | `deep_techno` | [.mid](examples/rendered/deep_set.mid) | [.mp3](examples/rendered/deep_set.mp3) |
 | `goa` | `psytrance` | [.mid](examples/rendered/goa.mid) | [.mp3](examples/rendered/goa.mp3) |
 
-The MP3s use a free General MIDI soundfont (`TimGM6mb.sf2`) — the goal is to make the **structure** audible (kicks land where they should, the gallop bass rolls correctly, transitions sit right), not to sound production-quality. Plug a real synth in for that.
+The MP3s are rendered through **GeneralUser GS** (free GM soundfont, ~30 MB, auto-downloaded on first use) with per-channel GM program selection — bass = Synth Bass, lead = Saw Lead / Square Lead, pad = Warm Pad, candy = FX patches — picked per `(type, style)` so each style sits in a recognisably different timbral space. It's still a GM rendering, not production audio: plug a real synth in for that.
 
 ## Quick start
 
@@ -42,7 +42,7 @@ slackbeatz audio examples/dark_sunday.sb -o /tmp/dark.mp3
 
 ### Audio rendering setup
 
-`slackbeatz audio` shells out to **FluidSynth** + **ffmpeg** and uses a General MIDI soundfont (auto-downloaded to `~/.cache/slackbeatz/` on first use, ~6 MB).
+`slackbeatz audio` shells out to **FluidSynth** + **ffmpeg** and uses a General MIDI soundfont (auto-downloaded to `~/.cache/slackbeatz/` on first use — GeneralUser GS, ~30 MB).
 
 ```bash
 # macOS
@@ -56,6 +56,12 @@ choco install fluidsynth ffmpeg          # or scoop install fluidsynth ffmpeg
 ```
 
 `-o foo.wav` stops after FluidSynth; `-o foo.mp3` (or any other ffmpeg-supported format) continues through the ffmpeg encode step. Override the soundfont via `--soundfont <path>` or `$SLACKBEATZ_SOUNDFONT`.
+
+Each non-drum channel gets a default GM patch picked by the gen's `(type, style)` pair (e.g. `bass deep_techno` → Synth Bass 2, `melody psytrance` → Square Lead). Override with the `program=N` knob on any gen:
+
+```text
+gen lead melody psytrance program=87   # GM patch 87 (Bass + Lead)
+```
 
 ## The DSL
 

@@ -34,12 +34,15 @@ from pathlib import Path
 # Soundfont discovery
 # --------------------------------------------------------------------------
 
-_DEFAULT_SOUNDFONT_NAME = "TimGM6mb.sf2"
+_DEFAULT_SOUNDFONT_NAME = "GeneralUser-GS.sf2"
 _DEFAULT_SOUNDFONT_URL = (
-    # TimGM6mb.sf2 — 5.7 MB General MIDI soundfont by Tim Brechbill,
-    # GPL-2.0. Auto-downloaded on first use; users who want a different
+    # GeneralUser GS v1.471 by S. Christian Collins — ~30 MB free-for-
+    # any-use General MIDI soundfont. Substantially better synth-section
+    # quality than TimGM6mb, which matters because slackbeatz spends most
+    # of its bandwidth on bass / lead / pad. Users who want a different
     # SF can override via --soundfont or $SLACKBEATZ_SOUNDFONT.
-    "https://archive.org/download/free-soundfonts-sf2-2019-04/TimGM6mb.sf2"
+    "https://archive.org/download/free-soundfonts-sf2-2019-04/"
+    "GeneralUser%20GS%20v1.471.sf2"
 )
 _CACHE_DIR = Path.home() / ".cache" / "slackbeatz"
 

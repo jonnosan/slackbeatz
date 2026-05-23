@@ -31,7 +31,7 @@ from .lexer import Line, tokenize, tokenize_file
 # the generator algorithm.
 _GEN_KNOBS = frozenset(
     {"ch", "note", "inst", "kit", "intensity", "swing", "octave", "gate",
-     "density", "seed"}
+     "density", "seed", "program", "cc", "cycle"}
 )
 _PART_KNOBS = frozenset({"tempo", "key", "role", "seed"})
 _INST_KNOBS = frozenset({"ch", "note"})
