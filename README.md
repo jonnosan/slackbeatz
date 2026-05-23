@@ -112,6 +112,30 @@ slackbeatz list-setups                # show bundled setup names
 
 Full reference lives in [`examples/dark_sunday.sb`](examples/dark_sunday.sb) (every DSL feature) and [`examples/studio.sb`](examples/studio.sb) (standalone setup).
 
+### Per-gen knobs
+
+Every `gen` line accepts a small whitelisted set of `key=value` knobs after the `(type, style)` pair:
+
+| Knob | Type | What it does | Where it applies |
+|---|---|---|---|
+| `inst` / `kit` | name | Override the setup-name lookup | All |
+| `ch` / `note` | int | Raw MIDI override (sketch mode without a setup) | All |
+| `program` | int 0..127 | Pin the GM patch on this channel (overrides style default) | Pitched + candy |
+| `intensity` | 0..1 | Velocity scaling and density multiplier | All |
+| `swing` | 0..1 | Offbeat microtiming shift | Rhythm |
+| `humanize` | int ticks | Random ±N tick offset per hit | Rhythm, drums |
+| `drop_prob` | 0..1 | Per-hit probability of dropping the note | Rhythm, drums |
+| `accent` | int | Every Nth step gets +12 velocity | Rhythm, drums |
+| `duck` | 0..1 | Sidechain ducking depth on each beat (1.0 = off) | Bass |
+| `octave` | int | Register offset | Pitched gens |
+| `gate` | 0..1 | Note length as a fraction of step duration | Pitched gens |
+| `density` | 0..1 | CC event count | Candy |
+| `cc` | int 0..127 | Override which CC controller candy modulates | Candy |
+| `cycle` | int bars | LFO period for slow modulators | Candy |
+| `seed` | int | Override the resolved seed for this gen | All |
+
+The chance-driven ones (`humanize`, `drop_prob`, `accent`, `duck`) are deliberately off by default — existing songs keep playing the same; users opt into the variation explicitly. See the example `.sb` files for style-appropriate values.
+
 ## How it works
 
 Each generator is a chance-driven algorithm picked by `(type, style)` — e.g. `rhythm euclid`, `bass psytrance`. Algorithms use a seeded PRNG, so the same `seed` always produces the same output.
@@ -170,8 +194,10 @@ The clock-mode plumbing is split cleanly: `engine/clock_source.py` carries a `Cl
 ```bash
 git clone https://github.com/jonnosan/slackbeatz && cd slackbeatz
 python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
-.venv/bin/pytest        # 21 tests, ~100ms — covers DSL, resolve, engine, examples
+.venv/bin/pytest        # 31 tests, ~100ms — covers DSL, resolve, engine, examples
 ```
+
+Open ideas / future work live as [GitHub issues](https://github.com/jonnosan/slackbeatz/issues) — patches welcome.
 
 The previous Arduino sketch is still at the [`arduino-v1`](https://github.com/jonnosan/slackbeatz/tree/arduino-v1) tag for posterity.
 
