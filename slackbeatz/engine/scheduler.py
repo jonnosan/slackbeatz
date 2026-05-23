@@ -199,10 +199,12 @@ def _instantiate_algorithm(gen):
             f"no generator registered for {key} — available: {sorted(REGISTRY)}"
         )
     cls = REGISTRY[key]
-    algo = cls(handle=gen.handle, knobs=gen.knobs)
-    algo.instrument = gen.instrument
-    algo.kit = gen.kit
-    return algo
+    return cls(
+        handle=gen.handle,
+        knobs=gen.knobs,
+        instrument=gen.instrument,
+        kit=gen.kit,
+    )
 
 
 # --------------------------------------------------------------------------
