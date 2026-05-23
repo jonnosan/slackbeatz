@@ -26,7 +26,10 @@ part intro 16
   drone
   tex
 
-part main 64 transpose_prob=0.3
+# `bars=48..72` — each arrangement instance picks a different length
+# from the range (deterministic per seed). Real dub-techno DJ sets vary
+# section lengths constantly. transpose_prob also still in play.
+part main 48..72 transpose_prob=0.3
   kick
   hats
   drone

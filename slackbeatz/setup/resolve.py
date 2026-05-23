@@ -169,6 +169,7 @@ def _resolve_part(
     seed_raw = knobs.pop("seed", None)
     scale_raw = knobs.pop("scale", None)
     transpose_prob_raw = knobs.pop("transpose_prob", None)
+    bars_max_raw = knobs.pop("bars_max", None)  # synthetic from `bars=N..M`
 
     if tempo_raw is None:
         tempo = song_tempo
@@ -212,6 +213,17 @@ def _resolve_part(
                 part.line, f"part {part.name!r}: transpose_prob must be 0..1, got {transpose_prob}"
             )
 
+    bars_max: int | None = None
+    if bars_max_raw is not None:
+        if not isinstance(bars_max_raw, int):
+            raise ResolveError(part.line, f"part {part.name!r}: bars_max must be int")
+        if bars_max_raw < part.bars:
+            raise ResolveError(
+                part.line,
+                f"part {part.name!r}: bars range upper bound {bars_max_raw} < lower {part.bars}",
+            )
+        bars_max = bars_max_raw
+
     return ResolvedPart(
         name=part.name,
         bars=part.bars,
@@ -221,6 +233,7 @@ def _resolve_part(
         seed_override=seed_override,
         scale_override=scale_override,
         transpose_prob=transpose_prob,
+        bars_max=bars_max,
         gen_handles=list(part.gens),
     )
 

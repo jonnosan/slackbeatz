@@ -10,8 +10,10 @@ from slackbeatz.engine.clock import PPQ, TempoMap, TempoSegment, bars_to_ticks
 from slackbeatz.engine.scheduler import derive_seed, render_events
 from slackbeatz.generators._shared import (
     HitParams,
+    MotifMemory,
     euclid,
     humanize_hit,
+    maybe_octave_jump,
     sidechain_envelope,
 )
 from slackbeatz.setup.loader import setup_from_ast
@@ -153,3 +155,95 @@ def test_sidechain_envelope_resets_each_beat() -> None:
     # … and slowly come back up.
     mid_quarter = sidechain_envelope(PPQ + PPQ // 4, PPQ, duck=0.5)
     assert 0.5 < mid_quarter < 1.0
+
+
+# --- Octave jump + motif memory + probabilistic bars ---------------------
+
+def test_octave_jump_never_fires_when_prob_zero() -> None:
+    rng = random.Random(42)
+    for _ in range(20):
+        assert maybe_octave_jump(60, 0.0, rng) == 60
+
+
+def test_octave_jump_always_fires_when_prob_one() -> None:
+    rng = random.Random(42)
+    for _ in range(20):
+        result = maybe_octave_jump(60, 1.0, rng)
+        assert result == 48 or result == 72  # ±12
+
+
+def test_octave_jump_clamps_high_pitch() -> None:
+    # Pitch 124 + 12 = 136 → clamped back into range by an octave shift.
+    rng = random.Random(0)
+    result = maybe_octave_jump(124, 1.0, rng)
+    assert 0 <= result <= 127
+
+
+def test_motif_memory_size_zero_always_fresh() -> None:
+    rng = random.Random(0)
+    memory = MotifMemory(0)
+    fresh_called = [0]
+
+    def fresh(r):
+        fresh_called[0] += 1
+        return 5
+
+    for _ in range(10):
+        memory.pick_next(rng, fresh)
+    assert fresh_called[0] == 10
+
+
+def test_motif_memory_reuses_history() -> None:
+    rng = random.Random(0)
+    memory = MotifMemory(size=8)
+    # Seed history with a few picks via fresh
+    for _ in range(8):
+        memory.pick_next(rng, lambda r: 3)
+    # Now most subsequent picks should come from memory (all are 3s).
+    fresh_count = [0]
+
+    def fresh(r):
+        fresh_count[0] += 1
+        return 99
+
+    for _ in range(20):
+        memory.pick_next(rng, fresh)
+    # With memory size 8, reuse probability is 0.8 → expect ~16 reuses.
+    assert fresh_count[0] < 10
+
+
+def test_bars_range_resolves_within_bounds() -> None:
+    import slackbeatz.generators  # noqa: F401
+    from slackbeatz.dsl.parser import parse
+    from slackbeatz.engine.scheduler import _bars_for
+    setup = setup_from_ast(parse('setup "x"\ninst kick ch=10 note=36').setup)
+    song = parse(
+        'song "T"\n  tempo 120\n  key Am\n  seed 1\n'
+        'gen kick rhythm euclid\n'
+        'part main 8..16\n  kick\n'
+        'play main main main\n'
+    ).song
+    resolved = resolve_song(song, setup)
+    for idx in range(3):
+        bars = _bars_for(resolved, idx, "main")
+        assert 8 <= bars <= 16
+
+
+def test_bars_range_deterministic_per_seed() -> None:
+    import slackbeatz.generators  # noqa: F401
+    from slackbeatz.dsl.parser import parse
+    from slackbeatz.engine.scheduler import _bars_for
+    setup = setup_from_ast(parse('setup "x"\ninst kick ch=10 note=36').setup)
+    src = (
+        'song "T"\n  tempo 120\n  key Am\n  seed {seed}\n'
+        'gen kick rhythm euclid\n'
+        'part main 8..32\n  kick\n'
+        'play main main\n'
+    )
+    a = resolve_song(parse(src.format(seed=42)).song, setup)
+    b = resolve_song(parse(src.format(seed=42)).song, setup)
+    c = resolve_song(parse(src.format(seed=99)).song, setup)
+    assert [_bars_for(a, i, "main") for i in range(2)] == \
+           [_bars_for(b, i, "main") for i in range(2)]
+    assert [_bars_for(a, i, "main") for i in range(2)] != \
+           [_bars_for(c, i, "main") for i in range(2)]

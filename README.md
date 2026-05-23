@@ -146,6 +146,9 @@ Every `gen` line accepts a small whitelisted set of `key=value` knobs after the 
 | `gate_jitter` | 0..1 | Per-note random duration variance | Pitched gens |
 | `arp_prob` | 0..1 | Probability a chord plays as an arpeggio instead of held | Chords (euclid / deep_techno / psytrance / vaporwave) |
 | `burble_prob` | 0..1 | Probability a bass note hits the phrygian b2 instead of the root | Bass psytrance |
+| `octave_jump` | 0..1 | Per-note probability of jumping ±1 octave | Bass + melody |
+| `motif_memory` | int N | Markov-like — recent degrees reuse with probability ~N×0.1 | Melody (psytrance / vaporwave) |
+| `kick_env` | 0..1 | Per-beat CC 74 envelope (filter dips on kick) | Bass deep_techno |
 | `scale` | scale name | Override the gen's hardcoded scale (e.g. `scale=dorian`) | All pitched |
 | `seed` | int | Override the resolved seed for this gen | All |
 
@@ -156,6 +159,8 @@ Part-level knobs (on the `part <name> <bars>` line):
 | `tempo=N` / `key=NAME` / `role=R` / `seed=N` | Per-part overrides of the song defaults |
 | `scale=NAME` | Override the scale for all pitched gens in this part |
 | `transpose_prob=0..1` | Per-arrangement-instance roll for transposition (±N semitones); shared across all gens in the part so harmony stays coherent |
+
+`<bars>` itself can be a range — `part main 32..48` — and the scheduler picks an integer in the range per arrangement-instance (deterministic per seed). Real DJ-style arrangements vary section lengths constantly.
 
 Song-level (under the `song "..."` block):
 

@@ -42,7 +42,10 @@ _GEN_KNOBS = frozenset(
      "pan", "reverb", "modwheel", "resonance", "bend",
      # Round 2 — issue #1 (gate_jitter), #5 (arp_prob),
      # #15 (psytrance bass burble), #22 (per-gen scale override):
-     "gate_jitter", "arp_prob", "burble_prob", "scale"}
+     "gate_jitter", "arp_prob", "burble_prob", "scale",
+     # Round 3 — issue #3 (octave_jump), #11 (motif_memory),
+     # #17 (deep_techno kick-triggered filter env):
+     "octave_jump", "motif_memory", "kick_env"}
 )
 # Part-level knobs include the new transpose_prob (issue #10): a per-
 # part-instance roll for transposition that the scheduler applies
@@ -266,11 +269,32 @@ class _Parser:
         if len(tail) < 2:
             raise ParseError(line_no, "expected: part <name> <bars> [k=v...]")
         name, bars_tok, *rest = tail
-        try:
-            bars = int(bars_tok)
-        except ValueError:
-            raise ParseError(line_no, f"bars must be an integer, got {bars_tok!r}") from None
-        knobs = _parse_kv_pairs(rest, allowed=_PART_KNOBS, line_no=line_no)
+        # Issue #21: `bars` may be a range `N..M` for probabilistic
+        # per-arrangement-instance length. We store the lo/hi here and
+        # let the resolver / scheduler pick the actual count later.
+        if ".." in bars_tok:
+            lo_s, _, hi_s = bars_tok.partition("..")
+            try:
+                lo = int(lo_s); hi = int(hi_s)
+            except ValueError:
+                raise ParseError(
+                    line_no,
+                    f"bars range must be int..int, got {bars_tok!r}",
+                ) from None
+            if lo < 1 or hi < lo:
+                raise ParseError(line_no, f"bars range invalid: {bars_tok!r}")
+            # We stash both ends in the AST by encoding the upper bound
+            # into a sentinel knob. The PartDecl.bars holds the lower
+            # bound; the resolver reads "bars_max" out of the knobs.
+            bars = lo
+            knobs = _parse_kv_pairs(rest, allowed=_PART_KNOBS, line_no=line_no)
+            knobs["bars_max"] = hi
+        else:
+            try:
+                bars = int(bars_tok)
+            except ValueError:
+                raise ParseError(line_no, f"bars must be an integer, got {bars_tok!r}") from None
+            knobs = _parse_kv_pairs(rest, allowed=_PART_KNOBS, line_no=line_no)
         part = PartDecl(name=name, bars=bars, knobs=knobs, line=line_no)
         self.file.song.parts.append(part)
         self._open_block = "part"

@@ -161,6 +161,66 @@ def transposed_pitch(pitch: int, ctx_transpose: int) -> int:
     return result
 
 
+def maybe_octave_jump(
+    pitch: int,
+    octave_jump: float,
+    rng: random.Random,
+) -> int:
+    """Issue #3 — with probability *octave_jump*, shift *pitch* by ±12.
+
+    Result is clamped back into ``[0, 127]`` by further octave shifts
+    in the appropriate direction.
+    """
+    if octave_jump <= 0 or rng.random() >= octave_jump:
+        return pitch
+    delta = 12 * rng.choice([-1, 1])
+    result = pitch + delta
+    while result > 127:
+        result -= 12
+    while result < 0:
+        result += 12
+    return result
+
+
+class MotifMemory:
+    """Issue #11 — sliding-window degree memory for melody gens.
+
+    Stores the last ``N`` scale degrees the gen played. ``pick_next()``
+    rolls a coin weighted by the memory depth: with high probability
+    when ``N`` is large, returns a degree from history; otherwise asks
+    the caller's ``fresh_pick`` callable for a brand-new degree.
+
+    Memory size 0 disables the mechanism — :meth:`pick_next` always
+    delegates to ``fresh_pick``.
+    """
+
+    def __init__(self, size: int) -> None:
+        self.size = max(0, size)
+        self._history: list[int] = []
+
+    def pick_next(self, rng: random.Random, fresh_pick) -> int:
+        """Pick the next degree. ``fresh_pick(rng) -> int`` is the
+        zero-memory fallback."""
+        # Re-use probability scales with memory size: size=4 → 40%,
+        # size=8 → 80%, capped at 90%.
+        if self.size > 0 and self._history:
+            reuse_prob = min(0.9, self.size * 0.1)
+            if rng.random() < reuse_prob:
+                deg = rng.choice(self._history)
+                self._record(deg)
+                return deg
+        deg = fresh_pick(rng)
+        self._record(deg)
+        return deg
+
+    def _record(self, deg: int) -> None:
+        if self.size <= 0:
+            return
+        self._history.append(deg)
+        if len(self._history) > self.size:
+            self._history.pop(0)
+
+
 # --------------------------------------------------------------------------
 # Sidechain ducking envelope (kick-on-each-beat assumption)
 # --------------------------------------------------------------------------

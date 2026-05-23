@@ -73,12 +73,17 @@ def resolved_seed_for(
 # --------------------------------------------------------------------------
 
 def build_tempo_map(song: ResolvedSong) -> TempoMap:
-    """Walk the arrangement and build a contiguous tempo map."""
+    """Walk the arrangement and build a contiguous tempo map.
+
+    Honours per-arrangement-instance bar counts when the part was
+    declared with a ``bars=N..M`` range (issue #21).
+    """
     segments: list[TempoSegment] = []
     cursor = 0
-    for part_name in song.arrangement:
+    for idx, part_name in enumerate(song.arrangement):
         part = song.parts[part_name]
-        length = bars_to_ticks(part.bars)
+        bars = _bars_for(song, idx, part_name)
+        length = bars_to_ticks(bars)
         if segments and segments[-1].bpm == part.tempo:
             # Coalesce adjacent same-tempo segments.
             last = segments.pop()
@@ -120,6 +125,24 @@ def _transposition_for(
     return rng.choice(_TRANSPOSE_CHOICES)
 
 
+def _bars_for(
+    song: ResolvedSong,
+    arrangement_index: int,
+    part_name: str,
+) -> int:
+    """Issue #21: resolve the per-arrangement-instance bar count.
+
+    For parts declared as a single int, returns that. For parts
+    declared as ``bars=N..M``, picks an integer in ``[N, M]`` using a
+    seed deterministic in ``(song.seed, part_name, arrangement_index)``.
+    """
+    part = song.parts[part_name]
+    if part.bars_max is None or part.bars_max == part.bars:
+        return part.bars
+    seed = derive_seed(song.seed, part_name, f"__bars_{arrangement_index}")
+    return random.Random(seed).randint(part.bars, part.bars_max)
+
+
 def _build_context(
     song: ResolvedSong,
     arrangement_index: int,
@@ -139,16 +162,13 @@ def _build_context(
         else None
     )
     seed = resolved_seed_for(song, part_name, gen_handle)
-    # Scale: part-level override wins, then song-level, then None
-    # (gens fall back to their style's hardcoded default).
     scale_override = part.scale_override or song.scale_override
-    # Transpose: rolled once per arrangement-instance, applied to every
-    # gen in the part. Shared across gens so harmony stays coherent.
     transpose_semitones = _transposition_for(song, arrangement_index, part_name)
+    bars = _bars_for(song, arrangement_index, part_name)
     return PartContext(
         name=part.name,
         role=part.role,
-        bars=part.bars,
+        bars=bars,
         tempo=part.tempo,
         key=part.key,
         ppq=PPQ,
@@ -174,6 +194,8 @@ def render_events(song: ResolvedSong) -> list[tuple[int, mido.Message]]:
     cursor = 0
     for idx, part_name in enumerate(song.arrangement):
         part = song.parts[part_name]
+        # Per-arrangement-instance bar count (issue #21).
+        bars = _bars_for(song, idx, part_name)
         for gen_handle in part.gen_handles:
             ctx = _build_context(song, idx, gen_handle)
             gen_resolved = song.gens[gen_handle]
@@ -234,7 +256,7 @@ def render_events(song: ResolvedSong) -> list[tuple[int, mido.Message]]:
                             ),
                         )
                     )
-        cursor += bars_to_ticks(part.bars)
+        cursor += bars_to_ticks(bars)
     timed.sort(key=lambda t: (t[0], t[1]))
     return [(tick, msg) for tick, _key, msg in timed]
 

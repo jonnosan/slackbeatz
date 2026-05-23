@@ -190,6 +190,18 @@ def gate_jitter_for(gen: Generator) -> float:
     return float(v) if isinstance(v, (int, float)) else 0.0
 
 
+def octave_jump_for(gen: Generator) -> float:
+    """Read the octave_jump knob (issue #3). Defaults to 0."""
+    v = gen.knobs.get("octave_jump", 0.0)
+    return float(v) if isinstance(v, (int, float)) else 0.0
+
+
+def motif_memory_for(gen: Generator) -> int:
+    """Read the motif_memory knob (issue #11). Defaults to 0."""
+    v = gen.knobs.get("motif_memory", 0)
+    return int(v) if isinstance(v, (int, float)) else 0
+
+
 def scale_for(gen, ctx, fallback: str = "minor") -> str:
     """Resolve which scale this gen should draw from (issue #22).
 

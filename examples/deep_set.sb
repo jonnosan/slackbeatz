@@ -16,8 +16,10 @@ song "Deep Set"
 gen kick    rhythm deep_techno humanize=3
 gen hats    rhythm deep_techno humanize=3 drop_prob=0.05
 gen clap    rhythm deep_techno humanize=3
-gen bass    bass   deep_techno octave=-1
-gen lead    melody deep_techno
+# kick_env=0.6 emits a per-beat CC 74 envelope on the bass channel that
+# drops on each kick and recovers — the dub-techno "breathing" feel.
+gen bass    bass   deep_techno octave=-1 kick_env=0.6
+gen lead    melody deep_techno motif_memory=4
 gen pad     chords deep_techno
 gen riser   candy  deep_techno
 

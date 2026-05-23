@@ -40,6 +40,23 @@ _HAT    = (8, 0,  78)
 _OHAT   = (1, 14, 88)
 
 
+# Issue #18: bank of 4 fill patterns. Each entry is a dict of
+# drum-role → (pulses, offset) for that voice during the fill bar.
+# Drums not in a fill dict revert to their base pattern. The rng picks
+# one from the bank for each fill bar — adds variety vs. the previous
+# single-formula fill.
+_FILL_BANK = (
+    # Fill 0: snare-roll variant — busy snare + open hat back-half.
+    {"snare": (5, 2), "hat": (10, 0), "ohat": (2, 12)},
+    # Fill 1: hat-driven build — heavy hats + sparse snare.
+    {"snare": (3, 4), "hat": (14, 0), "ohat": (1, 14)},
+    # Fill 2: snare-ramp — escalating snare into the next bar.
+    {"snare": (8, 0), "hat":  (4, 8), "ohat": (3, 10)},
+    # Fill 3: open-hat dominant — sparse snare, lots of ohat.
+    {"snare": (2, 4), "hat":  (6, 4), "ohat": (5,  6)},
+)
+
+
 @register_generator("drums", "euclid")
 class DrumsEuclid(Generator):
     """Full Euclidean kit. Looks up notes from ``self.kit.drum_notes``."""
@@ -86,13 +103,22 @@ class DrumsEuclid(Generator):
             hat_pat = euclid(drift_pulses(_HAT[0], drift, ctx.rng), 16, _HAT[1])
             ohat_pat = euclid(drift_pulses(_OHAT[0], drift, ctx.rng), 16, _OHAT[1])
 
-            # 4-bar fill: re-roll snare + hat upward, swap them, add open hat.
+            # 4-bar fill (issue #18): pick from the bank of pre-defined
+            # fills rather than the single swap-and-perturb formula.
+            # Each fill bar rolls a fresh choice so a 32-bar part hears
+            # 8 different fills.
             if is_fill:
-                snare_pulses = fill_perturb(_SNARE[0], ctx.rng, bump=3)
-                hat_pulses = fill_perturb(_HAT[0], ctx.rng, bump=4)
-                snare_pat = euclid(hat_pulses, 16, 2)   # swap roles
-                hat_pat = euclid(snare_pulses, 16, 4)
-                ohat_pat = euclid(2, 16, 12)             # ohat on the back half
+                fill = ctx.rng.choice(_FILL_BANK)
+                for role, (pulses, offset) in fill.items():
+                    pat = euclid(pulses, 16, offset)
+                    if role == "snare":
+                        snare_pat = pat
+                    elif role == "hat":
+                        hat_pat = pat
+                    elif role == "ohat":
+                        ohat_pat = pat
+                    elif role == "clap":
+                        clap_pat = pat
 
             # Big fill into a drop: pile on snare + open hat all over.
             if is_last_bar and big_fill:

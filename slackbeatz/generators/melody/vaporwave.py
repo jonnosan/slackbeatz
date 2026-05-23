@@ -18,8 +18,10 @@ from typing import Iterator
 from slackbeatz.engine.event import CC, Event, Note
 from slackbeatz.generators._shared import (
     ChordProgression,
+    MotifMemory,
     apply_gate_jitter,
     evolution_multiplier,
+    maybe_octave_jump,
     pick_evolution_direction,
     should_mute_bar,
     transposed_pitch,
@@ -31,6 +33,8 @@ from slackbeatz.generators.defaults import (
     gate_for,
     gate_jitter_for,
     macro_knobs,
+    motif_memory_for,
+    octave_jump_for,
     scale_for,
 )
 from slackbeatz.generators.registry import register_generator
@@ -59,6 +63,8 @@ class MelodyVaporwave(Generator):
         # phrases wander ±10 around it. 64 = MIDI centre.
         pan_center = self.knob_int("pan", 64)
         gate_jitter = gate_jitter_for(self)
+        octave_jump = octave_jump_for(self)
+        memory = MotifMemory(motif_memory_for(self))
         macro = macro_knobs(self)
         direction = pick_evolution_direction(ctx.rng, macro["evolution"])
         scale = scale_for(self, ctx, fallback="dorian")
@@ -106,15 +112,16 @@ class MelodyVaporwave(Generator):
             n_notes = ctx.rng.choice([2, 2, 3])
             slots = sorted(ctx.rng.sample(range(prog.bars_per_chord * 4), n_notes))
             for slot in slots:
-                # Pick a degree relative to the chord root, avoiding the
-                # last one we played for a less mechanical melodic line.
+                # Pick a degree — memory may reuse a recent one if N>0,
+                # else delegate to the "avoid last_deg" picker.
                 candidates = [d for d in _DEGREES if d != last_deg] or _DEGREES
-                deg = ctx.rng.choice(candidates)
+                deg = memory.pick_next(ctx.rng, lambda r, cands=candidates: r.choice(cands))
                 last_deg = deg
                 pitch = transposed_pitch(
                     scale_note(chord_root_deg + deg, tonic, scale, 4 + octave_off),
                     ctx.transpose_semitones,
                 )
+                pitch = maybe_octave_jump(pitch, octave_jump, ctx.rng)
                 if not 0 <= pitch <= 127:
                     continue
                 # Note lands on a quarter-note grid relative to chord start.

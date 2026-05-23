@@ -13,8 +13,10 @@ from typing import Iterator
 
 from slackbeatz.engine.event import Event, Note
 from slackbeatz.generators._shared import (
+    MotifMemory,
     apply_gate_jitter,
     evolution_multiplier,
+    maybe_octave_jump,
     pick_evolution_direction,
     should_mute_bar,
     step_duration,
@@ -28,6 +30,8 @@ from slackbeatz.generators.defaults import (
     gate_for,
     gate_jitter_for,
     macro_knobs,
+    motif_memory_for,
+    octave_jump_for,
     scale_for,
 )
 from slackbeatz.generators.registry import register_generator
@@ -51,6 +55,11 @@ class MelodyPsytrance(Generator):
         gate = gate_for(self)
         base_vel = base_vel_for(self)
         gate_jitter = gate_jitter_for(self)
+        octave_jump = octave_jump_for(self)
+        # motif_memory: with N>0, the gen reuses recent degrees with a
+        # probability proportional to N — making the motif repetition
+        # more pronounced. Default 0 = the original deterministic motif.
+        memory = MotifMemory(motif_memory_for(self))
         macro = macro_knobs(self)
         direction = pick_evolution_direction(ctx.rng, macro["evolution"])
         scale = scale_for(self, ctx, fallback="phrygian")
@@ -74,11 +83,14 @@ class MelodyPsytrance(Generator):
             for beat in range(4):
                 for sub in range(4):
                     step = beat * 4 + sub
-                    deg = motif[sub]
+                    # motif_memory: when active, may substitute a recently-
+                    # played degree for the deterministic motif slot.
+                    deg = memory.pick_next(ctx.rng, lambda r, fallback=motif[sub]: fallback)
                     pitch = transposed_pitch(
                         scale_note(deg, tonic, scale, 4 + octave_off),
                         ctx.transpose_semitones,
                     )
+                    pitch = maybe_octave_jump(pitch, octave_jump, ctx.rng)
                     if not 0 <= pitch <= 127:
                         continue
                     tick = bar_start + step_to_ticks(step, ctx.ppq)

@@ -15,6 +15,7 @@ from slackbeatz.generators._shared import (
     apply_gate_jitter,
     euclid,
     evolution_multiplier,
+    maybe_octave_jump,
     pick_evolution_direction,
     should_mute_bar,
     sidechain_envelope,
@@ -30,6 +31,7 @@ from slackbeatz.generators.defaults import (
     gate_for,
     gate_jitter_for,
     macro_knobs,
+    octave_jump_for,
 )
 from slackbeatz.generators.registry import register_generator
 from slackbeatz.model.context import PartContext
@@ -49,6 +51,7 @@ class BassEuclid(Generator):
         duck = duck_for(self)
         base_vel = base_vel_for(self)
         gate_jitter = gate_jitter_for(self)
+        octave_jump = octave_jump_for(self)
         macro = macro_knobs(self)
         direction = pick_evolution_direction(ctx.rng, macro["evolution"])
 
@@ -84,7 +87,8 @@ class BassEuclid(Generator):
                 env = sidechain_envelope(tick - bar_start, ctx.ppq, duck=duck)
                 vel = max(1, min(127, int(round(vel_base * env))))
                 dur = apply_gate_jitter(base_dur, gate_jitter, ctx.rng)
+                pitch = maybe_octave_jump(root, octave_jump, ctx.rng)
                 yield Note(
                     tick=tick, duration=dur, channel=inst.channel,
-                    pitch=root, velocity=vel,
+                    pitch=pitch, velocity=vel,
                 )
