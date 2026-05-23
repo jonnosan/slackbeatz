@@ -1,0 +1,45 @@
+# dark_sunday.sb — example euclid-style techno song.
+#
+# Demonstrates the full DSL surface: setup reference, song-level
+# defaults, generators of all six types, parts with per-part overrides
+# (key change on the break, gen-level seed pin on the lead, part-level
+# seed on the drop), and an arrangement with grouped repeats.
+
+song "Dark Sunday"
+  setup "studio.sb"
+  tempo 128
+  key   Am
+  seed  42
+
+gen kick    rhythm euclid
+gen snare   rhythm euclid
+gen hats    rhythm euclid swing=0.08
+gen clap    rhythm euclid
+gen bass    bass   euclid octave=-1
+gen lead    melody euclid octave=1  seed=7
+gen pad     chords euclid
+gen riser   candy  euclid
+
+part intro 16
+  kick
+  pad
+
+part build 8
+  kick
+  pad
+  riser
+
+part drop 32 seed=99
+  kick
+  snare
+  hats
+  clap
+  bass
+  lead
+  pad
+
+part break 16 key=Cm
+  pad
+  lead
+
+play intro (build drop)*2 break (build drop)*2

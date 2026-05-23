@@ -1,0 +1,40 @@
+# deep_set.sb — slower, modal, sustained.
+#
+# Uses the bundled `gm` setup (drums on ch 10, melodics on ch 1-4) and
+# the `deep_techno` algorithms. Tempo 122. The break has a key shift to
+# Dm to lean further into the modal feel.
+
+song "Deep Set"
+  setup "gm"
+  tempo 122
+  key   Am
+  seed  7
+
+gen kick    rhythm deep_techno
+gen hats    rhythm deep_techno
+gen clap    rhythm deep_techno
+gen bass    bass   deep_techno octave=-1
+gen lead    melody deep_techno
+gen pad     chords deep_techno
+gen riser   candy  deep_techno
+
+part intro 16
+  kick
+  pad
+  riser
+
+part main 32
+  kick
+  hats
+  clap
+  bass
+  lead
+  pad
+  riser
+
+part break 16 key=Dm
+  pad
+  lead
+  riser
+
+play intro main main break main main

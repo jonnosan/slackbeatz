@@ -1,0 +1,24 @@
+# studio.sb — example rig.
+#
+# Defines logical instrument names that songs can reference without
+# knowing the MIDI channel layout. Songs depending on this file can be
+# switched to a different rig by changing `setup "studio.sb"` in the
+# song header — or overriding from the CLI with `--setup`.
+
+setup "Jonno's Studio"
+
+# Drum voices on channel 10 (a single multi-drum module).
+inst kick   ch=10 note=36
+inst snare  ch=10 note=38
+inst hats   ch=10 note=42
+inst ohats  ch=10 note=46
+inst clap   ch=10 note=39
+
+# Melodic voices, each on its own channel.
+inst bass   ch=2
+inst lead   ch=1
+inst pad    ch=3
+inst riser  ch=4
+
+# Kit alias for `drums`-type gens.
+kit kit ch=10 preset=909

@@ -1,0 +1,45 @@
+# goa.sb — psytrance demo.
+#
+# Uses the bundled `gm` setup; the `psytrance` algorithms produce the
+# rolling 16th gallop bass, offbeat hats, phrygian arpeggios and long
+# CC sweeps into the drop. Tempo 142.
+
+song "Goa"
+  setup "gm"
+  tempo 142
+  key   Em
+  seed  13
+
+gen kick    rhythm psytrance
+gen hats    rhythm psytrance
+gen clap    rhythm psytrance
+gen bass    bass   psytrance octave=-1
+gen lead    melody psytrance octave=1
+gen pad     chords psytrance
+gen riser   candy  psytrance
+
+part intro 8
+  kick
+  pad
+
+part build 8 role=build
+  kick
+  hats
+  pad
+  riser
+
+part drop 32 role=drop
+  kick
+  hats
+  clap
+  bass
+  lead
+  pad
+
+part bridge 16
+  kick
+  hats
+  bass
+  pad
+
+play intro build drop bridge build drop drop
