@@ -67,7 +67,26 @@ _GEN_KNOBS = frozenset(
      #   pickup           chance of 8th-note anticipation before changes
      #   fifth_prob       chance of playing chord 5th instead of root
      #   third_prob       chance of playing chord 3rd (colour note)
-     "walking", "pickup", "fifth_prob", "third_prob"}
+     "walking", "pickup", "fifth_prob", "third_prob",
+     # Round 9 — groove / phrase / fill / variation:
+     #   groove           named timing template (shuffle, dilla, trap16, …)
+     #   ghost            quiet "ghost" hits between main hits
+     #   ghost_vel        velocity ratio for ghost notes
+     #   hat_variant      chance of open/pedal hat instead of closed
+     #   fill_every       fill every Nth bar (default 4)
+     #   fill_style       fill pattern (snare_roll/tom_roll/kick_double/silence)
+     #   phrase_lift      velocity bump on bar 0 of each phrase
+     #   harmonize_with   handle of another melody gen to harmonise with
+     #   interval         harmonisation interval (scale degrees)
+     #   modulate_to      key to modulate the part to (relative_major, etc.)
+     #   tension_dyn      chord-tension-aware dynamics (0..1)
+     #   drop_intensity   automated drop sweep intensity (0..1)
+     #   stutter          stutter-effect probability at section boundary
+     #   mistakes         "live mistake" probability for humanity
+     "groove", "ghost", "ghost_vel", "hat_variant",
+     "fill_every", "fill_style", "phrase_lift",
+     "harmonize_with", "interval", "modulate_to",
+     "tension_dyn", "drop_intensity", "stutter", "mistakes"}
 )
 # Part-level knobs:
 #   transpose_prob — per-instance roll for transposition (issue #10)

@@ -525,6 +525,50 @@ def build_chord(
 
 
 # --------------------------------------------------------------------------
+# Groove templates — per-step tick offsets that give a bar its "feel".
+# --------------------------------------------------------------------------
+
+# Each entry maps a step index (0..15 in a 4/4 16-step bar) to a tick
+# offset relative to the literal grid position. At PPQ=480, a 16th
+# note is 120 ticks; an offset of 60 = halfway between two 16ths.
+# Negative values rush ahead; positive values lay back.
+#
+# "linear" — no offset, hits land exactly on the grid (slackbeatz's
+#            historical default).
+# "shuffle" — triplet swing: every odd 16th pushes ~1/2 of a 16th
+#             later, producing the dotted-feel of jazz / blues /
+#             early house.
+# "dilla" — subtle pushes on beats 2 and 4 only; the J Dilla / MPC
+#           "drunken" feel that drags slightly behind the beat where
+#           the snare lives but stays tight elsewhere.
+# "trap16" — late offbeat 16ths in pairs (steps 2+3 and 10+11), the
+#            modern trap / drill micro-timing where double-time hats
+#            pull behind the beat.
+# "behind" — only beats 2 and 4 (the backbeat) pull late, giving a
+#            laid-back rock / soul groove with everything else tight.
+# "rush" — everything pushed marginally early; the "frantic" punk /
+#          hardcore feel.
+GROOVES: dict[str, tuple[int, ...]] = {
+    "linear":  (0,) * 16,
+    "shuffle": (0, 60, 0, 60, 0, 60, 0, 60, 0, 60, 0, 60, 0, 60, 0, 60),
+    "dilla":   (0, 0, 0, 0, 15, 0, 0, 0, 0, 0, 0, 0, 12, 0, 0, 0),
+    "trap16":  (0, 0, 30, 30, 0, 0, 30, 30, 0, 0, 30, 30, 0, 0, 30, 30),
+    "behind":  (0, 0, 0, 0, 20, 20, 0, 0, 0, 0, 0, 0, 20, 20, 0, 0),
+    "rush":    (-5,) * 16,
+}
+
+
+def groove_offset(groove_name: str, step: int) -> int:
+    """Return the tick offset for *step* under the named groove. Falls
+    back to ``linear`` (no offset) for unknown names — keeps a typo in
+    a DSL knob from killing playback."""
+    table = GROOVES.get(groove_name, GROOVES["linear"])
+    if 0 <= step < len(table):
+        return table[step]
+    return 0
+
+
+# --------------------------------------------------------------------------
 # Walking-bass helper
 # --------------------------------------------------------------------------
 

@@ -63,6 +63,13 @@ KNOB_SPECS: dict[str, list[tuple[str, float, float, float, str]]] = {
         ("intensity",     0.0,  1.5,   1.0,  "float"),
         ("swing",         0.0,  0.3,   0.0,  "float"),
         ("evolution",     0.0,  1.0,   0.0,  "float"),
+        # Round 9 — groove / phrase / fill / variation.
+        ("ghost",         0.0,  0.6,   0.0,  "float"),
+        ("ghost_vel",     0.1,  0.8,   0.25, "float"),
+        ("hat_variant",   0.0,  0.5,   0.0,  "float"),
+        ("fill_every",    0,    16,    4,    "int"),
+        ("phrase_lift",   0,    16,    0,    "int"),
+        ("mistakes",      0.0,  0.1,   0.0,  "float"),
     ],
     "drums": [
         ("humanize",      0,    10,    2,    "int"),
@@ -134,6 +141,14 @@ KNOB_CHOICES: dict[str, dict[str, list[str]]] = {
         "progression": [
             "i-VI-ii-IV", "i-iv", "i-v", "i-VII-VI-V",
             "ii-V-I", "I-V-vi-IV", "12-bar", "andalusian",
+        ],
+    },
+    "rhythm": {
+        "groove": [
+            "linear", "shuffle", "dilla", "trap16", "behind", "rush",
+        ],
+        "fill_style": [
+            "(off)", "snare_roll", "tom_roll", "kick_double", "silence",
         ],
     },
 }
