@@ -244,6 +244,14 @@ def cmd_live(args) -> int:
 
     # Snapshot existing MIDI output ports so we can identify the new one
     # FluidSynth registers when it starts.
+    #
+    # FluidSynth flag gotcha: ``-n`` (--no-midi-in) explicitly disables the
+    # MIDI input driver, so passing it kills the CoreMIDI port we want to
+    # connect to. ``-i`` (--no-shell) suppresses the interactive shell —
+    # but without a shell *and* without a MIDI file argument, fluidsynth
+    # has nothing keeping it alive and exits immediately. So we keep the
+    # shell on and give it a stdin PIPE that we never write to: the shell
+    # waits forever for input and the process stays up indefinitely.
     before_ports = set(available_ports())
     fs_proc = subprocess.Popen(
         [
@@ -254,12 +262,11 @@ def cmd_live(args) -> int:
             "-o", f"synth.reverb.room-size={args.reverb}",
             "-o", "synth.chorus.active=1",
             "-q",
-            "-ni",
             str(soundfont),
         ],
-        stdin=subprocess.DEVNULL,
+        stdin=subprocess.PIPE,     # shell waits on stdin → process stays alive
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,    # captured for the failure-path error message
     )
 
     # Poll for the new MIDI port (up to ~4 seconds).
@@ -267,7 +274,16 @@ def cmd_live(args) -> int:
     for _ in range(40):
         time.sleep(0.1)
         if fs_proc.poll() is not None:
-            print("error: fluidsynth exited before opening its MIDI port", file=sys.stderr)
+            err = ""
+            if fs_proc.stderr is not None:
+                try:
+                    err = fs_proc.stderr.read().decode("utf-8", "replace").strip()
+                except Exception:
+                    pass
+            msg = "error: fluidsynth exited before opening its MIDI port"
+            if err:
+                msg += f" (exit {fs_proc.returncode}): {err}"
+            print(msg, file=sys.stderr)
             return 1
         diff = set(available_ports()) - before_ports
         if diff:
