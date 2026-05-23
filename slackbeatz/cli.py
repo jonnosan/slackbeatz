@@ -255,6 +255,38 @@ def cmd_live(args) -> int:
     assert fs_proc is not None and new_port is not None
 
     print(f"slackbeatz: streaming to FluidSynth on {new_port!r} — press Ctrl+C to stop")
+
+    # Optional --surge: spawn one Surge XT window per pitched channel.
+    surge_procs: list[subprocess.Popen] = []
+    surge_muted_channels: list[int] = []
+    if getattr(args, "surge", False):
+        from slackbeatz.synthhost import (
+            DEFAULT_SURGE_CHANNELS, channel_routing_summary,
+            install_hint, is_surge_installed,
+            mute_fluidsynth_channels, spawn_surge_xt,
+        )
+        if not is_surge_installed():
+            print(
+                f"--surge requested but Surge XT isn't installed. "
+                f"Install with:\n  {install_hint()}\n"
+                f"Continuing without Surge XT.",
+                file=sys.stderr,
+            )
+        else:
+            print(f"\nslackbeatz: spawning {len(DEFAULT_SURGE_CHANNELS)} Surge XT windows.")
+            print(channel_routing_summary())
+            for inst, ch_1idx in DEFAULT_SURGE_CHANNELS.items():
+                proc = spawn_surge_xt(ch_1idx)
+                if proc is not None:
+                    surge_procs.append(proc)
+                    surge_muted_channels.append(ch_1idx - 1)
+            print(
+                f"\nIn each Surge XT window: Settings → MIDI Settings → "
+                f"MIDI Input = {new_port!r}, then set MIDI Channel to "
+                f"the channel number shown above.",
+            )
+            mute_fluidsynth_channels(fs_proc.stdin, surge_muted_channels)
+
     try:
         sink = RealtimeSink(port_name=new_port)
         tempo_map = build_tempo_map(resolved)
@@ -298,6 +330,7 @@ def cmd_live(args) -> int:
                 initial_gain=args.gain,
                 initial_reverb_room=args.reverb,
                 initial_programs=_program_map(resolved),
+                surge_port_name=new_port if surge_procs else None,
                 on_close=stop_event.set,
             )
         else:
@@ -312,6 +345,17 @@ def cmd_live(args) -> int:
             if clock_stop_event is not None:
                 clock_stop_event.set()
             clock_emitter.stop()
+        # Unmute the Surge-handled channels in FluidSynth so a later
+        # run doesn't inherit silent channels.
+        if surge_muted_channels:
+            from slackbeatz.synthhost import unmute_fluidsynth_channels
+            unmute_fluidsynth_channels(fs_proc.stdin, surge_muted_channels)
+        # Kill Surge XT instances.
+        for sp_proc in surge_procs:
+            try:
+                sp_proc.terminate()
+            except Exception:
+                pass
         fs_proc.terminate()
         try:
             fs_proc.wait(timeout=2)
@@ -649,12 +693,64 @@ def cmd_repl(args) -> int:
         f"Type a phrase + Enter to play. /help, /quit.",
     )
 
+    # Optional --surge: spawn one Surge XT window per pitched channel
+    # and mute those channels in FluidSynth so audio comes from Surge
+    # XT (with tweakable knobs) instead of FluidSynth's GM patch.
+    # Drums (channel 10) keep playing through FluidSynth.
+    surge_procs: list[subprocess.Popen] = []
+    surge_muted_channels: list[int] = []
+    if getattr(args, "surge", False):
+        from slackbeatz.synthhost import (
+            DEFAULT_SURGE_CHANNELS, channel_routing_summary,
+            install_hint, is_surge_installed,
+            mute_fluidsynth_channels, spawn_surge_xt,
+        )
+        if not is_surge_installed():
+            print(
+                f"--surge requested but Surge XT isn't installed. "
+                f"Install with:\n  {install_hint()}\n"
+                f"Continuing without Surge XT (FluidSynth still handles audio).",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"\nslackbeatz: spawning {len(DEFAULT_SURGE_CHANNELS)} Surge XT "
+                f"windows alongside FluidSynth — one per pitched channel.",
+            )
+            print(channel_routing_summary())
+            for inst, ch_1idx in DEFAULT_SURGE_CHANNELS.items():
+                proc = spawn_surge_xt(ch_1idx)
+                if proc is not None:
+                    surge_procs.append(proc)
+                    surge_muted_channels.append(ch_1idx - 1)
+            # Once Surge XT windows are up + listening on the FluidSynth
+            # port (= the user picks it in MIDI Settings), silence the
+            # corresponding FluidSynth channels so we don't double up.
+            print(
+                f"\nIn each Surge XT window: Settings → MIDI Settings → "
+                f"MIDI Input = {port_name!r}, then set MIDI Channel to "
+                f"the channel number shown above.",
+            )
+            mute_fluidsynth_channels(fs_proc.stdin, surge_muted_channels)
+
     def cleanup_fs() -> None:
+        # Restore FluidSynth volumes on the way out so a later run
+        # (re-using the cached FluidSynth via, say, IAC Bus) doesn't
+        # have silent channels.
+        if surge_muted_channels:
+            from slackbeatz.synthhost import unmute_fluidsynth_channels
+            unmute_fluidsynth_channels(fs_proc.stdin, surge_muted_channels)
         fs_proc.terminate()
         try:
             fs_proc.wait(timeout=2)
         except subprocess.TimeoutExpired:
             fs_proc.kill()
+        # Terminate Surge XT instances so closing slackbeatz cleans up.
+        for sp_proc in surge_procs:
+            try:
+                sp_proc.terminate()
+            except Exception:
+                pass
 
     # macOS Tk constraint: NSWindow must be created + driven from the
     # main thread (AppKit raises 'NSWindow should only be instantiated
@@ -728,6 +824,7 @@ def cmd_repl(args) -> int:
                 initial_gain=args.gain,
                 initial_reverb_room=args.reverb,
                 player=player,
+                surge_port_name=port_name if surge_procs else None,
                 on_close=_stop_now,
             )
         except RuntimeError as e:
@@ -1203,6 +1300,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--emit-clock", action="store_true",
         help="broadcast MIDI Clock (0xF8 + Start/Stop) so external gear can sync",
     )
+    sp.add_argument(
+        "--surge", action="store_true",
+        help="spawn one Surge XT window per pitched channel for live sound design; "
+             "FluidSynth mutes those channels and continues to handle drums",
+    )
     sp.set_defaults(func=cmd_live)
 
     # repl — interactive text → audio loop
@@ -1234,6 +1336,11 @@ def _build_parser() -> argparse.ArgumentParser:
     sp.add_argument(
         "--emit-clock", action="store_true",
         help="broadcast MIDI Clock (0xF8 + Start/Stop) so external gear can sync",
+    )
+    sp.add_argument(
+        "--surge", action="store_true",
+        help="spawn one Surge XT window per pitched channel for live sound design; "
+             "FluidSynth mutes those channels and continues to handle drums",
     )
     sp.set_defaults(func=cmd_repl)
 

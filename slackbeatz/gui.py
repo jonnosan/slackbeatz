@@ -115,6 +115,7 @@ def run_tweak_gui(
     initial_reverb_room: float | None = None,
     initial_programs: dict[int, int] | None = None,
     player=None,
+    surge_port_name: str | None = None,
     on_close: Callable[[], None] | None = None,
 ) -> None:
     """Open the tweak window. Blocks until the user closes it.
@@ -439,6 +440,35 @@ def run_tweak_gui(
                  "‘Preserve bar’ to restart from bar 1).",
             wraplength=400, justify="left", foreground="#666",
         ).pack(padx=10, pady=(10, 4), anchor="w")
+
+        # When --surge spawned external Surge XT instances, show the
+        # channel routing inside the GUI so users can match each
+        # Surge XT window to the right slackbeatz channel without
+        # leaving Tk to consult the terminal.
+        if surge_port_name is not None:
+            ttk.Separator(transport, orient="horizontal").pack(fill="x", padx=10, pady=8)
+            ttk.Label(
+                transport,
+                text="🎛  Surge XT routing",
+                font=("TkDefaultFont", 11, "bold"),
+            ).pack(padx=10, anchor="w")
+            from slackbeatz.synthhost import DEFAULT_SURGE_CHANNELS
+            routing_text = (
+                f"In each Surge XT window:\n"
+                f"  Settings → MIDI Settings → MIDI Input = {surge_port_name!r}\n"
+                f"  MIDI Channel = (per window):\n"
+            )
+            for inst, ch in DEFAULT_SURGE_CHANNELS.items():
+                routing_text += f"     • ch {ch} = {inst}\n"
+            routing_text += (
+                f"\nFluidSynth handles drums (ch 10); channels {sorted(DEFAULT_SURGE_CHANNELS.values())} "
+                f"are muted in FluidSynth and routed to Surge XT instead."
+            )
+            ttk.Label(
+                transport, text=routing_text,
+                wraplength=420, justify="left", foreground="#222",
+                font=("TkFixedFont", 10),
+            ).pack(padx=10, pady=(2, 8), anchor="w")
 
         _refresh_nowplaying()
 
