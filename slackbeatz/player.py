@@ -225,6 +225,14 @@ class Player:
         # {gen_handle: {knob_name: value}}.
         self._knob_overrides: dict[str, dict[str, object]] = {}
 
+        # Cached most-recently-resolved song — saved on every
+        # _resolve_current so the GUI doesn't have to re-resolve just
+        # to read the gen layout. Re-resolves are expensive (compose +
+        # parse + resolve = 5-50ms each); doing one per state change
+        # plus one per GUI refresh kept the Tk thread saturated and
+        # produced beachballs during slider drags.
+        self.current_resolved = None
+
         # MIDI Clock output. When True, the playback worker spawns a
         # ClockEmitter sibling thread that broadcasts 0xF8 pulses at
         # 24 PPQN plus Start/Stop/Continue bytes so downstream MIDI
@@ -767,6 +775,7 @@ class Player:
         # Apply per-gen knob overrides (last so they win against
         # everything baked into the composed / loaded .sb).
         self._apply_knob_overrides(resolved)
+        self.current_resolved = resolved
         return resolved
 
     def _apply_knob_overrides(self, resolved) -> None:

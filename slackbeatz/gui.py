@@ -387,26 +387,67 @@ def run_tweak_gui(
         gens_canvas.pack(side="left", fill="both", expand=True, padx=(10, 0), pady=4)
         gens_scrollbar.pack(side="right", fill="y", padx=(0, 6), pady=4)
 
-        # State: rebuilt every time the loaded song changes.
+        # Track the gen layout we built widgets for so we don't tear
+        # down + recreate ~130 widgets on every state change. Most
+        # state changes (knob nudge, mute, tempo, seed, etc.) keep the
+        # gen list identical — the layout only changes on a new
+        # phrase / file / style override.
+        last_layout: dict[str, object] = {"key": None}
+
+        # Coalesce multiple queued rebuilds — if the user drags a
+        # slider rapidly, the Player fires on_state_change for each
+        # debounced commit, and without this the rebuild queue grew
+        # faster than Tk could drain it (the visible symptom: the
+        # macOS beachball).
+        rebuild_pending: dict[str, bool] = {"flag": False}
+
+        def _request_rebuild():
+            if rebuild_pending["flag"]:
+                return
+            rebuild_pending["flag"] = True
+            root.after_idle(_do_rebuild)
+
+        def _do_rebuild():
+            rebuild_pending["flag"] = False
+            _rebuild_gens_tab()
+
+        # State: rebuilt only when the gen layout actually changes.
         def _rebuild_gens_tab():
+            # Use the Player's cached resolved song — calling
+            # _resolve_current here would do a redundant compose +
+            # parse + resolve on top of the one the Player already
+            # did to play the song. Tk thread cost is the
+            # destroy/create widget work alone (~5-30ms), not the
+            # 50ms+ resolve.
+            resolved = player.current_resolved
+            if resolved is None:
+                # Empty state — show a placeholder and remember it as
+                # the layout so we don't redraw next state change.
+                if last_layout["key"] != "EMPTY":
+                    for child in gens_inner.winfo_children():
+                        child.destroy()
+                    ttk.Label(
+                        gens_inner,
+                        text="(load a song to see its gens — type a phrase at the prompt)",
+                        foreground="#888",
+                    ).pack(padx=10, pady=20)
+                    last_layout["key"] = "EMPTY"
+                return
+
+            # Layout key = sorted tuple of (handle, type_, style). If
+            # this hasn't changed, the existing widgets are fine — the
+            # slider values track the current overrides via the var
+            # bindings the closures captured. Skip the rebuild.
+            layout_key = tuple(sorted(
+                (h, g.type_, g.style) for h, g in resolved.gens.items()
+            ))
+            if layout_key == last_layout.get("key"):
+                return
+
+            # Layout changed — rebuild from scratch.
             for child in gens_inner.winfo_children():
                 child.destroy()
-            # We need the resolved song to know the gens. The Player
-            # doesn't keep it around (re-resolves on every play()), so
-            # we do a lightweight resolve here. Failures (e.g. no song
-            # loaded yet) are silent — the tab just stays empty.
-            if player.current_phrase is None and player.current_song_path is None:
-                ttk.Label(
-                    gens_inner,
-                    text="(load a song to see its gens — type a phrase at the prompt)",
-                    foreground="#888",
-                ).pack(padx=10, pady=20)
-                return
-            try:
-                resolved = player._resolve_current()
-            except Exception as e:  # noqa: BLE001
-                ttk.Label(gens_inner, text=f"(error: {e})", foreground="#a00").pack()
-                return
+            last_layout["key"] = layout_key
 
             overrides = player.get_knob_overrides()
 
@@ -482,13 +523,14 @@ def run_tweak_gui(
                         command=_reset_knob,
                     ).pack(side="left", padx=2)
 
-        _rebuild_gens_tab()
+        _request_rebuild()
 
-        # Rebuild whenever the player's state changes (new song loaded,
-        # style/seed changed → different gen layout). Player calls
-        # on_state_change from arbitrary threads, so marshal via after.
-        # We layer this on top of any existing handler instead of
-        # replacing — the Transport tab already set on_state_change.
+        # Rebuild whenever the player's state changes (new song
+        # loaded, style/seed changed → potentially different gen
+        # layout). Player calls on_state_change from arbitrary
+        # threads, so marshal via after. We layer this on top of any
+        # existing handler — the Transport tab already set
+        # on_state_change to refresh its now-playing label.
         prev_state_handler = player.on_state_change
 
         def _combined_state_change() -> None:
@@ -496,7 +538,11 @@ def run_tweak_gui(
                 prev_state_handler()
             except Exception:
                 pass
-            root.after(0, _rebuild_gens_tab)
+            # Coalesces multiple rapid state changes into one rebuild.
+            # No-op if the gen layout hasn't actually changed, so
+            # knob/mute/tempo tweaks (the common case during live
+            # tweaking) don't trigger any widget churn.
+            _request_rebuild()
         player.on_state_change = _combined_state_change
 
     # ------------------------------------------------------------------
