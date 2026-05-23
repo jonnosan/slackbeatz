@@ -171,6 +171,41 @@ def run_tweak_gui(
     notebook = ttk.Notebook(root)
     notebook.pack(fill="both", expand=True, padx=6, pady=6)
 
+    # Thread-safe state-change signalling. The Player runs on the REPL
+    # daemon thread (and on the GUI main thread when sliders are
+    # touched). Calling Tk methods (``root.after``, widget mutation,
+    # etc.) from any thread other than the one that created the root
+    # is unsafe — Tcl 9 enforces this strictly and aborts with
+    # "Tcl_WaitForEvent: Notifier not initialized" when a foreign
+    # thread tries to schedule a callback.
+    #
+    # Solution: callbacks from any thread just set this Event, and the
+    # main-thread polling loop (_poll_state below) does the actual UI
+    # work on a stable cadence. Every UI-refresh function that wants
+    # to react to Player state changes registers itself in
+    # main_thread_callbacks; the poll drains them all in one pass.
+    import threading
+    state_dirty = threading.Event()
+    main_thread_callbacks: list[Callable[[], None]] = []
+
+    if player is not None:
+        def _on_player_state_change_safe():
+            state_dirty.set()
+        player.on_state_change = _on_player_state_change_safe
+
+    def _poll_state():
+        if state_dirty.is_set():
+            state_dirty.clear()
+            for fn in main_thread_callbacks:
+                try:
+                    fn()
+                except Exception as exc:  # noqa: BLE001
+                    import sys
+                    print(f"gui state callback failed: {exc}", file=sys.stderr)
+        # 80ms feels instant for the now-playing label without
+        # spinning the event loop too aggressively.
+        root.after(80, _poll_state)
+
     # ------------------------------------------------------------------
     # Transport tab — only created if a Player is provided. Drives the
     # shared transport state: phrase load, play/stop, tempo, style,
@@ -206,11 +241,9 @@ def run_tweak_gui(
             nowplaying_var.set(f"{state}: {src}")
             playstop_var.set("■ Stop" if player.is_playing else "▶ Play")
 
-        # Player notifies the GUI by invoking on_state_change. Tk widgets
-        # must be touched from the main thread, so we marshal via after().
-        def _on_state_change_from_thread() -> None:
-            root.after(0, _refresh_nowplaying)
-        player.on_state_change = _on_state_change_from_thread
+        # Main-thread refresh is driven by the poll loop above —
+        # register the callback so it fires whenever state_dirty is set.
+        main_thread_callbacks.append(_refresh_nowplaying)
 
         button_row = ttk.Frame(transport)
         button_row.pack(fill="x", padx=10, pady=4)
@@ -394,23 +427,6 @@ def run_tweak_gui(
         # phrase / file / style override.
         last_layout: dict[str, object] = {"key": None}
 
-        # Coalesce multiple queued rebuilds — if the user drags a
-        # slider rapidly, the Player fires on_state_change for each
-        # debounced commit, and without this the rebuild queue grew
-        # faster than Tk could drain it (the visible symptom: the
-        # macOS beachball).
-        rebuild_pending: dict[str, bool] = {"flag": False}
-
-        def _request_rebuild():
-            if rebuild_pending["flag"]:
-                return
-            rebuild_pending["flag"] = True
-            root.after_idle(_do_rebuild)
-
-        def _do_rebuild():
-            rebuild_pending["flag"] = False
-            _rebuild_gens_tab()
-
         # State: rebuilt only when the gen layout actually changes.
         def _rebuild_gens_tab():
             # Use the Player's cached resolved song — calling
@@ -523,27 +539,13 @@ def run_tweak_gui(
                         command=_reset_knob,
                     ).pack(side="left", padx=2)
 
-        _request_rebuild()
-
-        # Rebuild whenever the player's state changes (new song
-        # loaded, style/seed changed → potentially different gen
-        # layout). Player calls on_state_change from arbitrary
-        # threads, so marshal via after. We layer this on top of any
-        # existing handler — the Transport tab already set
-        # on_state_change to refresh its now-playing label.
-        prev_state_handler = player.on_state_change
-
-        def _combined_state_change() -> None:
-            try:
-                prev_state_handler()
-            except Exception:
-                pass
-            # Coalesces multiple rapid state changes into one rebuild.
-            # No-op if the gen layout hasn't actually changed, so
-            # knob/mute/tempo tweaks (the common case during live
-            # tweaking) don't trigger any widget churn.
-            _request_rebuild()
-        player.on_state_change = _combined_state_change
+        # Initial paint + register the rebuild callback with the main-
+        # thread poll loop. The poll fires every 80ms when
+        # state_dirty has been set by a Player thread; the rebuild
+        # itself short-circuits when the layout hasn't changed, so
+        # this is cheap for the common knob/mute/tempo/seed cases.
+        _rebuild_gens_tab()
+        main_thread_callbacks.append(_rebuild_gens_tab)
 
     # ------------------------------------------------------------------
     # Effects tab — gain / reverb / chorus sliders + on-off toggles.
@@ -704,5 +706,11 @@ def run_tweak_gui(
 
     if on_close is not None:
         root.protocol("WM_DELETE_WINDOW", lambda: (on_close(), root.destroy()))
+
+    # Kick off the main-thread state-poll loop. Must be scheduled
+    # from the main thread (we are it here, just before mainloop) so
+    # the after-id lives in the correct notifier.
+    if player is not None:
+        root.after(80, _poll_state)
 
     root.mainloop()
