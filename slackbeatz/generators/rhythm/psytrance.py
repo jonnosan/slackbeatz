@@ -11,6 +11,8 @@ from typing import Iterator
 
 from slackbeatz.engine.event import Event, Note
 from slackbeatz.generators._shared import (
+    drum_pattern_lookup,
+    drum_vel_lookup,
     groove_offset,
     HitParams,
     drift_pulses,
@@ -63,8 +65,8 @@ class RhythmPsytrance(Generator):
         inst = self.instrument
         assert inst is not None and inst.note is not None
         name = self.handle.lower()
-        pulses, offset = _DEFAULTS.get(name, (4, 0))
-        base_vel = _VELS.get(name, 90)
+        pulses, offset = drum_pattern_lookup(self.handle, _DEFAULTS)
+        base_vel = drum_vel_lookup(self.handle, _VELS, 90)
         if pulses == 0 or base_vel == 0:
             return
 

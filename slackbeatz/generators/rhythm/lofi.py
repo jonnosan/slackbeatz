@@ -20,6 +20,8 @@ from typing import Iterator
 
 from slackbeatz.engine.event import Event, Note
 from slackbeatz.generators._shared import (
+    drum_pattern_lookup,
+    drum_vel_lookup,
     HitParams,
     drift_pulses,
     euclid,
@@ -76,8 +78,8 @@ class RhythmLofi(Generator):
         assert inst is not None and inst.note is not None
 
         name = self.handle.lower()
-        pulses, offset = _DEFAULTS.get(name, (4, 0))
-        base_vel = self.knob_int("base_vel", _DEFAULT_VEL.get(name, 80))
+        pulses, offset = drum_pattern_lookup(self.handle, _DEFAULTS)
+        base_vel = self.knob_int("base_vel", drum_vel_lookup(self.handle, _DEFAULT_VEL, 80))
         macro = macro_knobs(self)
         params = HitParams(
             base_vel=base_vel,

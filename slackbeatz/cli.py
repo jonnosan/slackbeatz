@@ -1024,6 +1024,10 @@ def _handle_transport_command(line: str, player) -> str | None:
 
 
 def cmd_render(args) -> int:
+    """Render a song to a Standard MIDI File. Drag the resulting .mid
+    into Ableton / Logic / Reaper / etc — each MIDI channel lands on
+    its own track, with the GM program_change events intact so the
+    DAW picks the right instruments out of the box."""
     song_path = Path(args.song_file)
     try:
         file_ast = parse_file(song_path)
@@ -1035,13 +1039,10 @@ def cmd_render(args) -> int:
     except (ParseError, ResolveError, SetupError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
-    sink = MidiFileSink(args.output)
-    try:
-        sink.open()
-    except NotImplementedError as e:
-        print(f"error: {e}", file=sys.stderr)
-        return 2
-    _ = resolved  # silence unused warning until phase-2 wires this up
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    write_midifile(resolved, output_path)
+    print(f"wrote {output_path}")
     return 0
 
 

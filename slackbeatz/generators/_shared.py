@@ -609,6 +609,47 @@ def tension_velocity_boost(degree: int, tension_dyn: float, base_vel: int) -> in
     return int(round(factor * base_vel * 0.25))
 
 
+_DRUM_NAMES = ("kick", "snare", "clap", "hats", "hat", "hh", "ohat", "rim", "bd", "sd")
+
+
+def drum_pattern_lookup(handle: str, defaults: dict) -> tuple[int, int]:
+    """Resolve a (pulses, offset) tuple for a drum gen's handle.
+
+    Multi-style songs need unique handles per gen (you can't declare
+    two gens both called ``kick``), so handles like ``kick_eu`` or
+    ``snare_lofi`` get used. Bare-name lookup fails on those, so we
+    fall back to a substring match: any handle that *contains* a known
+    drum name uses that drum's pattern.
+
+    Exact match still wins. Substring matches are tried in
+    longest-name-first order so ``ohat`` matches before ``hat`` and
+    ``snare`` before ``sd``.
+
+    Falls back to ``(4, 0)`` (4-on-floor) if nothing matches —
+    matches the historical behaviour.
+    """
+    name = handle.lower()
+    if name in defaults:
+        return defaults[name]
+    # Longest-first ordering so e.g. "snare_eu" doesn't match the
+    # 2-char "sd" alias before the 5-char "snare".
+    for known in sorted(_DRUM_NAMES, key=len, reverse=True):
+        if known in name:
+            return defaults.get(known, (4, 0))
+    return (4, 0)
+
+
+def drum_vel_lookup(handle: str, vels: dict, fallback: int = 100) -> int:
+    """Same substring-fallback logic for _DEFAULT_VEL tables."""
+    name = handle.lower()
+    if name in vels:
+        return vels[name]
+    for known in sorted(_DRUM_NAMES, key=len, reverse=True):
+        if known in name:
+            return vels.get(known, fallback)
+    return fallback
+
+
 def chord_velocity_mods(
     bar: int,
     chord_root_deg: int,

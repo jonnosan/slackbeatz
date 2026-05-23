@@ -1,0 +1,169 @@
+# style_tour.sb — 9-style sampler.
+#
+# Plays an 8-bar verse in each style back-to-back so you can A/B them.
+# Tempo varies per part (style-appropriate). Each style gets its own
+# set of gens declared at the song level; parts list which to use.
+#
+# Order:
+#   1. euclid          (Arduino baseline, 128 BPM)
+#   2. deep_techno     (Detroit, 122 BPM)
+#   3. psytrance       (gallop, 141 BPM)
+#   4. acid            (TB-303, 124 BPM)
+#   5. garage          (UK 2-step, 132 BPM)
+#   6. drum_and_bass   (liquid funk, 175 BPM)
+#   7. vaporwave       (halftime, 75 BPM)
+#   8. dub_techno      (Maurizio chord stab, 122 BPM)
+#   9. lofi            (J Dilla shuffle, 82 BPM)
+#
+# Total runtime ~2.5 minutes. Render to MP3 to A/B, or drag the .mid
+# into a DAW to compare in your own headphones / studio monitors.
+#
+# Handle naming: each gen handle gets a 2-3 char style suffix
+# (_eu / _dt / _ps / _ac / _ga / _dnb / _vw / _du / _lo) so 9 styles
+# coexist in one song. The rhythm gen's substring lookup recognises
+# the drum role (kick / snare / hats / clap) from the prefix.
+
+song "Style Tour"
+  setup "gm"
+  tempo 120
+  key   Am
+  seed  42
+
+# ---------- euclid gens (default Arduino baseline) ----------
+gen kick_eu  rhythm euclid inst=kick
+gen snare_eu rhythm euclid inst=snare
+gen hats_eu  rhythm euclid inst=hats
+gen bass_eu  bass   euclid inst=bass
+gen pad_eu   chords euclid inst=pad
+
+# ---------- deep_techno ----------
+gen kick_dt  rhythm deep_techno inst=kick
+gen hats_dt  rhythm deep_techno inst=hats
+gen clap_dt  rhythm deep_techno inst=clap
+gen bass_dt  bass   deep_techno inst=bass
+gen lead_dt  melody deep_techno inst=lead
+gen pad_dt   chords deep_techno inst=pad
+
+# ---------- psytrance ----------
+gen kick_ps  rhythm psytrance inst=kick
+gen hats_ps  rhythm psytrance inst=hats
+gen bass_ps  bass   psytrance inst=bass
+gen lead_ps  melody psytrance inst=lead
+gen pad_ps   chords psytrance inst=pad
+
+# ---------- acid ----------
+gen kick_ac  rhythm acid inst=kick
+gen clap_ac  rhythm acid inst=clap
+gen hats_ac  rhythm acid inst=hats
+gen bass_ac  bass   acid inst=bass
+gen organ_ac chords acid inst=pad
+
+# ---------- garage (UK 2-step) ----------
+gen kick_ga  rhythm garage inst=kick
+gen snare_ga rhythm garage inst=snare
+gen hats_ga  rhythm garage inst=hats
+gen sub_ga   bass   garage inst=bass
+gen vocal_ga melody garage inst=lead
+gen wurli_ga chords garage inst=pad
+
+# ---------- drum_and_bass ----------
+gen kick_dnb  rhythm drum_and_bass inst=kick
+gen snare_dnb rhythm drum_and_bass inst=snare
+gen hats_dnb  rhythm drum_and_bass inst=hats
+gen sub_dnb   bass   drum_and_bass inst=bass
+gen lead_dnb  melody drum_and_bass inst=lead
+gen pad_dnb   chords drum_and_bass inst=pad
+
+# ---------- vaporwave ----------
+gen kick_vw  rhythm vaporwave inst=kick
+gen snare_vw rhythm vaporwave inst=snare
+gen hats_vw  rhythm vaporwave inst=hats
+gen bass_vw  bass   vaporwave inst=bass
+gen sax_vw   melody vaporwave inst=lead
+gen pad_vw   chords vaporwave inst=pad
+
+# ---------- dub_techno ----------
+gen kick_du  rhythm dub_techno inst=kick
+gen hats_du  rhythm dub_techno inst=hats
+gen drone_du bass   dub_techno inst=bass
+gen stab_du  chords dub_techno inst=pad
+
+# ---------- lofi ----------
+gen kick_lo  rhythm lofi inst=kick
+gen snare_lo rhythm lofi inst=snare
+gen hats_lo  rhythm lofi inst=hats
+gen upright_lo bass   lofi inst=bass
+gen rhodes_lo  melody lofi inst=lead
+gen ep_lo      chords lofi inst=pad
+
+
+# ---------- Parts — 8 bars each, style-appropriate tempo ----------
+
+part p1_euclid 8 tempo=128 role=main
+  kick_eu
+  snare_eu
+  hats_eu
+  bass_eu
+  pad_eu
+
+part p2_deep_techno 8 tempo=122 role=main
+  kick_dt
+  hats_dt
+  clap_dt
+  bass_dt
+  lead_dt
+  pad_dt
+
+part p3_psytrance 8 tempo=141 role=main
+  kick_ps
+  hats_ps
+  bass_ps
+  lead_ps
+  pad_ps
+
+part p4_acid 8 tempo=124 role=main
+  kick_ac
+  clap_ac
+  hats_ac
+  bass_ac
+  organ_ac
+
+part p5_garage 8 tempo=132 role=main
+  kick_ga
+  snare_ga
+  hats_ga
+  sub_ga
+  vocal_ga
+  wurli_ga
+
+part p6_drum_and_bass 8 tempo=175 role=main
+  kick_dnb
+  snare_dnb
+  hats_dnb
+  sub_dnb
+  lead_dnb
+  pad_dnb
+
+part p7_vaporwave 8 tempo=75 role=main
+  kick_vw
+  snare_vw
+  hats_vw
+  bass_vw
+  sax_vw
+  pad_vw
+
+part p8_dub_techno 8 tempo=122 role=main
+  kick_du
+  hats_du
+  drone_du
+  stab_du
+
+part p9_lofi 8 tempo=82 role=main
+  kick_lo
+  snare_lo
+  hats_lo
+  upright_lo
+  rhodes_lo
+  ep_lo
+
+play p1_euclid p2_deep_techno p3_psytrance p4_acid p5_garage p6_drum_and_bass p7_vaporwave p8_dub_techno p9_lofi

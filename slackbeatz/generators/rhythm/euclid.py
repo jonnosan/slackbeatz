@@ -15,6 +15,8 @@ from typing import Iterator
 
 from slackbeatz.engine.event import Event, Note
 from slackbeatz.generators._shared import (
+    drum_pattern_lookup,
+    drum_vel_lookup,
     HitParams,
     drift_pulses,
     euclid,
@@ -77,10 +79,10 @@ class RhythmEuclid(Generator):
             "rhythm gen needs a one-shot drum instrument"
         )
         name = self.handle.lower()
-        pulses, offset = _DEFAULTS.get(name, (4, 0))
+        pulses, offset = drum_pattern_lookup(self.handle, _DEFAULTS)
         # base_vel = handle-specific default unless overridden via the
         # `base_vel=N` knob.
-        base_vel = self.knob_int("base_vel", _DEFAULT_VEL.get(name, 100))
+        base_vel = self.knob_int("base_vel", drum_vel_lookup(self.handle, _DEFAULT_VEL, 100))
         macro = macro_knobs(self)
         params = HitParams(
             base_vel=base_vel,

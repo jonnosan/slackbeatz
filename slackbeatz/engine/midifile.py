@@ -129,6 +129,30 @@ def _program_for_gen(gen) -> int | None:
     return _GM_PROGRAM_DEFAULTS.get((gen.type_, gen.style))
 
 
+def _track_label_for(song: ResolvedSong, channel_0idx: int) -> str:
+    """Pick a descriptive track name for the given 0-indexed MIDI
+    channel. Used as the SMF track_name meta event so DAW arrangement
+    views show 'lead' / 'bass' / 'pad' / 'drums' rather than 'ch1' /
+    'ch2' / ... Falls back to ``ch{N}`` only if we can't find any
+    inst on this channel.
+
+    Channel 9 (= MIDI channel 10) always labels as 'drums' regardless
+    of which inst maps there — that's the GM percussion convention.
+    """
+    channel_1idx = channel_0idx + 1
+    if channel_1idx == 10:
+        return "drums"
+
+    # Find any instrument or kit on this channel.
+    for inst in song.setup.instruments.values():
+        if inst.channel == channel_1idx:
+            return inst.name
+    for kit in song.setup.kits.values():
+        if kit.channel == channel_1idx:
+            return kit.name
+    return f"ch{channel_1idx}"
+
+
 def _gens_by_channel(song: ResolvedSong) -> dict[int, list]:
     """Map 0-indexed MIDI channel → list of resolved gens that emit there."""
     out: dict[int, list] = defaultdict(list)
@@ -144,9 +168,12 @@ def build_midifile(song: ResolvedSong) -> mido.MidiFile:
     """Render *song* to an in-memory :class:`mido.MidiFile`."""
     mf = mido.MidiFile(ticks_per_beat=PPQ, type=1)
 
-    # ----- Track 0: tempo map ---------------------------------------
+    # ----- Track 0: tempo map + song name ---------------------------
     tempo_track = mido.MidiTrack()
     mf.tracks.append(tempo_track)
+    # Top-level track name so the DAW labels the song in its
+    # arrangement view / file browser hover.
+    tempo_track.append(mido.MetaMessage("track_name", name=song.name or "slackbeatz", time=0))
     tempo_map = build_tempo_map(song)
     prev_tick = 0
     for seg in tempo_map.segments:
@@ -170,8 +197,12 @@ def build_midifile(song: ResolvedSong) -> mido.MidiFile:
     for ch in sorted(by_channel):
         track = mido.MidiTrack()
         mf.tracks.append(track)
-        # Name the track so DAWs label the row.
-        track.append(mido.MetaMessage("track_name", name=f"ch{ch + 1}", time=0))
+        # Name the track using the inst name from the setup so DAWs
+        # (Ableton, Logic, Reaper) show meaningful labels like
+        # "lead / bass / pad / drums" instead of "ch1 / ch2 / ...".
+        # MIDI channel 10 = GM percussion → label "drums".
+        track_label = _track_label_for(song, ch)
+        track.append(mido.MetaMessage("track_name", name=track_label, time=0))
         # Pick a GM patch for this channel based on the first gen using
         # it. If two gens share a channel and want different patches the
         # user can override per-gen via `program=N`; otherwise the first
