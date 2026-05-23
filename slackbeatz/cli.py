@@ -429,6 +429,90 @@ def _spawn_fluidsynth(soundfont: Path, *, gain: float, reverb: float) -> tuple[s
     return None, None, "fluidsynth started but didn't expose a MIDI port"
 
 
+def _knob_list_overrides(player) -> str:
+    """Show every knob override currently in effect."""
+    overrides = player.get_knob_overrides()
+    if not overrides:
+        return "no knob overrides set — try `/knob HANDLE` to see a gen's knobs"
+    lines = ["knob overrides:"]
+    for h, k in sorted(overrides.items()):
+        for name, val in sorted(k.items()):
+            lines.append(f"  {h}.{name} = {val}")
+    return "\n".join(lines)
+
+
+def _knob_list_all_specs() -> str:
+    """Show the full registry of available knobs, organised by gen type."""
+    from slackbeatz.player import KNOB_SPECS
+
+    lines = ["knobs by gen type (range shown for /knob HANDLE NAME VALUE):"]
+    for gen_type in ("rhythm", "drums", "bass", "melody", "chords", "candy"):
+        lines.append(f"\n  {gen_type}:")
+        for name, lo, hi, default, kind in KNOB_SPECS.get(gen_type, []):
+            range_str = (
+                f"{int(lo)}..{int(hi)}" if kind == "int" else f"{lo}..{hi}"
+            )
+            lines.append(f"    {name:14s}  {range_str:>14s}  default {default}")
+    lines.append(
+        "\n  Type `/knobs gens` to see your current song's gens, "
+        "or `/knob HANDLE` for one gen's knobs + values."
+    )
+    return "\n".join(lines)
+
+
+def _knob_show_gen(player, handle: str) -> str:
+    """Show the available knobs + current values for one gen."""
+    from slackbeatz.player import KNOB_SPECS
+
+    resolved = player.current_resolved
+    if resolved is None:
+        return "no song loaded yet — type a phrase to load one"
+    if handle not in resolved.gens:
+        avail = ", ".join(resolved.gens.keys()) or "(no gens)"
+        return f"unknown gen {handle!r}. available: {avail}"
+    gen = resolved.gens[handle]
+    specs = KNOB_SPECS.get(gen.type_, [])
+    overrides = player.get_knob_overrides().get(handle, {})
+
+    lines = [f"{handle} ({gen.type_} / {gen.style}):"]
+    if not specs:
+        lines.append("  (no tweakable knobs for this gen type)")
+        return "\n".join(lines)
+    for name, lo, hi, default, kind in specs:
+        range_str = (
+            f"{int(lo)}..{int(hi)}" if kind == "int" else f"{lo}..{hi}"
+        )
+        # Current effective value: override > gen.knobs > default
+        if name in overrides:
+            current = overrides[name]
+            tag = "(override)"
+        elif name in gen.knobs:
+            current = gen.knobs[name]
+            tag = "(from .sb)"
+        else:
+            current = default
+            tag = "(default)"
+        lines.append(
+            f"  {name:14s}  {range_str:>14s}  = {current!s:<8s} {tag}"
+        )
+    lines.append(
+        f"\nUsage: /knob {handle} <name> <value> | /knob {handle} <name> (clear)"
+    )
+    return "\n".join(lines)
+
+
+def _knob_list_song_gens(player) -> str:
+    """List the gens in the currently-loaded song."""
+    resolved = player.current_resolved
+    if resolved is None:
+        return "no song loaded yet — type a phrase to load one"
+    lines = ["gens in current song:"]
+    for handle, gen in resolved.gens.items():
+        lines.append(f"  {handle:12s}  ({gen.type_} / {gen.style})")
+    lines.append("\nUse `/knob HANDLE` to see that gen's knobs.")
+    return "\n".join(lines)
+
+
 def _program_map(resolved) -> dict[int, int]:
     """Return ``{channel_1_indexed: gm_program}`` for the song's pitched
     gens. Mirrors what ``scheduler._initial_program_changes`` sends —
@@ -733,9 +817,13 @@ def _repl_input_loop(
                     "  /preserve on|off    keep current bar across param changes\n"
                     "  /reset              clear style/tempo/seed overrides\n"
                     "  /save PATH.sb       export current state to a .sb file\n"
+                    "  /knobs              show all knob options (by gen type)\n"
+                    "  /knobs gens         list gens in the current song\n"
+                    "  /knob H             show knobs + ranges + values for gen H\n"
                     "  /knob H N V         set knob N on gen H to V (e.g. /knob kick humanize 5)\n"
-                    "  /knob H [N]         clear knob override (or all on gen H)\n"
-                    "  /knobs              show all active knob overrides\n"
+                    "  /knob H N           clear knob N override on gen H\n"
+                    "  /knob               show currently-active knob overrides\n"
+                    "  /knob-clear H       clear all knob overrides on gen H\n"
                     "  /clock on|off       send MIDI Clock (0xF8 + Start/Stop) for downstream gear\n"
                     "  /mute N             mute channel N (1-16)\n"
                     "  /unmute N | all     unmute channel(s)\n"
@@ -878,27 +966,35 @@ def _handle_transport_command(line: str, player) -> str | None:
     if cmd == "/knob":
         # /knob HANDLE NAME VALUE     — set
         # /knob HANDLE NAME           — clear that knob's override
-        # /knob HANDLE                — clear all overrides on HANDLE
+        # /knob HANDLE                — show that gen's available knobs
+        #                               + ranges + current values
+        # /knob (no args)             — list active overrides
         bits = arg.split() if arg else []
         if not bits:
-            overrides = player.get_knob_overrides()
-            if not overrides:
-                return "no knob overrides set"
-            lines = ["knob overrides:"]
-            for h, k in sorted(overrides.items()):
-                for name, val in sorted(k.items()):
-                    lines.append(f"  {h}.{name} = {val}")
-            return "\n".join(lines)
+            return _knob_list_overrides(player)
         if len(bits) == 1:
-            return player.unset_knob(bits[0])
+            return _knob_show_gen(player, bits[0])
         if len(bits) == 2:
             return player.unset_knob(bits[0], bits[1])
         if len(bits) == 3:
             return player.set_knob(bits[0], bits[1], bits[2])
-        return "usage: /knob HANDLE NAME VALUE | /knob HANDLE [NAME]"
+        return "usage: /knob HANDLE NAME VALUE | /knob HANDLE | /knob HANDLE NAME"
     if cmd == "/knobs":
-        # Alias for `/knob` with no args — list the override table.
-        return _handle_transport_command("/knob", player)
+        # /knobs        — table of every knob slackbeatz exposes,
+        #                 organised by gen type
+        # /knobs HANDLE — same as /knob HANDLE
+        # /knobs gens   — list the gens in the currently-loaded song
+        if not arg:
+            return _knob_list_all_specs()
+        if arg == "gens":
+            return _knob_list_song_gens(player)
+        return _knob_show_gen(player, arg)
+    if cmd == "/knob-clear":
+        # Explicit "clear all overrides on this gen" — split out from
+        # /knob HANDLE because that now shows info instead.
+        if not arg:
+            return "usage: /knob-clear HANDLE"
+        return player.unset_knob(arg)
     if cmd == "/clock":
         if arg.lower() in ("on", "true", "1"):
             return player.set_emit_clock(True)

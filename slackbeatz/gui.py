@@ -599,24 +599,13 @@ def run_tweak_gui(
                     _persistent.append(_reset_knob)
                     _persistent.append(pending)
 
-        # Initial paint. We deliberately do NOT register this with the
-        # poll loop — on a non-threaded Tcl build, destroying +
-        # recreating widgets while playback is in flight has produced
-        # a "Tcl_WaitForEvent: Notifier not initialized" trap whose
-        # exact path is hard to pin down (likely a widget refcount
-        # drop reaching __del__ on a non-main thread despite gc being
-        # disabled). The tab stays populated with whatever song is
-        # loaded at GUI start; changing songs at the REPL prompt
-        # won't update this tab. Use the inline /knob REPL command
-        # for live knob tweaks across songs.
+        # Initial paint + register with the poll loop so the tab
+        # rebuilds whenever the song changes. The layout-key short-
+        # circuit inside _rebuild_gens_tab means this is a no-op
+        # cost for the common "user just nudged a knob/tempo/seed"
+        # case (same gens → no destroy + recreate).
         _rebuild_gens_tab()
-        ttk.Label(
-            gens_tab,
-            text="ℹ︎ Tab reflects the song loaded when the GUI opened. "
-                 "For live tweaking across songs, use /knob in the REPL.",
-            wraplength=400, justify="left", foreground="#888",
-            font=("TkDefaultFont", 9),
-        ).pack(padx=10, pady=(4, 8), anchor="w")
+        main_thread_callbacks.append(_rebuild_gens_tab)
 
     # ------------------------------------------------------------------
     # Effects tab — gain / reverb / chorus sliders + on-off toggles.
