@@ -9,6 +9,14 @@ electric piano with the sustain pedal down.
 Emits CC 91 (reverb send) at the start of each chord to enforce a
 deep-reverb tail (``reverb=N`` knob, default 100 of 127 — vaporwave
 runs wet).
+
+Issue #16: every other chord (i.e. once every 8 bars) breaks into a
+slow rising arpeggio instead of holding — the periodic "Rhodes
+sweep" move that's an established trope in vaporwave. Distinct from
+the random ``arp_prob`` knob (which fires unpredictably); this one
+is a deterministic pulse you can rely on. Disable with
+``arp_period=0``; or set ``arp_period=4`` to arpeggiate every chord,
+etc.
 """
 
 from __future__ import annotations
@@ -56,6 +64,9 @@ class ChordsVaporwave(Generator):
         base_vel = base_vel_for(self)
         gate_jitter = gate_jitter_for(self)
         arp_prob = self.knob_float("arp_prob", 0.0)
+        # Issue #16: deterministic arpeggio every Nth chord (default 2 ⇒
+        # every other chord at 4 bars each = once per 8 bars). 0 disables.
+        arp_period = self.knob_int("arp_period", 2)
         reverb = self.knob_int("reverb", 100)  # CC 91 send level
         macro = macro_knobs(self)
         direction = pick_evolution_direction(ctx.rng, macro["evolution"])
@@ -76,9 +87,11 @@ class ChordsVaporwave(Generator):
             )
 
         bar = 0
+        chord_index = 0
         while bar < ctx.bars:
             if should_mute_bar(ctx.rng, macro["mute_prob"]):
                 bar += prog.bars_per_chord
+                chord_index += 1
                 continue
             chord_root = prog.degree_at_bar(bar)
             tick = bar * ticks_per_bar
@@ -96,7 +109,16 @@ class ChordsVaporwave(Generator):
             chord_pitches = [p for p in chord_pitches if 0 <= p <= 127]
             remaining = (ctx.bars - bar) * ticks_per_bar
 
-            if arp_prob > 0 and ctx.rng.random() < arp_prob and chord_pitches:
+            # Issue #16: arpeggio fires deterministically every arp_period
+            # chords (and skips chord_index 0 so the part doesn't open
+            # with one), OR randomly via arp_prob.
+            periodic_arp = (
+                arp_period > 0
+                and chord_index > 0
+                and chord_index % arp_period == 0
+            )
+            random_arp = arp_prob > 0 and ctx.rng.random() < arp_prob
+            if (periodic_arp or random_arp) and chord_pitches:
                 # Slow arpeggio (8ths) for vaporwave's Rhodes-piano feel.
                 step_ticks = ctx.ppq // 2
                 n_steps = max(1, min(chord_ticks, remaining) // step_ticks)
@@ -116,3 +138,4 @@ class ChordsVaporwave(Generator):
                         channel=inst.channel, pitch=pitch, velocity=vel,
                     )
             bar += prog.bars_per_chord
+            chord_index += 1

@@ -145,6 +145,7 @@ Every `gen` line accepts a small whitelisted set of `key=value` knobs after the 
 | `cycle` | int bars | LFO period for slow modulators | Candy, bass acid |
 | `gate_jitter` | 0..1 | Per-note random duration variance | Pitched gens |
 | `arp_prob` | 0..1 | Probability a chord plays as an arpeggio instead of held | Chords (euclid / deep_techno / psytrance / vaporwave) |
+| `arp_period` | int N | Deterministic arpeggio every Nth chord (default 2 for vaporwave; 0 = disabled) | Chords vaporwave |
 | `burble_prob` | 0..1 | Probability a bass note hits the phrygian b2 instead of the root | Bass psytrance |
 | `octave_jump` | 0..1 | Per-note probability of jumping ±1 octave | Bass + melody |
 | `motif_memory` | int N | Markov-like — recent degrees reuse with probability ~N×0.1 | Melody (psytrance / vaporwave) |

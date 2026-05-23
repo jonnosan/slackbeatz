@@ -45,7 +45,9 @@ _GEN_KNOBS = frozenset(
      "gate_jitter", "arp_prob", "burble_prob", "scale",
      # Round 3 — issue #3 (octave_jump), #11 (motif_memory),
      # #17 (deep_techno kick-triggered filter env):
-     "octave_jump", "motif_memory", "kick_env"}
+     "octave_jump", "motif_memory", "kick_env",
+     # Round 4 — issue #16 (vaporwave 8-bar arpeggio period):
+     "arp_period"}
 )
 # Part-level knobs include the new transpose_prob (issue #10): a per-
 # part-instance roll for transposition that the scheduler applies
