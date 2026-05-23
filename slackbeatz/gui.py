@@ -345,6 +345,152 @@ def run_tweak_gui(
         _refresh_nowplaying()
 
     # ------------------------------------------------------------------
+    # Generators tab — per-gen knob sliders. Only built when a Player
+    # is wired in. Rebuilds itself every time the loaded song changes
+    # (different songs have different gens with different (type, style)
+    # pairs needing different sliders).
+    # ------------------------------------------------------------------
+    if player is not None:
+        from slackbeatz.player import KNOB_SPECS
+
+        gens_tab = ttk.Frame(notebook)
+        notebook.add(gens_tab, text="Generators")
+
+        ttk.Label(
+            gens_tab,
+            text="Per-gen knob sliders. Move one → song restarts at "
+                 "current bar with the override applied. Overrides "
+                 "survive style / tempo / seed changes until /reset.",
+            wraplength=400, justify="left", foreground="#444",
+        ).pack(padx=10, pady=(8, 4), anchor="w")
+
+        # Scrollable area — songs can have 5-8 gens × 5-7 knobs = a lot
+        # of rows.
+        gens_canvas = tk.Canvas(gens_tab, borderwidth=0, highlightthickness=0)
+        gens_scrollbar = ttk.Scrollbar(gens_tab, orient="vertical", command=gens_canvas.yview)
+        gens_inner = ttk.Frame(gens_canvas)
+
+        def _on_gens_inner_configure(_event):
+            gens_canvas.configure(scrollregion=gens_canvas.bbox("all"))
+        gens_inner.bind("<Configure>", _on_gens_inner_configure)
+        gens_canvas.create_window((0, 0), window=gens_inner, anchor="nw")
+        gens_canvas.configure(yscrollcommand=gens_scrollbar.set)
+        gens_canvas.pack(side="left", fill="both", expand=True, padx=(10, 0), pady=4)
+        gens_scrollbar.pack(side="right", fill="y", padx=(0, 6), pady=4)
+
+        # State: rebuilt every time the loaded song changes.
+        def _rebuild_gens_tab():
+            for child in gens_inner.winfo_children():
+                child.destroy()
+            # We need the resolved song to know the gens. The Player
+            # doesn't keep it around (re-resolves on every play()), so
+            # we do a lightweight resolve here. Failures (e.g. no song
+            # loaded yet) are silent — the tab just stays empty.
+            if player.current_phrase is None and player.current_song_path is None:
+                ttk.Label(
+                    gens_inner,
+                    text="(load a song to see its gens — type a phrase at the prompt)",
+                    foreground="#888",
+                ).pack(padx=10, pady=20)
+                return
+            try:
+                resolved = player._resolve_current()
+            except Exception as e:  # noqa: BLE001
+                ttk.Label(gens_inner, text=f"(error: {e})", foreground="#a00").pack()
+                return
+
+            overrides = player.get_knob_overrides()
+
+            for handle, gen in resolved.gens.items():
+                # Gen header row.
+                row = ttk.Frame(gens_inner, borderwidth=1, relief="solid")
+                row.pack(fill="x", padx=4, pady=4)
+                ttk.Label(
+                    row,
+                    text=f"{handle}  ({gen.type_} / {gen.style})",
+                    font=("TkDefaultFont", 10, "bold"),
+                ).pack(anchor="w", padx=4, pady=(2, 0))
+
+                specs = KNOB_SPECS.get(gen.type_, [])
+                if not specs:
+                    ttk.Label(row, text="(no tweakable knobs)", foreground="#888").pack(
+                        anchor="w", padx=8, pady=2,
+                    )
+                    continue
+                for knob_name, lo, hi, default, kind in specs:
+                    knob_row = ttk.Frame(row)
+                    knob_row.pack(fill="x", padx=8, pady=1)
+                    ttk.Label(knob_row, text=knob_name, width=14, anchor="w").pack(side="left")
+                    # Resolve initial value: override > gen.knobs > default.
+                    if handle in overrides and knob_name in overrides[handle]:
+                        value = overrides[handle][knob_name]
+                    elif knob_name in gen.knobs:
+                        value = gen.knobs[knob_name]
+                    else:
+                        value = default
+                    is_int = kind == "int"
+                    if is_int:
+                        var = tk.IntVar(value=int(value))
+                        resolution = 1
+                    else:
+                        var = tk.DoubleVar(value=float(value))
+                        resolution = (hi - lo) / 100 if hi > lo else 0.01
+
+                    # Debounce — Tk's Scale command fires on every pixel
+                    # of drag, which would thrash the recompose loop.
+                    # We schedule the actual override apply 100ms after
+                    # the last drag event.
+                    pending = {"after_id": None}
+
+                    def _commit(v, h=handle, n=knob_name):
+                        try:
+                            cast = int(float(v)) if is_int else float(v)
+                        except ValueError:
+                            return
+                        player.set_knob(h, n, cast)
+
+                    def _on_drag(v, p=pending, h=handle, n=knob_name):
+                        if p["after_id"] is not None:
+                            try:
+                                root.after_cancel(p["after_id"])
+                            except Exception:
+                                pass
+                        p["after_id"] = root.after(120, lambda: _commit(v, h, n))
+
+                    scale = tk.Scale(
+                        knob_row, from_=lo, to=hi, resolution=resolution,
+                        orient="horizontal", variable=var,
+                        showvalue=True, length=180,
+                        command=_on_drag,
+                    )
+                    scale.pack(side="left", fill="x", expand=True)
+
+                    def _reset_knob(h=handle, n=knob_name, v=var, d=default):
+                        player.unset_knob(h, n)
+                        v.set(d)
+                    ttk.Button(
+                        knob_row, text="↺", width=2,
+                        command=_reset_knob,
+                    ).pack(side="left", padx=2)
+
+        _rebuild_gens_tab()
+
+        # Rebuild whenever the player's state changes (new song loaded,
+        # style/seed changed → different gen layout). Player calls
+        # on_state_change from arbitrary threads, so marshal via after.
+        # We layer this on top of any existing handler instead of
+        # replacing — the Transport tab already set on_state_change.
+        prev_state_handler = player.on_state_change
+
+        def _combined_state_change() -> None:
+            try:
+                prev_state_handler()
+            except Exception:
+                pass
+            root.after(0, _rebuild_gens_tab)
+        player.on_state_change = _combined_state_change
+
+    # ------------------------------------------------------------------
     # Effects tab — gain / reverb / chorus sliders + on-off toggles.
     # ------------------------------------------------------------------
     effects = ttk.Frame(notebook)

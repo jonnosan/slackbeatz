@@ -49,6 +49,70 @@ def _known_styles() -> list[str]:
 KNOWN_STYLES = _known_styles()
 
 
+# Per-type list of knobs the live tweaker exposes. Each knob spec is
+# ``(name, low, high, default, kind)`` — kind is "int" or "float" and
+# drives slider quantisation. These are the *most-useful* knobs per
+# type, picked from defaults.py + per-style algorithm code. Knobs not
+# listed for a type can still be set via /knob; the GUI just won't
+# show them.
+KNOB_SPECS: dict[str, list[tuple[str, float, float, float, str]]] = {
+    "rhythm": [
+        ("humanize",      0,    10,    2,    "int"),
+        ("accent",        0,    16,    0,    "int"),
+        ("drop_prob",     0.0,  0.5,   0.0,  "float"),
+        ("intensity",     0.0,  1.5,   1.0,  "float"),
+        ("swing",         0.0,  0.3,   0.0,  "float"),
+        ("evolution",     0.0,  1.0,   0.0,  "float"),
+    ],
+    "drums": [
+        ("humanize",      0,    10,    2,    "int"),
+        ("accent",        0,    16,    0,    "int"),
+        ("drop_prob",     0.0,  0.5,   0.0,  "float"),
+        ("intensity",     0.0,  1.5,   1.0,  "float"),
+        ("evolution",     0.0,  1.0,   0.0,  "float"),
+    ],
+    "bass": [
+        ("intensity",     0.0,  1.5,   1.0,  "float"),
+        ("gate",          0.1,  1.0,   0.85, "float"),
+        ("gate_jitter",   0.0,  0.5,   0.0,  "float"),
+        ("octave_jump",   0.0,  0.5,   0.0,  "float"),
+        ("mute_prob",     0.0,  0.5,   0.0,  "float"),
+        ("burble_prob",   0.0,  0.3,   0.0,  "float"),
+        ("evolution",     0.0,  1.0,   0.0,  "float"),
+    ],
+    "melody": [
+        ("intensity",     0.0,  1.5,   1.0,  "float"),
+        ("gate",          0.1,  1.0,   0.6,  "float"),
+        ("passing_tones", 0.0,  0.4,   0.0,  "float"),
+        ("motif_memory",  0,    8,     0,    "int"),
+        ("mute_prob",     0.0,  0.5,   0.0,  "float"),
+        ("evolution",     0.0,  1.0,   0.0,  "float"),
+    ],
+    "chords": [
+        ("intensity",     0.0,  1.5,   1.0,  "float"),
+        ("gate",          0.1,  1.0,   0.95, "float"),
+        ("mute_prob",     0.0,  0.5,   0.0,  "float"),
+        ("arp_prob",      0.0,  0.5,   0.0,  "float"),
+        ("evolution",     0.0,  1.0,   0.0,  "float"),
+    ],
+    "candy": [
+        ("intensity",     0.0,  1.5,   1.0,  "float"),
+        ("density",       0.0,  1.0,   0.5,  "float"),
+    ],
+}
+
+
+def knob_kind(knob_name: str) -> str:
+    """Look up whether *knob_name* is conventionally int or float.
+    Used by /knob REPL parsing so '5' gets stored as int(5) for
+    humanize but float(0.5) for drop_prob."""
+    for specs in KNOB_SPECS.values():
+        for name, _lo, _hi, _def, kind in specs:
+            if name == knob_name:
+                return kind
+    return "float"  # safe default
+
+
 def _rewrite_song_tempo(sb_src: str, new_tempo: int) -> str:
     """Replace the song block's ``tempo N`` line with *new_tempo*.
 
@@ -154,6 +218,12 @@ class Player:
         # the current bar (True) or from tick 0 (False). Default True
         # for the "live tweaking" feel — toggleable from the GUI / CLI.
         self.preserve_position: bool = True
+
+        # Per-gen knob overrides. Layered on top of the gens' baked-in
+        # knobs each time _resolve_current is called, so they survive
+        # re-composition (style / seed / tempo changes). Schema:
+        # {gen_handle: {knob_name: value}}.
+        self._knob_overrides: dict[str, dict[str, object]] = {}
 
         # Currently-loaded source. Either a phrase (composed) or a path
         # to a .sb file (live mode). One of these is non-None when a
@@ -355,6 +425,64 @@ class Player:
             )
 
     # ------------------------------------------------------------------
+    # Per-gen knob overrides
+    # ------------------------------------------------------------------
+
+    def set_knob(self, handle: str, knob: str, value) -> str:
+        """Override a single knob on a single gen.
+
+        Stored persistently — survives re-composition (style / tempo /
+        seed changes still apply the override) until either explicit
+        :meth:`unset_knob` / :meth:`reset_overrides`, or the user
+        loads a new phrase whose gen layout doesn't include *handle*
+        (the override silently no-ops on missing gens).
+        """
+        with self._lock:
+            # Coerce string values to int/float according to the knob's
+            # conventional kind. Lets /knob kick humanize 5 store an
+            # int (slackbeatz tests `isinstance(v, int)` in places).
+            if isinstance(value, str):
+                kind = knob_kind(knob)
+                try:
+                    value = int(value) if kind == "int" else float(value)
+                except ValueError:
+                    return f"error: {value!r} not a number"
+            elif knob_kind(knob) == "int":
+                value = int(value)
+            self._knob_overrides.setdefault(handle, {})[knob] = value
+            return self._restart_after_change(
+                f"knob {handle}.{knob} → {value}",
+            )
+
+    def unset_knob(self, handle: str, knob: str | None = None) -> str:
+        """Clear an override. ``knob=None`` clears all overrides on
+        *handle*; otherwise just that knob."""
+        with self._lock:
+            if knob is None:
+                removed = self._knob_overrides.pop(handle, None)
+                if not removed:
+                    return f"no overrides on {handle}"
+                return self._restart_after_change(
+                    f"cleared {len(removed)} override(s) on {handle}",
+                )
+            gen_overrides = self._knob_overrides.get(handle, {})
+            if knob not in gen_overrides:
+                return f"no override for {handle}.{knob}"
+            del gen_overrides[knob]
+            if not gen_overrides:
+                self._knob_overrides.pop(handle, None)
+            return self._restart_after_change(
+                f"cleared {handle}.{knob} override",
+            )
+
+    def get_knob_overrides(self) -> dict[str, dict[str, object]]:
+        """Snapshot of the current overrides — used by the GUI to
+        prepopulate sliders. Returns a *shallow copy* so the caller
+        can't accidentally mutate Player state."""
+        with self._lock:
+            return {h: dict(k) for h, k in self._knob_overrides.items()}
+
+    # ------------------------------------------------------------------
     # Save current state to a .sb file
     # ------------------------------------------------------------------
 
@@ -492,13 +620,16 @@ class Player:
             return f"loop {'on' if self.loop else 'off'}"
 
     def reset_overrides(self) -> str:
-        """Clear style / tempo / seed overrides; restart with composer
-        defaults restored."""
+        """Clear style / tempo / seed + per-gen knob overrides; restart
+        with composer defaults restored."""
         with self._lock:
             self.style_override = None
             self.tempo_override = None
             self.seed_offset = 0
-            return self._restart_after_change("overrides cleared")
+            n_knobs = sum(len(k) for k in self._knob_overrides.values())
+            self._knob_overrides.clear()
+            extra = f" (+ {n_knobs} knob override(s))" if n_knobs else ""
+            return self._restart_after_change(f"overrides cleared{extra}")
 
     # ------------------------------------------------------------------
     # Status
@@ -571,7 +702,14 @@ class Player:
         return status
 
     def _resolve_current(self):
-        """Build a ResolvedSong from current_phrase or current_song_path."""
+        """Build a ResolvedSong from current_phrase or current_song_path.
+
+        After resolve, applies per-gen knob overrides (from
+        :attr:`_knob_overrides`) by mutating each gen's knobs dict in
+        place — ResolvedGen is frozen at the dataclass level but its
+        knobs field is a regular mutable dict, so updating it works
+        and the scheduler sees the new values immediately.
+        """
         import tempfile
         if self.current_phrase is not None:
             sb_content = compose_from_text(
@@ -590,26 +728,36 @@ class Player:
                 if file_ast.song is None:
                     raise ParseError(0, "composer produced no song block")
                 setup = self._load_setup_for(tmp_path, file_ast)
-                return resolve_song(file_ast.song, setup, cli_seed=0)
+                resolved = resolve_song(file_ast.song, setup, cli_seed=0)
             finally:
                 tmp_path.unlink(missing_ok=True)
-        # File-loaded mode.
-        assert self.current_song_path is not None
-        file_ast = parse_file(self.current_song_path)
-        if file_ast.song is None:
-            raise ParseError(0, f"no song block in {self.current_song_path}")
-        setup = self._load_setup_for(self.current_song_path, file_ast)
-        resolved = resolve_song(file_ast.song, setup, cli_seed=0)
-        # File-loaded songs ignore most overrides except tempo: we
-        # post-apply tempo_override to the resolved parts so the GUI
-        # tempo slider works on .sb files too.
-        if self.tempo_override is not None:
-            for part in resolved.parts.values():
-                # ResolvedPart is a frozen dataclass — use object.__setattr__
-                # to slide tempo in. (See the resolver for the equivalent
-                # pattern used at construction time.)
-                object.__setattr__(part, "tempo", int(self.tempo_override))
+        else:
+            # File-loaded mode.
+            assert self.current_song_path is not None
+            file_ast = parse_file(self.current_song_path)
+            if file_ast.song is None:
+                raise ParseError(0, f"no song block in {self.current_song_path}")
+            setup = self._load_setup_for(self.current_song_path, file_ast)
+            resolved = resolve_song(file_ast.song, setup, cli_seed=0)
+            # File-loaded songs ignore most overrides except tempo.
+            if self.tempo_override is not None:
+                for part in resolved.parts.values():
+                    object.__setattr__(part, "tempo", int(self.tempo_override))
+
+        # Apply per-gen knob overrides (last so they win against
+        # everything baked into the composed / loaded .sb).
+        self._apply_knob_overrides(resolved)
         return resolved
+
+    def _apply_knob_overrides(self, resolved) -> None:
+        for handle, knobs in self._knob_overrides.items():
+            if handle not in resolved.gens:
+                continue
+            gen = resolved.gens[handle]
+            # gen.knobs is a regular dict — update in place so the
+            # frozen dataclass guard isn't tripped.
+            for name, value in knobs.items():
+                gen.knobs[name] = value
 
     def _load_setup_for(self, song_path: Path, file_ast):
         """Mirror cli._load_setup_for_song — load the song's referenced

@@ -660,6 +660,9 @@ def _repl_input_loop(
                     "  /preserve on|off    keep current bar across param changes\n"
                     "  /reset              clear style/tempo/seed overrides\n"
                     "  /save PATH.sb       export current state to a .sb file\n"
+                    "  /knob H N V         set knob N on gen H to V (e.g. /knob kick humanize 5)\n"
+                    "  /knob H [N]         clear knob override (or all on gen H)\n"
+                    "  /knobs              show all active knob overrides\n"
                     "  /mute N             mute channel N (1-16)\n"
                     "  /unmute N | all     unmute channel(s)\n"
                     "  /solo N             toggle solo on channel N (additive)\n"
@@ -798,6 +801,30 @@ def _handle_transport_command(line: str, player) -> str | None:
         if not arg:
             return "usage: /save <path.sb>"
         return player.save_state(arg)
+    if cmd == "/knob":
+        # /knob HANDLE NAME VALUE     — set
+        # /knob HANDLE NAME           — clear that knob's override
+        # /knob HANDLE                — clear all overrides on HANDLE
+        bits = arg.split() if arg else []
+        if not bits:
+            overrides = player.get_knob_overrides()
+            if not overrides:
+                return "no knob overrides set"
+            lines = ["knob overrides:"]
+            for h, k in sorted(overrides.items()):
+                for name, val in sorted(k.items()):
+                    lines.append(f"  {h}.{name} = {val}")
+            return "\n".join(lines)
+        if len(bits) == 1:
+            return player.unset_knob(bits[0])
+        if len(bits) == 2:
+            return player.unset_knob(bits[0], bits[1])
+        if len(bits) == 3:
+            return player.set_knob(bits[0], bits[1], bits[2])
+        return "usage: /knob HANDLE NAME VALUE | /knob HANDLE [NAME]"
+    if cmd == "/knobs":
+        # Alias for `/knob` with no args — list the override table.
+        return _handle_transport_command("/knob", player)
     return None
 
 
