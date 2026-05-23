@@ -79,6 +79,12 @@ KNOB_SPECS: dict[str, list[tuple[str, float, float, float, str]]] = {
         ("mute_prob",     0.0,  0.5,   0.0,  "float"),
         ("burble_prob",   0.0,  0.3,   0.0,  "float"),
         ("evolution",     0.0,  1.0,   0.0,  "float"),
+        # Round 8 — chord-following + walking-bass variety.
+        ("fifth_prob",    0.0,  1.0,   0.0,  "float"),
+        ("third_prob",    0.0,  0.5,   0.0,  "float"),
+        ("walking",       0.0,  1.0,   0.0,  "float"),
+        ("pickup",        0.0,  1.0,   0.0,  "float"),
+        ("bars_per_chord", 1,   32,    4,    "int"),
     ],
     "melody": [
         ("intensity",     0.0,  1.5,   1.0,  "float"),
@@ -122,6 +128,12 @@ KNOB_CHOICES: dict[str, dict[str, list[str]]] = {
         "voicing": [
             "triad", "seventh", "ninth", "sus2", "sus4",
             "shell", "power", "open",
+        ],
+    },
+    "bass": {
+        "progression": [
+            "i-VI-ii-IV", "i-iv", "i-v", "i-VII-VI-V",
+            "ii-V-I", "I-V-vi-IV", "12-bar", "andalusian",
         ],
     },
 }

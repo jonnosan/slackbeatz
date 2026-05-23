@@ -61,7 +61,13 @@ _GEN_KNOBS = frozenset(
      #   bars_per_chord   how slowly the progression advances
      #   voicing          chord voicing shape (triad, seventh, sus2, …)
      #   inversion        which chord tone is in the bass (0-3)
-     "progression", "bars_per_chord", "voicing", "inversion"}
+     "progression", "bars_per_chord", "voicing", "inversion",
+     # Round 8 — bass variety knobs (also exposed as /knob in REPL):
+     #   walking          chance of chromatic step-up at chord changes
+     #   pickup           chance of 8th-note anticipation before changes
+     #   fifth_prob       chance of playing chord 5th instead of root
+     #   third_prob       chance of playing chord 3rd (colour note)
+     "walking", "pickup", "fifth_prob", "third_prob"}
 )
 # Part-level knobs:
 #   transpose_prob — per-instance roll for transposition (issue #10)

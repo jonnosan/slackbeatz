@@ -315,6 +315,76 @@ def inversion_for(gen: Generator, fallback: int = 0) -> int:
     return fallback
 
 
+# --------------------------------------------------------------------------
+# Bass-specific knobs — chord-following, walking notes, pickup
+# anticipations, chord-tone variety.
+# --------------------------------------------------------------------------
+
+def bass_progression_for(
+    gen: Generator,
+    *,
+    default_name: str | None = None,
+    default_bars: int = 4,
+):
+    """Resolve a chord progression for a bass gen — distinct from
+    :func:`progression_for` because most bass styles default to "no
+    progression" (just play the part's tonic). Returns a
+    :class:`ChordProgression` if either:
+
+    * the gen line sets ``progression=NAME``, or
+    * *default_name* was passed (the style has its own walking
+      progression like vaporwave's ``i-VII-VI-V``).
+
+    Returns ``None`` if neither is set — caller plays the tonic.
+    """
+    from slackbeatz.generators._shared import PROGRESSIONS, ChordProgression
+
+    name = gen.knobs.get("progression")
+    if not isinstance(name, str) or name not in PROGRESSIONS:
+        name = default_name
+    if name is None:
+        return None
+    bars = gen.knobs.get("bars_per_chord")
+    if not isinstance(bars, int) or bars < 1:
+        bars = default_bars
+    bars = max(1, min(32, bars))
+    return ChordProgression(name=name, bars_per_chord=bars)
+
+
+def walking_for(gen: Generator) -> float:
+    """``walking=N`` — probability (0..1) of inserting a chromatic
+    step-up note approaching each chord change. Jazz / funk walking
+    bass behaviour: as the chord is about to change to a higher root,
+    walk up to it from below in single semitones."""
+    v = gen.knobs.get("walking", 0.0)
+    return float(v) if isinstance(v, (int, float)) else 0.0
+
+
+def pickup_for(gen: Generator) -> float:
+    """``pickup=N`` — probability (0..1) of inserting an 8th-note
+    anticipation before a downbeat. Adds groove by hinting the next
+    chord root half a beat early."""
+    v = gen.knobs.get("pickup", 0.0)
+    return float(v) if isinstance(v, (int, float)) else 0.0
+
+
+def fifth_prob_for(gen: Generator) -> float:
+    """``fifth_prob=N`` — probability (0..1) of playing the chord 5th
+    instead of root on any given bass note. 0.3 gives noticeable
+    movement without losing the root-anchor; 0.5 sounds like a
+    1-5-1-5 bassline; 1.0 plays only fifths."""
+    v = gen.knobs.get("fifth_prob", 0.0)
+    return float(v) if isinstance(v, (int, float)) else 0.0
+
+
+def third_prob_for(gen: Generator) -> float:
+    """``third_prob=N`` — probability (0..1) of playing the chord 3rd.
+    Use sparingly; thirds make the bass feel like a melody. Common
+    values: 0.1 (occasional colour), 0.3 (jazz / funk)."""
+    v = gen.knobs.get("third_prob", 0.0)
+    return float(v) if isinstance(v, (int, float)) else 0.0
+
+
 def scale_for(gen, ctx, fallback: str = "minor") -> str:
     """Resolve which scale this gen should draw from (issue #22).
 

@@ -26,18 +26,21 @@ from slackbeatz.generators._shared import (
 )
 from slackbeatz.generators.base import Generator
 from slackbeatz.generators.defaults import (
+    bass_progression_for,
     base_octave_for,
     base_vel_for,
     duck_for,
+    fifth_prob_for,
     gate_for,
     gate_jitter_for,
     macro_knobs,
     octave_jump_for,
+    scale_for,
 )
 from slackbeatz.generators.registry import register_generator
 from slackbeatz.model.context import PartContext
 from slackbeatz.theory.keys import parse_key
-from slackbeatz.theory.scales import midi_note
+from slackbeatz.theory.scales import midi_note, scale_note
 
 
 @register_generator("bass", "deep_techno")
@@ -63,7 +66,15 @@ class BassDeepTechno(Generator):
         kick_env = self.knob_float("kick_env", 0.0)
 
         tonic, _ = parse_key(ctx.key)
-        root_raw = midi_note(tonic, 2 + octave_off)
+        scale = scale_for(self, ctx, fallback="dorian")
+        base_octave = 2 + octave_off
+
+        # Optional chord-following. Without it, the historical behaviour
+        # is preserved: root + fifth alternating every 2 bars.
+        prog = bass_progression_for(self)
+        fifth_prob = fifth_prob_for(self)
+
+        root_raw = midi_note(tonic, base_octave)
         root = transposed_pitch(root_raw, ctx.transpose_semitones)
         fifth = transposed_pitch(root_raw + 7, ctx.transpose_semitones)
 
@@ -101,8 +112,30 @@ class BassDeepTechno(Generator):
                 bar += 2
                 continue
             tick = bar * ticks_per_bar
-            cell_idx = (bar // 2) % 2
-            pitch = root if cell_idx == 0 else fifth
+            # Chord-following: if a progression is set, the bass takes
+            # its root from the active chord rather than the part tonic.
+            # Otherwise fall back to the original "alternate root/fifth
+            # every 2 bars" cell pattern. fifth_prob (if set) adds an
+            # extra chance to play the 5th over the root on any cell.
+            if prog is not None:
+                chord_deg = prog.degree_at_bar(bar)
+                chord_root = transposed_pitch(
+                    scale_note(chord_deg, tonic, scale, base_octave),
+                    ctx.transpose_semitones,
+                )
+                chord_fifth = transposed_pitch(
+                    scale_note(chord_deg + 4, tonic, scale, base_octave),
+                    ctx.transpose_semitones,
+                )
+                if fifth_prob > 0 and ctx.rng.random() < fifth_prob:
+                    pitch = chord_fifth
+                else:
+                    pitch = chord_root
+            else:
+                cell_idx = (bar // 2) % 2
+                pitch = root if cell_idx == 0 else fifth
+                if fifth_prob > 0 and ctx.rng.random() < fifth_prob:
+                    pitch = fifth
             jitter = ctx.rng.randint(-4, 4)
             evo_mult = evolution_multiplier(bar, ctx.bars, macro["evolution"], direction)
             vel_base = int(round(base_vel * intensity * evo_mult * ctx.tension)) + jitter

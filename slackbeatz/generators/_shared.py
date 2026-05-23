@@ -525,6 +525,30 @@ def build_chord(
 
 
 # --------------------------------------------------------------------------
+# Walking-bass helper
+# --------------------------------------------------------------------------
+
+def walking_step_pitch(current_root: int, next_root: int) -> int:
+    """Pick a single chromatic step approaching *next_root* from
+    *current_root*. Used to insert one walking note halfway through a
+    chord whose successor chord has a different root.
+
+    * If next_root is higher: walks up — return next_root - 1.
+    * If next_root is lower: walks down — return next_root + 1.
+    * If next_root == current_root: stays on current_root (no walk).
+
+    Both pitches are MIDI note numbers. Caller is responsible for
+    placing this note rhythmically (typically on the last beat /
+    8th / 16th of the chord before the change).
+    """
+    if next_root > current_root:
+        return next_root - 1
+    if next_root < current_root:
+        return next_root + 1
+    return current_root
+
+
+# --------------------------------------------------------------------------
 # Drum fills
 # --------------------------------------------------------------------------
 
