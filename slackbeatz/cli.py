@@ -237,71 +237,56 @@ def cmd_live(args) -> int:
 
     try:
         soundfont = find_soundfont(args.soundfont)
-        fluidsynth_bin = require_tool("fluidsynth")
-    except (SoundfontError, MissingToolError) as e:
+    except SoundfontError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
 
-    # Snapshot existing MIDI output ports so we can identify the new one
-    # FluidSynth registers when it starts.
-    #
-    # FluidSynth flag gotcha: ``-n`` (--no-midi-in) explicitly disables the
-    # MIDI input driver, so passing it kills the CoreMIDI port we want to
-    # connect to. ``-i`` (--no-shell) suppresses the interactive shell —
-    # but without a shell *and* without a MIDI file argument, fluidsynth
-    # has nothing keeping it alive and exits immediately. So we keep the
-    # shell on and give it a stdin PIPE that we never write to: the shell
-    # waits forever for input and the process stays up indefinitely.
-    before_ports = set(available_ports())
-    fs_proc = subprocess.Popen(
-        [
-            fluidsynth_bin,
-            "-a", "coreaudio",
-            "-m", "coremidi",
-            "-o", f"synth.gain={args.gain}",
-            "-o", f"synth.reverb.room-size={args.reverb}",
-            "-o", "synth.chorus.active=1",
-            "-q",
-            str(soundfont),
-        ],
-        stdin=subprocess.PIPE,     # shell waits on stdin → process stays alive
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,    # captured for the failure-path error message
-    )
-
-    # Poll for the new MIDI port (up to ~4 seconds).
-    new_port = None
-    for _ in range(40):
-        time.sleep(0.1)
-        if fs_proc.poll() is not None:
-            err = ""
-            if fs_proc.stderr is not None:
-                try:
-                    err = fs_proc.stderr.read().decode("utf-8", "replace").strip()
-                except Exception:
-                    pass
-            msg = "error: fluidsynth exited before opening its MIDI port"
-            if err:
-                msg += f" (exit {fs_proc.returncode}): {err}"
-            print(msg, file=sys.stderr)
-            return 1
-        diff = set(available_ports()) - before_ports
-        if diff:
-            new_port = next(iter(diff))
-            break
-
-    if new_port is None:
-        fs_proc.terminate()
-        fs_proc.wait(timeout=2)
-        print("error: fluidsynth started but didn't expose a MIDI port", file=sys.stderr)
+    try:
+        fs_proc, new_port, spawn_err = _spawn_fluidsynth(
+            soundfont, gain=args.gain, reverb=args.reverb,
+        )
+    except MissingToolError as e:
+        print(f"error: {e}", file=sys.stderr)
         return 1
+    if spawn_err is not None:
+        print(f"error: {spawn_err}", file=sys.stderr)
+        return 1
+    assert fs_proc is not None and new_port is not None
 
     print(f"slackbeatz: streaming to FluidSynth on {new_port!r} — press Ctrl+C to stop")
     try:
         sink = RealtimeSink(port_name=new_port)
         tempo_map = build_tempo_map(resolved)
         clock = InternalClock(tempo_map)
-        Scheduler(resolved, sink, clock).run()
+        scheduler = Scheduler(resolved, sink, clock)
+        if args.gui:
+            # Tk needs the main thread, so run playback in a daemon
+            # thread and open the tweak window here. Closing the window
+            # triggers fluidsynth teardown via the finally block; the
+            # daemon thread is then collected by the interpreter.
+            import threading
+
+            from slackbeatz.gui import run_tweak_gui
+
+            stop_event = threading.Event()
+
+            def _play() -> None:
+                try:
+                    scheduler.run()
+                except Exception as exc:  # noqa: BLE001 — surface via stderr
+                    if not stop_event.is_set():
+                        print(f"playback error: {exc}", file=sys.stderr)
+
+            play_thread = threading.Thread(target=_play, daemon=True)
+            play_thread.start()
+            run_tweak_gui(
+                fs_proc.stdin,
+                initial_gain=args.gain,
+                initial_reverb_room=args.reverb,
+                on_close=stop_event.set,
+            )
+        else:
+            scheduler.run()
     except KeyboardInterrupt:
         print("\nslackbeatz: interrupted")
     except NoMidiPortError as e:
@@ -371,6 +356,184 @@ def cmd_from_text(args) -> int:
         return 0
     print(f"error: unsupported output extension {ext!r} (use .sb / .wav / .mp3)", file=sys.stderr)
     return 2
+
+
+def _spawn_fluidsynth(soundfont: Path, *, gain: float, reverb: float) -> tuple[subprocess.Popen[bytes] | None, str | None, str | None]:
+    """Spawn a CoreAudio + CoreMIDI FluidSynth and wait for its MIDI port.
+
+    Returns ``(proc, port_name, None)`` on success, or
+    ``(None, None, error_message)`` on failure. Shared by ``cmd_live``
+    and ``cmd_repl`` — both need the same "spawn FS, find its new port"
+    incantation.
+
+    See the inline comment about ``-n`` / ``-i`` for why we use
+    ``stdin=PIPE`` with no flag suppression.
+    """
+    fluidsynth_bin = require_tool("fluidsynth")
+    before_ports = set(available_ports())
+    proc = subprocess.Popen(
+        [
+            fluidsynth_bin,
+            "-a", "coreaudio",
+            "-m", "coremidi",
+            "-o", f"synth.gain={gain}",
+            "-o", f"synth.reverb.room-size={reverb}",
+            "-o", "synth.chorus.active=1",
+            "-q",
+            str(soundfont),
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+    )
+    for _ in range(40):
+        time.sleep(0.1)
+        if proc.poll() is not None:
+            err = ""
+            if proc.stderr is not None:
+                try:
+                    err = proc.stderr.read().decode("utf-8", "replace").strip()
+                except Exception:
+                    pass
+            msg = "fluidsynth exited before opening its MIDI port"
+            if err:
+                msg += f" (exit {proc.returncode}): {err}"
+            return None, None, msg
+        diff = set(available_ports()) - before_ports
+        if diff:
+            return proc, next(iter(diff)), None
+    proc.terminate()
+    try:
+        proc.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+    return None, None, "fluidsynth started but didn't expose a MIDI port"
+
+
+def cmd_repl(args) -> int:
+    """Interactive REPL: each line of input becomes a song, played to
+    completion (or interrupted with Ctrl+C). One FluidSynth lives for
+    the whole session — no per-song spawn cost, no re-downloading the
+    soundfont, and the optional ``--gui`` window stays open across
+    songs so slider positions persist.
+
+    Commands inside the REPL:
+
+    * any plain text                — compose + play that phrase
+    * ``/quit`` or empty EOF (Ctrl+D) — end the session
+    * ``/seed N``                    — set the seed offset
+      (added to the per-phrase hash; same phrase, different seed → new song)
+    * ``/help``                     — print this list
+    """
+    try:
+        soundfont = find_soundfont(args.soundfont)
+    except SoundfontError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+
+    fs_proc, port_name, spawn_err = _spawn_fluidsynth(
+        soundfont, gain=args.gain, reverb=args.reverb,
+    )
+    if spawn_err is not None:
+        print(f"error: {spawn_err}", file=sys.stderr)
+        return 1
+    assert fs_proc is not None and port_name is not None
+
+    print(
+        f"slackbeatz repl — streaming to {port_name!r}. "
+        f"Type a phrase + Enter to play. /help, /quit.",
+    )
+
+    # Optional GUI runs on its own thread so the REPL loop stays on
+    # main. The whole session shares one tweak window.
+    if args.gui:
+        import threading
+
+        from slackbeatz.gui import run_tweak_gui
+
+        def _gui_thread() -> None:
+            try:
+                run_tweak_gui(
+                    fs_proc.stdin,
+                    initial_gain=args.gain,
+                    initial_reverb_room=args.reverb,
+                )
+            except Exception as exc:  # noqa: BLE001
+                print(f"\n(gui error: {exc})", file=sys.stderr)
+
+        threading.Thread(target=_gui_thread, daemon=True).start()
+
+    seed_offset = args.seed
+    try:
+        while True:
+            try:
+                line = input("slackbeatz> ").strip()
+            except EOFError:
+                print()  # newline after Ctrl+D
+                break
+            if not line:
+                continue
+            if line in ("/quit", "/exit"):
+                break
+            if line == "/help":
+                print("  <phrase>     compose + play that phrase")
+                print("  /seed N      set seed offset (variation knob)")
+                print("  /quit        end session")
+                continue
+            if line.startswith("/seed"):
+                parts = line.split()
+                if len(parts) == 2 and parts[1].lstrip("-").isdigit():
+                    seed_offset = int(parts[1])
+                    print(f"  seed offset → {seed_offset}")
+                else:
+                    print("  usage: /seed <integer>")
+                continue
+            # Everything else: compose + play.
+            try:
+                sb_content = compose_from_text(line, seed_offset=seed_offset)
+            except TypeError:
+                # compose_from_text may not yet accept a seed offset kwarg
+                # (older slackbeatz). Fall back to bare call.
+                sb_content = compose_from_text(line)
+            with tempfile.NamedTemporaryFile(
+                suffix=".sb", delete=False, mode="w", encoding="utf-8",
+            ) as tf:
+                tf.write(sb_content)
+                song_path = Path(tf.name)
+            try:
+                file_ast = parse_file(song_path)
+                if file_ast.song is None:
+                    print("  (composer produced no song?)", file=sys.stderr)
+                    continue
+                setup = _load_setup_for_song(song_path, file_ast, args.setup)
+                resolved = resolve_song(file_ast.song, setup, cli_seed=args.seed)
+            except (ParseError, ResolveError, SetupError) as e:
+                print(f"  error: {e}", file=sys.stderr)
+                continue
+            finally:
+                song_path.unlink(missing_ok=True)
+            print(f'  playing "{file_ast.song.name}" — Ctrl+C to skip')
+            sink = RealtimeSink(port_name=port_name)
+            tempo_map = build_tempo_map(resolved)
+            clock = InternalClock(tempo_map)
+            try:
+                Scheduler(resolved, sink, clock).run()
+            except KeyboardInterrupt:
+                print("  (skipped)")
+                # Ensure no notes hang on the synth between songs.
+                try:
+                    sink.close()
+                except Exception:
+                    pass
+    except KeyboardInterrupt:
+        print()  # newline after Ctrl+C at the prompt
+    finally:
+        fs_proc.terminate()
+        try:
+            fs_proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            fs_proc.kill()
+    return 0
 
 
 def cmd_render(args) -> int:
@@ -477,7 +640,39 @@ def _build_parser() -> argparse.ArgumentParser:
         "--seed", type=int, default=0,
         help="fallback seed when the song doesn't set one (default 0)",
     )
+    sp.add_argument(
+        "--gui", action="store_true",
+        help="open a Tk tweak window with sliders for gain / reverb / chorus",
+    )
     sp.set_defaults(func=cmd_live)
+
+    # repl — interactive text → audio loop
+    sp = sub.add_parser(
+        "repl",
+        help="interactive REPL: type a phrase, hear a song, repeat",
+    )
+    sp.add_argument("--setup", help="bundled name or path to a setup file")
+    sp.add_argument(
+        "--soundfont",
+        help="path to a .sf2/.sf3 (default: auto-discover or download)",
+    )
+    sp.add_argument(
+        "--gain", type=float, default=0.6,
+        help="FluidSynth output gain 0.0–1.0 (default 0.6)",
+    )
+    sp.add_argument(
+        "--reverb", type=float, default=0.8,
+        help="FluidSynth reverb room-size 0.0–1.0 (default 0.8)",
+    )
+    sp.add_argument(
+        "--seed", type=int, default=0,
+        help="seed offset (added to the per-phrase hash; default 0)",
+    )
+    sp.add_argument(
+        "--gui", action="store_true",
+        help="also open the live tweak window in the background",
+    )
+    sp.set_defaults(func=cmd_repl)
 
     # from-text
     sp = sub.add_parser(

@@ -261,7 +261,12 @@ _NOTE_NAMES = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "G#", "A", "Bb", "B"]
 # Public API
 # --------------------------------------------------------------------------
 
-def compose_from_text(text: str, *, output_path: Path | str | None = None) -> str:
+def compose_from_text(
+    text: str,
+    *,
+    output_path: Path | str | None = None,
+    seed_offset: int = 0,
+) -> str:
     """Compose a slackbeatz `.sb` file from an arbitrary input string.
 
     Returns the `.sb` content as a string. If *output_path* is given,
@@ -271,6 +276,10 @@ def compose_from_text(text: str, *, output_path: Path | str | None = None) -> st
     "random" choices — same input ⇒ byte-identical output, but flipping
     a single character produces a different song with similar overall
     shape.
+
+    *seed_offset* is folded into the SHA-256 digest so the same phrase
+    produces a different song for each integer value — used by the REPL
+    ``/seed N`` command to spin variations on a phrase without retyping.
     """
     title = extract_title(text)
     # Mood / style come from the *title* (first phrase only) — the
@@ -279,8 +288,13 @@ def compose_from_text(text: str, *, output_path: Path | str | None = None) -> st
     sentiment = score_sentiment(title)
     # Seed comes from the *full* input — text after the first phrase
     # contributes too, so adding " — take 2" produces a different song
-    # with the same title + style.
-    h = hashlib.sha256(text.encode("utf-8")).digest()
+    # with the same title + style. seed_offset participates by being
+    # appended to the hashed payload — same phrase + same offset is
+    # byte-identical; same phrase + different offset is different.
+    payload = text.encode("utf-8")
+    if seed_offset:
+        payload += b"\x00" + str(seed_offset).encode("ascii")
+    h = hashlib.sha256(payload).digest()
     seed = int.from_bytes(h[0:6], "big")
     tempo = derive_tempo(h, style, sentiment)
     key = derive_key(h, style, sentiment)
