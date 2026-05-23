@@ -1,0 +1,41 @@
+# mall.sb — vaporwave demo.
+#
+# Slow (75 bpm), half-time feel, descending i-VII-VI-V chord cycle.
+# Uses the bundled `gm` setup and the `vaporwave` style across all gens:
+# Rhodes piano on chords, Tenor Sax on melody, electric pick bass, soft
+# tubular-bell glints from the candy gen every four bars. Key of Em
+# gives the right melancholy register for the dorian-mode melody.
+
+song "Mall"
+  setup "gm"
+  tempo 75
+  key   Em
+  seed  88
+
+gen kick    rhythm vaporwave
+gen snare   rhythm vaporwave
+gen hats    rhythm vaporwave
+gen bass    bass   vaporwave
+gen lead    melody vaporwave
+gen pad     chords vaporwave
+gen bells   candy  vaporwave inst=riser
+
+part intro 16
+  pad
+  bells
+
+part main 32
+  kick
+  snare
+  hats
+  bass
+  pad
+  lead
+  bells
+
+part outro 16
+  pad
+  lead
+  bells
+
+play intro main main outro

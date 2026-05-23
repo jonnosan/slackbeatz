@@ -36,30 +36,38 @@ from slackbeatz.model.song import ResolvedSong
 # Reference: https://en.wikipedia.org/wiki/General_MIDI#Program_change_events
 _GM_PROGRAM_DEFAULTS: dict[tuple[str, str], int] = {
     # Bass: 38 Synth Bass 1 for euclid/psytrance (TB-303-ish punchy),
-    # 39 Synth Bass 2 for deep_techno (warmer / longer-sustained).
+    # 39 Synth Bass 2 for deep_techno (warmer / longer-sustained),
+    # 34 Electric Bass (Pick) for vaporwave (lazy mid-80s pick bass).
     ("bass", "euclid"):       38,
     ("bass", "deep_techno"):  39,
     ("bass", "psytrance"):    38,
+    ("bass", "vaporwave"):    34,
 
-    # Melody: Saw Lead (81) for euclid / psytrance — bright, cuts through.
-    # Deep techno wants a softer voice; Lead 8 voice/halo (87 Bass+Lead)
-    # is too aggressive — use Pad 1 (new age) 88 for sustained modal lead.
+    # Melody: Saw Lead (81) for euclid / Square Lead (80) for psytrance —
+    # bright, cuts through. Deep techno wants Pad 1 new age (88) for the
+    # sustained modal lead feel. Vaporwave wants Tenor Sax (66) for that
+    # late-night smooth-jazz solo.
     ("melody", "euclid"):       81,
     ("melody", "deep_techno"):  88,
-    ("melody", "psytrance"):    80,  # Square Lead — psytrance staple
+    ("melody", "psytrance"):    80,
+    ("melody", "vaporwave"):    66,
 
     # Chords / pads: Warm Pad (89) for euclid, Pad 4 choir (91) for
-    # deep_techno (jazzy choir-ish), Pad 6 Metallic (94) for psytrance.
+    # deep_techno (jazzy choir-ish), Pad 6 Metallic (94) for psytrance,
+    # Electric Piano 1 (4 = Rhodes) for vaporwave — the iconic patch.
     ("chords", "euclid"):       89,
     ("chords", "deep_techno"):  91,
     ("chords", "psytrance"):    94,
+    ("chords", "vaporwave"):     4,
 
     # Candy / risers: FX 5 brightness (100) for euclid build/drop sweeps,
     # FX 7 echoes (102) for deep_techno slow LFO modulation,
-    # FX 8 sci-fi (103) for psytrance acid sweeps.
+    # FX 8 sci-fi (103) for psytrance acid sweeps,
+    # Tubular Bells (14) for vaporwave's periodic bell glints.
     ("candy", "euclid"):       100,
     ("candy", "deep_techno"): 102,
     ("candy", "psytrance"):   103,
+    ("candy", "vaporwave"):    14,
 
     # rhythm / drums live on the GM percussion channel (MIDI ch 10);
     # FluidSynth auto-routes to the drum-kit bank there, no program

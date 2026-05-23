@@ -21,6 +21,7 @@ Pre-rendered audio for each bundled example lives under [`examples/rendered/`](e
 | `dark_sunday` | `euclid` (Arduino-derived defaults) | [.mid](examples/rendered/dark_sunday.mid) | [.mp3](examples/rendered/dark_sunday.mp3) |
 | `deep_set` | `deep_techno` | [.mid](examples/rendered/deep_set.mid) | [.mp3](examples/rendered/deep_set.mp3) |
 | `goa` | `psytrance` | [.mid](examples/rendered/goa.mid) | [.mp3](examples/rendered/goa.mp3) |
+| `mall` | `vaporwave` | [.mid](examples/rendered/mall.mid) | [.mp3](examples/rendered/mall.mp3) |
 
 The MP3s are rendered through **GeneralUser GS** (free GM soundfont, ~30 MB, auto-downloaded on first use) with per-channel GM program selection — bass = Synth Bass, lead = Saw Lead / Square Lead, pad = Warm Pad, candy = FX patches — picked per `(type, style)` so each style sits in a recognisably different timbral space. It's still a GM rendering, not production audio: plug a real synth in for that.
 
@@ -147,6 +148,7 @@ That integer is then mixed with the part name and generator handle (deterministi
 | `euclid` | Arduino-derived defaults — Euclidean 4-on-the-floor, 4-bar fills, chord-following lead |
 | `deep_techno` | Slower, sparser, modal. Sustained pads, half-note bass, 1–2 melody notes per bar |
 | `psytrance` | 138–148 bpm, gallop 16th-note bass, offbeat hats, phrygian arpeggios |
+| `vaporwave` | 70–80 bpm, half-time kick, descending i-VII-VI-V on Rhodes electric piano, Tenor Sax leads, periodic tubular-bell glints |
 
 New styles are added by writing one small class per type (six in total) and registering them via `@register_generator("type", "newstyle")`.
 

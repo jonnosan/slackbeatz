@@ -97,6 +97,8 @@ PROGRESSIONS: dict[str, list[int]] = {
     "i-iv":       [0, 3],
     # Psytrance: skeletal modal back-and-forth
     "i-v":        [0, 4],
+    # Vaporwave: classic descending minor — bass walks 1, b7, b6, 5
+    "i-VII-VI-V": [0, 6, 5, 4],
 }
 
 
