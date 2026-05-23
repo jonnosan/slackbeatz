@@ -609,6 +609,51 @@ def tension_velocity_boost(degree: int, tension_dyn: float, base_vel: int) -> in
     return int(round(factor * base_vel * 0.25))
 
 
+def chord_velocity_mods(
+    bar: int,
+    chord_root_deg: int,
+    base_vel: int,
+    gen,
+) -> int:
+    """Combined velocity delta from phrase_lift + tension_dyn knobs on a
+    chord gen. Returns 0 if neither knob is set. Caller adds to its
+    computed velocity then clamps to 1..127."""
+    from slackbeatz.generators.defaults import (
+        phrase_lift_for, tension_dyn_for,
+    )
+    phrase_lift = phrase_lift_for(gen)
+    tension_dyn = tension_dyn_for(gen)
+    delta = 0
+    if phrase_lift > 0 and bar % phrase_lift == 0:
+        delta += 8
+    if tension_dyn > 0:
+        delta += tension_velocity_boost(chord_root_deg, tension_dyn, base_vel)
+    return delta
+
+
+def maybe_emit_drop_sweep(ctx, channel: int, gen):
+    """Yield drop-sweep CC events if drop_intensity > 0 and the next
+    part has role=drop. Convenience wrapper so each chord gen needs
+    only one ``yield from`` at the end of generate()."""
+    from slackbeatz.generators.defaults import drop_intensity_for
+
+    drop_intensity = drop_intensity_for(gen)
+    if drop_intensity > 0 and ctx.next_role == "drop":
+        yield from drop_sweep_events(ctx, channel, drop_intensity)
+
+
+def melody_phrase_bump(bar: int, gen) -> int:
+    """Velocity delta for melody gens — just the phrase_lift bump
+    (mistakes is applied separately via apply_mistake on the final
+    pitch/tick/vel tuple). Returns 0 when phrase_lift is unset."""
+    from slackbeatz.generators.defaults import phrase_lift_for
+
+    phrase_lift = phrase_lift_for(gen)
+    if phrase_lift > 0 and bar % phrase_lift == 0:
+        return 8
+    return 0
+
+
 def drop_sweep_events(
     ctx,
     channel: int,

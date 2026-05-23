@@ -13,6 +13,8 @@ from typing import Iterator
 
 from slackbeatz.engine.event import Event, Note
 from slackbeatz.generators._shared import (
+    chord_velocity_mods,
+    maybe_emit_drop_sweep,
     apply_gate_jitter,
     evolution_multiplier,
     pick_evolution_direction,
@@ -68,7 +70,11 @@ class ChordsAcid(Generator):
         octave_up = transposed_pitch(root_raw + 12, ctx.transpose_semitones)
         evo_mult = evolution_multiplier(enter_bar, ctx.bars, macro["evolution"], direction)
         jitter = ctx.rng.randint(-3, 3)
-        vel = max(1, min(127, int(round(base_vel * intensity * evo_mult * ctx.tension)) + jitter))
+        # acid chord stab is fixed on the tonic (no progression); pass
+        # 0 for chord_root_deg + enter_bar for bar so phrase_lift still
+        # fires correctly if the stab happens to land on a phrase
+        # boundary.
+        vel = max(1, min(127, int(round(base_vel * intensity * evo_mult * ctx.tension)) + jitter + chord_velocity_mods(enter_bar, 0, base_vel, self)))
         for pitch in (root, fifth, octave_up):
             if not 0 <= pitch <= 127:
                 continue
@@ -76,3 +82,4 @@ class ChordsAcid(Generator):
                 tick=tick, duration=max(1, dur),
                 channel=inst.channel, pitch=pitch, velocity=vel,
             )
+        yield from maybe_emit_drop_sweep(ctx, inst.channel, self)

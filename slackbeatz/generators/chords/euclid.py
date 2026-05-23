@@ -11,6 +11,8 @@ from typing import Iterator
 
 from slackbeatz.engine.event import Event, Note
 from slackbeatz.generators._shared import (
+    chord_velocity_mods,
+    maybe_emit_drop_sweep,
     apply_gate_jitter,
     build_chord,
     evolution_multiplier,
@@ -78,7 +80,7 @@ class ChordsEuclid(Generator):
             tick = bar * ticks_per_bar
             jitter = ctx.rng.randint(-4, 4)
             evo_mult = evolution_multiplier(bar, bars, macro["evolution"], direction)
-            vel = max(1, min(127, int(round(base_vel * intensity * evo_mult * ctx.tension)) + jitter))
+            vel = max(1, min(127, int(round(base_vel * intensity * evo_mult * ctx.tension)) + jitter + chord_velocity_mods(bar, chord_root, base_vel, self)))
 
             # Build the chord's pitches once. Used both for held and arp.
             chord_pitches = build_chord(
@@ -121,3 +123,4 @@ class ChordsEuclid(Generator):
         # transition has actual loudness motion, not just brightness.
         if is_build_part(ctx):
             yield from expression_ramp(ctx, inst.channel, start=80, end=127)
+        yield from maybe_emit_drop_sweep(ctx, inst.channel, self)

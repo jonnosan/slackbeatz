@@ -17,6 +17,8 @@ from typing import Iterator
 
 from slackbeatz.engine.event import CC, Event, Note
 from slackbeatz.generators._shared import (
+    apply_mistake,
+    melody_phrase_bump,
     ChordProgression,
     MotifMemory,
     apply_gate_jitter,
@@ -30,6 +32,7 @@ from slackbeatz.generators._shared import (
 )
 from slackbeatz.generators.base import Generator
 from slackbeatz.generators.defaults import (
+    mistakes_for,
     base_octave_for,
     base_vel_for,
     gate_for,
@@ -74,6 +77,8 @@ class MelodyVaporwave(Generator):
         macro = macro_knobs(self)
         direction = pick_evolution_direction(ctx.rng, macro["evolution"])
         scale = scale_for(self, ctx, fallback="dorian")
+
+        mistakes = mistakes_for(self)
 
         tonic, _ = parse_key(ctx.key)
         prog = ChordProgression("i-VII-VI-V", bars_per_chord=4)

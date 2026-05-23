@@ -11,6 +11,8 @@ from typing import Iterator
 
 from slackbeatz.engine.event import Event, Note
 from slackbeatz.generators._shared import (
+    chord_velocity_mods,
+    maybe_emit_drop_sweep,
     apply_gate_jitter,
     build_chord,
     evolution_multiplier,
@@ -66,7 +68,7 @@ class ChordsDrumAndBass(Generator):
             tick = bar * ticks_per_bar
             jitter = ctx.rng.randint(-3, 3)
             evo_mult = evolution_multiplier(bar, ctx.bars, macro["evolution"], direction)
-            vel = max(1, min(127, int(round(base_vel * intensity * evo_mult * ctx.tension)) + jitter))
+            vel = max(1, min(127, int(round(base_vel * intensity * evo_mult * ctx.tension)) + jitter + chord_velocity_mods(bar, chord_root, base_vel, self)))
             chord_pitches = build_chord(
                 chord_root, tonic=tonic, scale=scale,
                 base_octave=4 + octave_off,
@@ -81,3 +83,4 @@ class ChordsDrumAndBass(Generator):
                     channel=inst.channel, pitch=pitch, velocity=vel,
                 )
             bar += prog.bars_per_chord
+        yield from maybe_emit_drop_sweep(ctx, inst.channel, self)

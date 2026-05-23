@@ -16,6 +16,8 @@ from typing import Iterator
 
 from slackbeatz.engine.event import CC, Event, Note
 from slackbeatz.generators._shared import (
+    chord_velocity_mods,
+    maybe_emit_drop_sweep,
     apply_gate_jitter,
     build_chord,
     evolution_multiplier,
@@ -90,10 +92,11 @@ class ChordsDubTechno(Generator):
             for step in _OFFBEAT_STEPS:
                 tick = bar_start + step_to_ticks(step, ctx.ppq)
                 jitter = ctx.rng.randint(-4, 4)
-                vel = max(1, min(127, int(round(base_vel * intensity * evo_mult * ctx.tension)) + jitter))
+                vel = max(1, min(127, int(round(base_vel * intensity * evo_mult * ctx.tension)) + jitter + chord_velocity_mods(bar, chord_root, base_vel, self)))
                 dur = apply_gate_jitter(base_dur, gate_jitter, ctx.rng)
                 for pitch in chord_pitches:
                     yield Note(
                         tick=tick, duration=dur,
                         channel=inst.channel, pitch=pitch, velocity=vel,
                     )
+        yield from maybe_emit_drop_sweep(ctx, inst.channel, self)

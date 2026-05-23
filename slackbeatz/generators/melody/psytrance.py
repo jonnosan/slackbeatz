@@ -13,6 +13,8 @@ from typing import Iterator
 
 from slackbeatz.engine.event import Event, Note
 from slackbeatz.generators._shared import (
+    apply_mistake,
+    melody_phrase_bump,
     MotifMemory,
     apply_gate_jitter,
     call_response_active,
@@ -27,6 +29,7 @@ from slackbeatz.generators._shared import (
 )
 from slackbeatz.generators.base import Generator
 from slackbeatz.generators.defaults import (
+    mistakes_for,
     base_octave_for,
     base_vel_for,
     gate_for,
@@ -69,6 +72,8 @@ class MelodyPsytrance(Generator):
         macro = macro_knobs(self)
         direction = pick_evolution_direction(ctx.rng, macro["evolution"])
         scale = scale_for(self, ctx, fallback="phrygian")
+
+        mistakes = mistakes_for(self)
 
         tonic, _ = parse_key(ctx.key)
         step_ticks = step_duration(ctx.ppq)

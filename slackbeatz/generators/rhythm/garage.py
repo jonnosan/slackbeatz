@@ -10,6 +10,7 @@ from typing import Iterator
 
 from slackbeatz.engine.event import Event, Note
 from slackbeatz.generators._shared import (
+    groove_offset,
     HitParams,
     drift_pulses,
     euclid,
@@ -63,6 +64,11 @@ class RhythmGarage(Generator):
         pulses, offset = _DEFAULTS.get(name, (2, 0))
         base_vel = self.knob_int("base_vel", _DEFAULT_VEL.get(name, 90))
         macro = macro_knobs(self)
+        groove = self.knobs.get("groove", "linear")
+        if not isinstance(groove, str):
+            groove = "linear"
+        ghost = self.knob_float("ghost", 0.0)
+        ghost_vel_ratio = self.knob_float("ghost_vel", 0.25)
         params = HitParams(
             base_vel=base_vel,
             intensity=self.knob_float("intensity", 1.0),
@@ -90,7 +96,7 @@ class RhythmGarage(Generator):
             for step, hit in enumerate(pattern):
                 if not hit:
                     continue
-                tick = bar_start + step_to_ticks(step, ctx.ppq)
+                tick = bar_start + step_to_ticks(step, ctx.ppq) + groove_offset(groove, step)
                 if step % 2 == 1:
                     tick += swing_offset
                 shaped = humanize_hit(params, ctx.rng, step, tick, intensity_mult=evo_mult)
