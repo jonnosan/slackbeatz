@@ -266,6 +266,8 @@ def compose_from_text(
     *,
     output_path: Path | str | None = None,
     seed_offset: int = 0,
+    style_override: str | None = None,
+    tempo_override: int | None = None,
 ) -> str:
     """Compose a slackbeatz `.sb` file from an arbitrary input string.
 
@@ -279,12 +281,22 @@ def compose_from_text(
 
     *seed_offset* is folded into the SHA-256 digest so the same phrase
     produces a different song for each integer value — used by the REPL
-    ``/seed N`` command to spin variations on a phrase without retyping.
+    ``/seed N`` command (and the GUI seed box) to spin variations on a
+    phrase without retyping.
+
+    *style_override* — force a specific style name regardless of what
+    the title's keyword scoring would pick. Valid names are the keys
+    of slackbeatz.generators.registry minus the type prefix (e.g.
+    "deep_techno", "psytrance", "acid", "vaporwave", "dub_techno",
+    "drum_and_bass", "garage", "euclid").
+
+    *tempo_override* — force a specific BPM in place of the
+    sentiment-derived value.
     """
     title = extract_title(text)
     # Mood / style come from the *title* (first phrase only) — the
     # spec is "determine the mood/emotion of that title".
-    style = pick_style(title)
+    style = style_override or pick_style(title)
     sentiment = score_sentiment(title)
     # Seed comes from the *full* input — text after the first phrase
     # contributes too, so adding " — take 2" produces a different song
@@ -296,7 +308,7 @@ def compose_from_text(
         payload += b"\x00" + str(seed_offset).encode("ascii")
     h = hashlib.sha256(payload).digest()
     seed = int.from_bytes(h[0:6], "big")
-    tempo = derive_tempo(h, style, sentiment)
+    tempo = tempo_override if tempo_override is not None else derive_tempo(h, style, sentiment)
     key = derive_key(h, style, sentiment)
     content = render_sb(title, style, key, tempo, seed, h, sentiment)
     if output_path is not None:

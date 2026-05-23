@@ -567,14 +567,22 @@ def cmd_repl(args) -> int:
         import threading
 
         from slackbeatz.gui import run_tweak_gui
+        from slackbeatz.player import Player
+
+        # Shared Player — REPL slash commands and GUI widgets both
+        # mutate the same transport state.
+        player = Player(port_name=port_name, setup_arg=args.setup)
+        player.seed_offset = args.seed
 
         def _stop_now() -> None:
+            player.stop()
             cleanup_fs()
             os._exit(0)
 
         repl_thread = threading.Thread(
             target=_repl_input_loop,
             args=(fs_proc, port_name, args, _stop_now),
+            kwargs={"player": player},
             daemon=True,
         )
         repl_thread.start()
@@ -583,12 +591,11 @@ def cmd_repl(args) -> int:
                 fs_proc.stdin,
                 initial_gain=args.gain,
                 initial_reverb_room=args.reverb,
+                player=player,
                 on_close=_stop_now,
             )
         except Exception as e:  # noqa: BLE001 — surface unexpected Tk runtime errors
             print(f"(gui error: {e})", file=sys.stderr)
-        # If we reach here, Tk mainloop exited but _stop_now wasn't
-        # called (e.g. unexpected Tk teardown). Clean up defensively.
         cleanup_fs()
         return 0
 
@@ -606,16 +613,27 @@ def _repl_input_loop(
     port_name: str,
     args,
     on_quit,
+    player=None,
 ) -> None:
     """The REPL's read-eval-play loop. Used directly on the main thread
     in the no-GUI case, or on a daemon thread when ``--gui`` is set
     (because macOS Tk needs main).
 
+    *player* is an optional :class:`slackbeatz.player.Player`. When
+    provided, the REPL shares it with the GUI so transport commands
+    typed at the prompt affect the same playback the sliders do. When
+    omitted (no-GUI plain REPL), a fresh Player is created locally.
+
     *on_quit* is called when the loop exits normally (user typed
     ``/quit`` or hit EOF). The GUI path uses it to terminate the
     process so the Tk mainloop on the main thread stops too.
     """
-    seed_offset = args.seed
+    from slackbeatz.player import KNOWN_STYLES, Player
+
+    if player is None:
+        player = Player(port_name=port_name, setup_arg=args.setup)
+        player.seed_offset = args.seed
+
     try:
         while True:
             try:
@@ -628,71 +646,102 @@ def _repl_input_loop(
             if line in ("/quit", "/exit"):
                 break
             if line == "/help":
-                print("  <phrase>            compose + play that phrase")
-                print("  /seed N             set seed offset (variation knob)")
-                print("  /gain N             master gain (0–2; default 0.6)")
-                print("  /reverb N           reverb room size (0–1)")
-                print("  /reverb on|off      enable / disable reverb")
-                print("  /chorus N           chorus depth (0–50)")
-                print("  /chorus on|off      enable / disable chorus")
-                print("  /quit               end session")
+                print(
+                    "  <phrase>            compose + play that phrase\n"
+                    "  /play               start playback of current song\n"
+                    "  /stop               stop playback (notes off)\n"
+                    "  /status             show current transport state\n"
+                    "  /tempo N            override BPM (or /tempo auto)\n"
+                    "  /style NAME         force style (or /style auto)\n"
+                    f"                       known: {', '.join(KNOWN_STYLES)}\n"
+                    "  /seed N             set seed offset\n"
+                    "  /reroll             pick a random seed + restart\n"
+                    "  /loop on|off        loop the current song on end\n"
+                    "  /reset              clear style/tempo/seed overrides\n"
+                    "  /gain N             master gain (0–2; default 0.6)\n"
+                    "  /reverb N           reverb room size (0–1)\n"
+                    "  /reverb on|off      enable / disable reverb\n"
+                    "  /chorus N           chorus depth (0–50)\n"
+                    "  /chorus on|off      enable / disable chorus\n"
+                    "  /quit               end session"
+                )
                 continue
-            if line.startswith("/seed"):
-                parts = line.split()
-                if len(parts) == 2 and parts[1].lstrip("-").isdigit():
-                    seed_offset = int(parts[1])
-                    print(f"  seed offset → {seed_offset}")
-                else:
-                    print("  usage: /seed <integer>")
+
+            # Transport + parameter slash commands.
+            transport_result = _handle_transport_command(line, player)
+            if transport_result is not None:
+                print(f"  {transport_result}")
                 continue
-            # Inline FluidSynth shell commands — let users tweak the synth
-            # without a GUI. We send these to fs_proc.stdin which is the
-            # same channel the Tk window writes to.
+
+            # FluidSynth shell tweaks (gain/reverb/chorus).
             tweak_handled = _handle_tweak_command(line, fs_proc.stdin)
             if tweak_handled is not None:
                 print(f"  {tweak_handled}")
                 continue
-            # Everything else: compose + play.
+
+            # Everything else: load the phrase and play.
+            player.load_phrase(line)
             try:
-                sb_content = compose_from_text(line, seed_offset=seed_offset)
-            except TypeError:
-                # compose_from_text may not yet accept a seed offset kwarg
-                # (older slackbeatz). Fall back to bare call.
-                sb_content = compose_from_text(line)
-            with tempfile.NamedTemporaryFile(
-                suffix=".sb", delete=False, mode="w", encoding="utf-8",
-            ) as tf:
-                tf.write(sb_content)
-                song_path = Path(tf.name)
-            try:
-                file_ast = parse_file(song_path)
-                if file_ast.song is None:
-                    print("  (composer produced no song?)", file=sys.stderr)
-                    continue
-                setup = _load_setup_for_song(song_path, file_ast, args.setup)
-                resolved = resolve_song(file_ast.song, setup, cli_seed=args.seed)
-            except (ParseError, ResolveError, SetupError) as e:
-                print(f"  error: {e}", file=sys.stderr)
-                continue
-            finally:
-                song_path.unlink(missing_ok=True)
-            print(f'  playing "{file_ast.song.name}" — Ctrl+C to skip')
-            sink = RealtimeSink(port_name=port_name)
-            tempo_map = build_tempo_map(resolved)
-            clock = InternalClock(tempo_map)
-            try:
-                Scheduler(resolved, sink, clock).run()
+                result = player.play()
             except KeyboardInterrupt:
+                player.stop()
                 print("  (skipped)")
-                try:
-                    sink.close()
-                except Exception:
-                    pass
+                continue
+            print(f"  {result}")
     except KeyboardInterrupt:
         print()  # newline after Ctrl+C at the prompt
+        player.stop()
 
+    # Make sure playback is stopped before we exit so notes don't hang
+    # on the synth.
+    player.stop()
     if on_quit is not None:
         on_quit()
+
+
+def _handle_transport_command(line: str, player) -> str | None:
+    """If *line* is a transport / parameter slash command, dispatch to
+    *player* and return a one-line status string. Otherwise return
+    ``None`` (caller treats the line as something else)."""
+    parts = line.split(maxsplit=1)
+    cmd = parts[0]
+    arg = parts[1].strip() if len(parts) > 1 else ""
+
+    if cmd == "/play":
+        return player.play()
+    if cmd == "/stop":
+        return player.stop()
+    if cmd == "/status":
+        return player.status()
+    if cmd == "/reroll":
+        return player.reroll_seed()
+    if cmd == "/reset":
+        return player.reset_overrides()
+    if cmd == "/tempo":
+        if not arg or arg == "auto":
+            return player.set_tempo(None)
+        try:
+            return player.set_tempo(int(arg))
+        except ValueError:
+            return "usage: /tempo <integer-bpm> | /tempo auto"
+    if cmd == "/style":
+        if not arg or arg == "auto":
+            return player.set_style(None)
+        return player.set_style(arg)
+    if cmd == "/seed":
+        if not arg:
+            return "usage: /seed <integer>"
+        try:
+            return player.set_seed_offset(int(arg))
+        except ValueError:
+            return "usage: /seed <integer>"
+    if cmd == "/loop":
+        if arg.lower() in ("on", "true", "1"):
+            return player.set_loop(True)
+        if arg.lower() in ("off", "false", "0"):
+            return player.set_loop(False)
+        return "usage: /loop on|off"
+    return None
 
 
 def cmd_render(args) -> int:

@@ -333,7 +333,14 @@ class Scheduler:
         self.sink = sink
         self.clock = clock
 
-    def run(self) -> None:
+    def run(self, stop_event=None) -> None:
+        """Render the song to MIDI events and stream them via the sink.
+
+        If *stop_event* (a :class:`threading.Event`) is provided, the
+        loop checks it between events and exits early when set. Used by
+        the live transport (REPL/GUI) to interrupt playback for
+        re-composition, tempo change, seek, etc.
+        """
         events = render_events(self.song)
         self.sink.open()
         self.clock.open()
@@ -349,6 +356,8 @@ class Scheduler:
             for msg in _initial_program_changes(self.song):
                 self.sink.send(msg)
             for abs_tick, msg in events:
+                if stop_event is not None and stop_event.is_set():
+                    break
                 self.clock.wait_until(abs_tick)
                 self.sink.send(msg)
         finally:

@@ -114,6 +114,7 @@ def run_tweak_gui(
     initial_gain: float | None = None,
     initial_reverb_room: float | None = None,
     initial_programs: dict[int, int] | None = None,
+    player=None,
     on_close: Callable[[], None] | None = None,
 ) -> None:
     """Open the tweak window. Blocks until the user closes it.
@@ -169,6 +170,131 @@ def run_tweak_gui(
 
     notebook = ttk.Notebook(root)
     notebook.pack(fill="both", expand=True, padx=6, pady=6)
+
+    # ------------------------------------------------------------------
+    # Transport tab — only created if a Player is provided. Drives the
+    # shared transport state: phrase load, play/stop, tempo, style,
+    # seed, loop, reroll.
+    # ------------------------------------------------------------------
+    if player is not None:
+        from slackbeatz.player import KNOWN_STYLES
+
+        transport = ttk.Frame(notebook)
+        notebook.add(transport, text="Transport")
+
+        # Now-playing label + Play/Stop button.
+        nowplaying_var = tk.StringVar(value="(no song loaded)")
+        nowplaying_lbl = ttk.Label(
+            transport, textvariable=nowplaying_var,
+            font=("TkDefaultFont", 12, "bold"),
+        )
+        nowplaying_lbl.pack(padx=10, pady=(10, 4), anchor="w")
+
+        playstop_var = tk.StringVar(value="▶ Play")
+
+        def _refresh_nowplaying() -> None:
+            # Called on player state change.
+            if player.title:
+                src = f'"{player.title}"'
+            elif player.current_phrase:
+                src = f'"{player.current_phrase}"'
+            elif player.current_song_path:
+                src = player.current_song_path.name
+            else:
+                src = "(no song loaded)"
+            state = "▶ playing" if player.is_playing else "■ stopped"
+            nowplaying_var.set(f"{state}: {src}")
+            playstop_var.set("■ Stop" if player.is_playing else "▶ Play")
+
+        # Player notifies the GUI by invoking on_state_change. Tk widgets
+        # must be touched from the main thread, so we marshal via after().
+        def _on_state_change_from_thread() -> None:
+            root.after(0, _refresh_nowplaying)
+        player.on_state_change = _on_state_change_from_thread
+
+        button_row = ttk.Frame(transport)
+        button_row.pack(fill="x", padx=10, pady=4)
+        ttk.Button(
+            button_row, textvariable=playstop_var, width=10,
+            command=lambda: (player.toggle(), _refresh_nowplaying()),
+        ).pack(side="left", padx=2)
+        ttk.Button(
+            button_row, text="⟳ Re-roll", width=12,
+            command=lambda: (player.reroll_seed(), _refresh_nowplaying()),
+        ).pack(side="left", padx=2)
+        ttk.Button(
+            button_row, text="Reset overrides", width=14,
+            command=lambda: (player.reset_overrides(), _refresh_nowplaying()),
+        ).pack(side="left", padx=2)
+
+        # Tempo slider — None / auto when the slider is at its left edge.
+        ttk.Separator(transport, orient="horizontal").pack(fill="x", padx=10, pady=8)
+        tempo_row = ttk.Frame(transport); tempo_row.pack(fill="x", padx=10, pady=2)
+        ttk.Label(tempo_row, text="Tempo (BPM)", width=14, anchor="w").pack(side="left")
+        tempo_var = tk.IntVar(value=120 if player.tempo_override is None else player.tempo_override)
+
+        def _on_tempo(value):
+            v = int(float(value))
+            player.set_tempo(v)
+        tempo_scale = tk.Scale(
+            tempo_row, from_=60, to=200, orient="horizontal",
+            variable=tempo_var, showvalue=True, length=240,
+            command=_on_tempo,
+        )
+        tempo_scale.pack(side="left", fill="x", expand=True)
+        ttk.Button(
+            tempo_row, text="Auto", width=6,
+            command=lambda: (player.set_tempo(None), tempo_var.set(120)),
+        ).pack(side="left", padx=4)
+
+        # Style dropdown.
+        style_row = ttk.Frame(transport); style_row.pack(fill="x", padx=10, pady=4)
+        ttk.Label(style_row, text="Style", width=14, anchor="w").pack(side="left")
+        style_choices = ["(auto)"] + list(KNOWN_STYLES)
+        style_var = tk.StringVar(value="(auto)")
+        style_cb = ttk.Combobox(
+            style_row, values=style_choices, state="readonly",
+            textvariable=style_var, width=20,
+        )
+
+        def _on_style(_event):
+            choice = style_var.get()
+            player.set_style(None if choice == "(auto)" else choice)
+        style_cb.bind("<<ComboboxSelected>>", _on_style)
+        style_cb.pack(side="left", padx=2)
+
+        # Seed offset entry.
+        seed_row = ttk.Frame(transport); seed_row.pack(fill="x", padx=10, pady=4)
+        ttk.Label(seed_row, text="Seed offset", width=14, anchor="w").pack(side="left")
+        seed_var = tk.StringVar(value=str(player.seed_offset))
+        seed_entry = ttk.Entry(seed_row, textvariable=seed_var, width=14)
+        seed_entry.pack(side="left", padx=2)
+
+        def _on_seed_apply():
+            try:
+                player.set_seed_offset(int(seed_var.get()))
+            except ValueError:
+                seed_var.set(str(player.seed_offset))
+        ttk.Button(seed_row, text="Apply", width=8, command=_on_seed_apply).pack(side="left", padx=2)
+        seed_entry.bind("<Return>", lambda _e: _on_seed_apply())
+
+        # Loop toggle.
+        loop_row = ttk.Frame(transport); loop_row.pack(fill="x", padx=10, pady=4)
+        loop_var = tk.IntVar(value=1 if player.loop else 0)
+        ttk.Checkbutton(
+            loop_row, text="Loop on song end", variable=loop_var,
+            command=lambda: player.set_loop(bool(loop_var.get())),
+        ).pack(side="left", padx=2)
+
+        ttk.Label(
+            transport,
+            text="Type a phrase at the REPL prompt to load a song. "
+                 "Tempo / Style / Seed restart the current song with the "
+                 "new value.",
+            wraplength=400, justify="left", foreground="#666",
+        ).pack(padx=10, pady=(10, 4), anchor="w")
+
+        _refresh_nowplaying()
 
     # ------------------------------------------------------------------
     # Effects tab — gain / reverb / chorus sliders + on-off toggles.
