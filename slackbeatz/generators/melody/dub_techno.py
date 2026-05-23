@@ -72,9 +72,10 @@ class MelodyDubTechno(Generator):
             tick = bar * ticks_per_bar
             evo_mult = evolution_multiplier(bar, ctx.bars, macro["evolution"], direction)
             jitter = ctx.rng.randint(-3, 3)
-            vel = max(1, min(127, int(round(base_vel * intensity * evo_mult * ctx.tension)) + jitter))
+            vel = max(1, min(127, int(round(base_vel * intensity * evo_mult * ctx.tension)) + jitter + melody_phrase_bump(bar, self)))
             base_dur = int(ctx.ticks_per_bar * gate)  # long sustain — 4 quarters
             dur = max(1, apply_gate_jitter(base_dur, gate_jitter, ctx.rng))
+            pitch, tick, vel = apply_mistake(pitch, tick, vel, mistakes, ctx.rng)
             yield Note(
                 tick=tick, duration=dur,
                 channel=inst.channel, pitch=pitch, velocity=vel,

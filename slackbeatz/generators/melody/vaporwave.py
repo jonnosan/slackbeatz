@@ -160,11 +160,12 @@ class MelodyVaporwave(Generator):
                     min(
                         127,
                         int(round(base_vel * intensity * evo_mult * ctx.tension))
-                        + jitter,
+                        + jitter + melody_phrase_bump(bar, self),
                     ),
                 )
                 last_deg = 6 + semis  # for any downstream memory use
                 _ = memory  # touch to avoid unused-warning churn
+                pitch, tick, vel = apply_mistake(pitch, tick, vel, mistakes, ctx.rng)
                 yield Note(
                     tick=tick, duration=dur,
                     channel=inst.channel, pitch=pitch, velocity=vel,

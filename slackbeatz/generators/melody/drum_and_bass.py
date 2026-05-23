@@ -124,9 +124,10 @@ class MelodyDrumAndBass(Generator):
                     min(
                         127,
                         int(round(base_vel * intensity * evo_mult * ctx.tension))
-                        + jitter + accent,
+                        + jitter + melody_phrase_bump(bar, self) + accent,
                     ),
                 )
+                pitch, tick, vel = apply_mistake(pitch, tick, vel, mistakes, ctx.rng)
                 yield Note(
                     tick=tick, duration=max(1, dur),
                     channel=inst.channel, pitch=pitch, velocity=vel,

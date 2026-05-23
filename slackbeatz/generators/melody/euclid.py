@@ -116,8 +116,9 @@ class MelodyEuclid(Generator):
                 tick = bar_start + step_to_ticks(step, ctx.ppq)
                 jitter = ctx.rng.randint(-5, 5)
                 # Issue #14: ctx.tension is the part-level energy scalar.
-                vel = max(1, min(127, int(round(base_vel * intensity * evo_mult * ctx.tension)) + jitter))
+                vel = max(1, min(127, int(round(base_vel * intensity * evo_mult * ctx.tension)) + jitter + melody_phrase_bump(bar, self)))
                 dur = apply_gate_jitter(base_dur, gate_jitter, ctx.rng)
+                pitch, tick, vel = apply_mistake(pitch, tick, vel, mistakes, ctx.rng)
                 yield Note(
                     tick=tick, duration=dur, channel=inst.channel,
                     pitch=pitch, velocity=vel,
