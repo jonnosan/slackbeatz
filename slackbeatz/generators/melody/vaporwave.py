@@ -115,32 +115,51 @@ class MelodyVaporwave(Generator):
                 controller=10, value=pan_value,
             )
 
-            # 2 or 3 notes per chord, placed on quarter-note boundaries
-            # within the chord's bars. Lower density than ``melody
-            # deep_techno`` to match the vaporwave aesthetic.
-            n_notes = ctx.rng.choice([2, 2, 3])
-            slots = sorted(ctx.rng.sample(range(prog.bars_per_chord * 4), n_notes))
-            for slot in slots:
-                # Pick a degree — memory may reuse a recent one if N>0,
-                # else delegate to the "avoid last_deg" picker.
-                candidates = [d for d in _DEGREES if d != last_deg] or _DEGREES
-                deg = memory.pick_next(ctx.rng, lambda r, cands=candidates: r.choice(cands))
-                last_deg = deg
-                pitch = transposed_pitch(
-                    scale_note(chord_root_deg + deg, tonic, scale, 4 + octave_off),
-                    ctx.transpose_semitones,
-                )
+            # Descending chromatic lick — the smooth-jazz "noodle".
+            # Start on the chord's 7th, walk down chromatically over
+            # ~2 bars, land on the chord root, then 2 bars of breathing
+            # room before the next phrase.
+            #
+            # Chromatic steps (in semitones) from the start note,
+            # descending: 0, 1, 1, 2, 2 — i.e. 7th → b7 → 6 → 5 →
+            # tracks the natural-minor descent with one chromatic
+            # passing tone. Six notes total over 2 bars of half-bar
+            # quarter-note pacing (~0.4 sec/note at 120 BPM).
+            start_pitch = transposed_pitch(
+                scale_note(chord_root_deg + 6, tonic, scale, 4 + octave_off),
+                ctx.transpose_semitones,
+            )
+            # Steps below the start. Negative = pitch descends.
+            descent_intervals = (0, -2, -3, -5, -7, -10)
+            quarter_ticks = ppq
+            chord_start = bar * ticks_per_bar
+            for i, semis in enumerate(descent_intervals):
+                pitch = start_pitch + semis
                 pitch = maybe_octave_jump(pitch, octave_jump, ctx.rng)
                 pitch = maybe_passing_tone(pitch, passing_tones, ctx.rng)
                 if not 0 <= pitch <= 127:
                     continue
-                # Note lands on a quarter-note grid relative to chord start.
-                tick = bar * ticks_per_bar + slot * ppq
-                # Long sustain — half a bar by default + optional jitter.
-                base_dur = max(1, int(2 * ppq * gate))
+                tick = chord_start + i * quarter_ticks
+                # Sustain into the next note for a legato feel —
+                # roughly 80% of the inter-note gap.
+                base_dur = max(1, int(quarter_ticks * gate))
                 dur = apply_gate_jitter(base_dur, gate_jitter, ctx.rng)
-                jitter = ctx.rng.randint(-4, 4)
-                vel = max(1, min(127, int(round(base_vel * intensity * evo_mult * ctx.tension)) + jitter))
+                jitter = ctx.rng.randint(-3, 3)
+                # Final note (the landing on chord root) rings out a
+                # little longer + softer — the "exhale".
+                if i == len(descent_intervals) - 1:
+                    dur = max(dur, quarter_ticks * 2)
+                    jitter -= 4
+                vel = max(
+                    1,
+                    min(
+                        127,
+                        int(round(base_vel * intensity * evo_mult * ctx.tension))
+                        + jitter,
+                    ),
+                )
+                last_deg = 6 + semis  # for any downstream memory use
+                _ = memory  # touch to avoid unused-warning churn
                 yield Note(
                     tick=tick, duration=dur,
                     channel=inst.channel, pitch=pitch, velocity=vel,

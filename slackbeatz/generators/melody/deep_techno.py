@@ -32,13 +32,28 @@ from slackbeatz.theory.scales import scale_note
 
 
 # Eligible scale degrees in dorian — leans on 3rd, 5th, 7th and 9th for
-# Detroit-deep-techno modal flavour. Avoids the leading tone to stay
-# sustained / unresolved.
-_DEGREES = [2, 4, 6, 9]
+# Detroit modal hook. Four chord tones from the dorian scale arranged
+# so the contour climbs (1, 3, 5, 7) — a classic "Strings of Life"
+# silhouette. The motif then rotates per phrase, shifting the starting
+# degree, so the same four pitches return at different positions and
+# create the "looping but evolving" feel.
+_HOOK_DEGREES = (1, 3, 5, 7)
 
 
 @register_generator("melody", "deep_techno")
 class MelodyDeepTechno(Generator):
+    """``melody deep_techno`` — Detroit modal hook.
+
+    A fixed four-note motif (scale degrees 1, 3, 5, 7) played as
+    half-notes — one degree per half-bar, so the four notes span two
+    bars. Every 8 bars the motif rotates: each repetition starts one
+    degree later than the previous (1357 → 3571 → 5713 → 7135 → 1357).
+    The result is a slow recurring hook that drifts pitch-wise across
+    the song without ever being a literal one-bar loop — the
+    signature of Detroit deep techno melody (Derrick May / Carl Craig
+    "string" lines).
+    """
+
     def generate(self, ctx: PartContext) -> Iterator[Event]:
         inst = self.instrument
         assert inst is not None and inst.is_pitched
@@ -56,35 +71,55 @@ class MelodyDeepTechno(Generator):
 
         tonic, _ = parse_key(ctx.key)
         ticks_per_bar = ctx.ticks_per_bar
+        # Half-note pacing: two notes per bar.
+        cell_ticks = ctx.ppq * 2
 
-        last_deg: int | None = None
-        for bar in range(ctx.bars):
+        # Iterate the song in half-note cells. Each cell yields one
+        # note of the rotating motif.
+        n_cells = (ctx.bars * ticks_per_bar) // cell_ticks
+        rotation = 0  # which degree the motif currently starts on
+        for cell in range(n_cells):
+            bar = (cell * cell_ticks) // ticks_per_bar
+            # Rotate the motif every 4 hook-iterations (= every 8 bars
+            # at 2 cells/bar × 4 hook-notes = 8 bars per rotation cycle).
+            if cell > 0 and cell % 16 == 0:
+                rotation = (rotation + 1) % 4
+
             if should_mute_bar(ctx.rng, macro["mute_prob"]):
                 continue
             if not call_response_active(self.handle, pair, bar):
                 continue
-            evo_mult = evolution_multiplier(bar, ctx.bars, macro["evolution"], direction)
-            # 1 or 2 notes per bar, randomly placed on a quarter-note grid.
-            n = 1 if ctx.rng.random() < 0.7 else 2
-            beats = sorted(ctx.rng.sample(range(4), n))
-            for beat in beats:
-                # Pick a degree but avoid repeating the last one.
-                candidates = [d for d in _DEGREES if d != last_deg] or _DEGREES
-                deg = ctx.rng.choice(candidates)
-                last_deg = deg
-                pitch = transposed_pitch(
-                    scale_note(deg, tonic, scale, 4 + octave_off),
-                    ctx.transpose_semitones,
-                )
-                pitch = maybe_passing_tone(pitch, passing_tones, ctx.rng)
-                if not 0 <= pitch <= 127:
-                    continue
-                tick = bar * ticks_per_bar + beat * ctx.ppq
-                base_dur = max(1, int(ctx.ppq * 2 * gate))  # half-note-ish
-                dur = apply_gate_jitter(base_dur, gate_jitter, ctx.rng)
-                jitter = ctx.rng.randint(-4, 4)
-                vel = max(1, min(127, int(round(base_vel * intensity * evo_mult * ctx.tension)) + jitter))
-                yield Note(
-                    tick=tick, duration=dur,
-                    channel=inst.channel, pitch=pitch, velocity=vel,
-                )
+
+            # Which note of the motif is this? Walk through 4 hook
+            # degrees per phrase, starting at `rotation`.
+            idx_in_hook = cell % 4
+            deg = _HOOK_DEGREES[(rotation + idx_in_hook) % 4]
+            pitch = transposed_pitch(
+                scale_note(deg, tonic, scale, 4 + octave_off),
+                ctx.transpose_semitones,
+            )
+            pitch = maybe_passing_tone(pitch, passing_tones, ctx.rng)
+            if not 0 <= pitch <= 127:
+                continue
+
+            evo_mult = evolution_multiplier(
+                bar, ctx.bars, macro["evolution"], direction,
+            )
+            tick = cell * cell_ticks
+            # Hold the note for most of the half-bar so the motif
+            # "sustains" — the modal hook lives in the long tones.
+            base_dur = max(1, int(cell_ticks * gate))
+            dur = apply_gate_jitter(base_dur, gate_jitter, ctx.rng)
+            jitter = ctx.rng.randint(-4, 4)
+            vel = max(
+                1,
+                min(
+                    127,
+                    int(round(base_vel * intensity * evo_mult * ctx.tension))
+                    + jitter,
+                ),
+            )
+            yield Note(
+                tick=tick, duration=dur,
+                channel=inst.channel, pitch=pitch, velocity=vel,
+            )

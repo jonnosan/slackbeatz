@@ -33,11 +33,31 @@ from slackbeatz.theory.keys import parse_key
 from slackbeatz.theory.scales import scale_note
 
 
-_DEGREES = [0, 2, 4, 6, 8]
+# Liquid DnB minor-7th arpeggio (root, b3, 5, b7 of dorian) plus the
+# 9th and 11th for occasional jazz colour. Ascending by default; the
+# direction flips per phrase.
+_ARP_TONES = (0, 2, 4, 6)        # b7th-chord arpeggio (root, 3, 5, 7)
+_JAZZ_TONES = (8, 10)            # 9th + 11th for colour notes
 
 
 @register_generator("melody", "drum_and_bass")
 class MelodyDrumAndBass(Generator):
+    """``melody drum_and_bass`` — liquid 7th-chord arpeggio.
+
+    The signature melodic sound of liquid funk DnB (LTJ Bukem,
+    Calibre, High Contrast): a 7th-chord arpeggio sketched out as
+    8th notes in the second half of a 4-bar phrase, then 2.5 bars of
+    breathing room. Each successive phrase reverses direction
+    (up → down → up → down) so the arpeggio bounces.
+
+    Beat layout per 4-bar window::
+
+        bar  0 1 2 3
+        kit  . . . .  R 3 5 7 9 11
+        beat 1 2 3 4  ^ ^ ^ ^ ^  ^  ← 8th-note arpeggio across 1.5 bars
+                       starts on beat 3 of bar 3
+    """
+
     def generate(self, ctx: PartContext) -> Iterator[Event]:
         inst = self.instrument
         assert inst is not None and inst.is_pitched
@@ -54,14 +74,33 @@ class MelodyDrumAndBass(Generator):
 
         tonic, _ = parse_key(ctx.key)
         ticks_per_bar = ctx.ticks_per_bar
+        eighth = ctx.ppq // 2
 
+        phrase_idx = 0
         for bar in range(0, ctx.bars, 4):
             if should_mute_bar(ctx.rng, macro["mute_prob"]):
+                phrase_idx += 1
                 continue
-            n_notes = ctx.rng.choice([2, 3])
-            slots = sorted(ctx.rng.sample(range(16), n_notes))
-            for s in slots:
-                deg = ctx.rng.choice(_DEGREES)
+            # Build the arpeggio tone list — 4 chord tones, optionally
+            # extended with one jazz colour tone (1-in-3 phrases).
+            tones = list(_ARP_TONES)
+            if ctx.rng.random() < 0.33:
+                tones.append(ctx.rng.choice(_JAZZ_TONES))
+            # Reverse direction on alternate phrases.
+            if phrase_idx % 2 == 1:
+                tones.reverse()
+
+            # Arpeggio starts at beat 3 of bar +2 (= halfway through
+            # phrase). Eighth-note spacing for the 4-6 notes.
+            start_tick = (bar + 2) * ticks_per_bar + 2 * ctx.ppq
+            evo_mult = evolution_multiplier(
+                bar, ctx.bars, macro["evolution"], direction,
+            )
+            for i, deg in enumerate(tones):
+                tick = start_tick + i * eighth
+                # Stop if we've spilled past the phrase boundary.
+                if tick >= (bar + 4) * ticks_per_bar:
+                    break
                 pitch = transposed_pitch(
                     scale_note(deg, tonic, scale, 4 + octave_off),
                     ctx.transpose_semitones,
@@ -69,14 +108,22 @@ class MelodyDrumAndBass(Generator):
                 pitch = maybe_passing_tone(pitch, passing_tones, ctx.rng)
                 if not 0 <= pitch <= 127:
                     continue
-                # Quarter-note grid relative to 4-bar window start.
-                tick = bar * ticks_per_bar + s * ctx.ppq
-                base_dur = int(2 * ctx.ppq * gate)
+                base_dur = max(1, int(eighth * gate))
                 dur = apply_gate_jitter(base_dur, gate_jitter, ctx.rng)
-                evo_mult = evolution_multiplier(bar, ctx.bars, macro["evolution"], direction)
                 jitter = ctx.rng.randint(-4, 4)
-                vel = max(1, min(127, int(round(base_vel * intensity * evo_mult * ctx.tension)) + jitter))
+                # First + last notes of the arp ring out slightly
+                # louder — the "phrase peaks" of the line.
+                accent = 8 if i in (0, len(tones) - 1) else 0
+                vel = max(
+                    1,
+                    min(
+                        127,
+                        int(round(base_vel * intensity * evo_mult * ctx.tension))
+                        + jitter + accent,
+                    ),
+                )
                 yield Note(
                     tick=tick, duration=max(1, dur),
                     channel=inst.channel, pitch=pitch, velocity=vel,
                 )
+            phrase_idx += 1
