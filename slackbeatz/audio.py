@@ -34,31 +34,45 @@ from pathlib import Path
 # Soundfont discovery
 # --------------------------------------------------------------------------
 
-_DEFAULT_SOUNDFONT_NAME = "GeneralUser-GS.sf2"
+_DEFAULT_SOUNDFONT_NAME = "FluidR3_GM.sf2"
 _DEFAULT_SOUNDFONT_URL = (
-    # GeneralUser GS v1.471 by S. Christian Collins — ~30 MB free-for-
-    # any-use General MIDI soundfont. Substantially better synth-section
-    # quality than TimGM6mb, which matters because slackbeatz spends most
-    # of its bandwidth on bass / lead / pad. Users who want a different
-    # SF can override via --soundfont or $SLACKBEATZ_SOUNDFONT.
-    "https://archive.org/download/free-soundfonts-sf2-2019-04/"
-    "GeneralUser%20GS%20v1.471.sf2"
+    # FluidR3_GM.sf2 — the canonical 148 MB stereo General-MIDI soundfont
+    # by Frank Wen, MIT-licensed. The synth + drum sections meaningfully
+    # exceed GeneralUser GS, which matters because slackbeatz hits both
+    # heavily via GM `program_change` events. Hosted at musical-artifacts
+    # (the canonical community archive — same upstream the brew/apt
+    # `fluid-soundfont-gm` packages pull from).
+    "https://musical-artifacts.com/artifacts/738/FluidR3_GM.sf2"
 )
 _CACHE_DIR = Path.home() / ".cache" / "slackbeatz"
 
 # Paths we'll silently pick up if a soundfont is already there. Ordered
-# by likelihood on each platform.
+# by likelihood + quality — the full FluidR3_GM stereo SF (Homebrew
+# fluid-synth bundles it on some systems) trumps the cached compressed
+# default. Then the legacy GeneralUser cache so existing users don't
+# have to redownload if they liked it.
 _COMMON_SOUNDFONT_PATHS: tuple[Path, ...] = (
-    # macOS (Homebrew on Apple Silicon)
+    # macOS (Homebrew on Apple Silicon) — stereo FluidR3_GM if present.
     Path("/opt/homebrew/share/sounds/sf2/FluidR3_GM.sf2"),
     Path("/opt/homebrew/share/soundfonts/default.sf2"),
-    # macOS (Homebrew on Intel)
+    # macOS (Homebrew on Intel).
     Path("/usr/local/share/sounds/sf2/FluidR3_GM.sf2"),
     Path("/usr/local/share/soundfonts/default.sf2"),
-    # Linux (Debian/Ubuntu via fluid-soundfont-gm / freepats-general-midi)
+    # Linux (Debian/Ubuntu via fluid-soundfont-gm).
     Path("/usr/share/sounds/sf2/FluidR3_GM.sf2"),
     Path("/usr/share/sounds/sf2/TimGM6mb.sf2"),
     Path("/usr/share/soundfonts/default.sf2"),
+    # Cached FluidR3_GM.sf2 stereo (auto-downloaded default for slackbeatz
+    # ≥ this commit). Stereo wins over the compressed mono variant if
+    # both happen to be present.
+    Path.home() / ".cache" / "slackbeatz" / "FluidR3_GM.sf2",
+    # Compressed mono variant of the same FluidR3 patches — acceptable
+    # fallback that saves users from re-downloading 148 MB if they have
+    # the smaller file already cached.
+    Path.home() / ".cache" / "slackbeatz" / "FluidR3Mono_GM.sf3",
+    # Legacy GeneralUser cache from earlier slackbeatz versions — still
+    # usable, picked up only if no FluidR3 variant is reachable.
+    Path.home() / ".cache" / "slackbeatz" / "GeneralUser-GS.sf2",
 )
 
 
@@ -113,7 +127,7 @@ def _download_default_soundfont() -> Path:
     _CACHE_DIR.mkdir(parents=True, exist_ok=True)
     dest = _CACHE_DIR / _DEFAULT_SOUNDFONT_NAME
     print(
-        f"slackbeatz: downloading default soundfont (~6 MB) to {dest} ...",
+        f"slackbeatz: downloading default soundfont (~140 MB) to {dest} ...",
         file=sys.stderr,
         flush=True,
     )

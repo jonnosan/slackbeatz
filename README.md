@@ -61,7 +61,7 @@ Style-picker keyword examples:
 
 Pre-composed demos live under [`examples/composed/`](examples/composed/) — one `.sb` + `.mp3` for each style.
 
-The MP3s are rendered through **GeneralUser GS** (free GM soundfont, ~30 MB, auto-downloaded on first use) with per-channel GM program selection — bass = Synth Bass, lead = Saw Lead / Square Lead, pad = Warm Pad, candy = FX patches — picked per `(type, style)` so each style sits in a recognisably different timbral space. It's still a GM rendering, not production audio: plug a real synth in for that.
+The MP3s are rendered through **FluidR3_GM** (Frank Wen's MIT-licensed 148 MB stereo GM soundfont, auto-downloaded to `~/.cache/slackbeatz/` on first use) with per-channel GM program selection — bass = Synth Bass, lead = Saw Lead / Square Lead, pad = Warm Pad, candy = FX patches — picked per `(type, style)` so each style sits in a recognisably different timbral space. It's still a GM rendering, not production audio: plug a real synth in for that.
 
 ## Quick start
 
@@ -81,7 +81,15 @@ slackbeatz audio examples/dark_sunday.sb -o /tmp/dark.mp3
 
 ### Audio rendering setup
 
-`slackbeatz audio` shells out to **FluidSynth** + **ffmpeg** and uses a General MIDI soundfont (auto-downloaded to `~/.cache/slackbeatz/` on first use — GeneralUser GS, ~30 MB).
+`slackbeatz audio` shells out to **FluidSynth** + **ffmpeg** and uses a General MIDI soundfont. Discovery order:
+
+1. `--soundfont <path>` flag if set
+2. `$SLACKBEATZ_SOUNDFONT` env var if set
+3. Common system paths (Homebrew, `/usr/share/sounds/sf2/`, …)
+4. `~/.cache/slackbeatz/FluidR3_GM.sf2` (auto-download default — 148 MB)
+5. `~/.cache/slackbeatz/FluidR3Mono_GM.sf3` (compressed mono variant)
+6. `~/.cache/slackbeatz/GeneralUser-GS.sf2` (legacy slackbeatz default)
+7. Auto-download FluidR3_GM.sf2 if nothing above hit
 
 ```bash
 # macOS
