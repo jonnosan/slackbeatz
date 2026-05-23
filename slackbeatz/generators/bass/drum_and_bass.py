@@ -51,8 +51,16 @@ class BassDrumAndBass(Generator):
         direction = pick_evolution_direction(ctx.rng, macro["evolution"])
 
         tonic, _ = parse_key(ctx.key)
-        # Sub-bass register — octave 1 (~33 = A1).
-        root = transposed_pitch(midi_note(tonic, 1 + octave_off), ctx.transpose_semitones)
+        # Sub-bass register. Use the standard `2 + octave_off` formula
+        # every other bass generator uses; with the style's default
+        # `octave_off=-1` that places the root at A1 (MIDI 33 ≈ 55 Hz)
+        # — the fundamental of a classic DnB Reese. Earlier versions
+        # used `1 + octave_off` which combined with the (then) default
+        # `octave_off=-2` to drop the bass to A-1 (≈14 Hz), subsonic
+        # and inaudible on every playback system.
+        root = transposed_pitch(
+            midi_note(tonic, 2 + octave_off), ctx.transpose_semitones
+        )
 
         ticks_per_bar = ctx.ticks_per_bar
         # One note per 2 bars — slow drone underneath the busy drums.

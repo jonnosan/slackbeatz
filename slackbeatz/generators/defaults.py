@@ -65,7 +65,7 @@ STYLE_BASE_OCTAVE: dict[tuple[str, str], int] = {
     ("bass", "vaporwave"):   -1,
     ("bass", "acid"):         0,   # TB-303 sits high for the lead-bass feel
     ("bass", "dub_techno"): -1,
-    ("bass", "drum_and_bass"): -2,    # ultra-low sub
+    ("bass", "drum_and_bass"): -1,    # A1 (55 Hz) — classic DnB Reese register
     ("bass", "garage"):       -1,
     ("melody", "euclid"):       0,
     ("melody", "deep_techno"):  0,
