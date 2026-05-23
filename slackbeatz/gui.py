@@ -413,10 +413,13 @@ def run_tweak_gui(
         label_text = f"ch {ch:>2}" + (f" — {role}" if role else "")
         ttk.Label(row, text=label_text, width=18, anchor="w").pack(side="left")
 
-        # Per-channel mute checkbox — only meaningful when a Player
-        # is wired in (otherwise there's nothing to mute against).
+        # Per-channel mute + solo checkboxes — only meaningful when a
+        # Player is wired in (otherwise there's nothing to gate against).
+        # Solo is additive (DAW convention): solo'ing more than one
+        # channel makes all of them audible together; everything else
+        # gets muted. Clicking a lit Solo unlights it.
         if player is not None:
-            mute_var = tk.IntVar(value=1 if ch in player.muted_channels else 0)
+            mute_var = tk.IntVar(value=1 if ch in player._user_mutes else 0)
 
             def _on_mute(channel=ch, var=mute_var):
                 if var.get():
@@ -425,6 +428,17 @@ def run_tweak_gui(
                     player.unmute(channel)
             ttk.Checkbutton(
                 row, text="mute", variable=mute_var, command=_on_mute,
+            ).pack(side="left", padx=(0, 4))
+
+            solo_var = tk.IntVar(value=1 if ch in player._solo else 0)
+
+            def _on_solo(channel=ch, var=solo_var):
+                if var.get():
+                    player.solo(channel)
+                else:
+                    player.unsolo_channel(channel)
+            ttk.Checkbutton(
+                row, text="solo", variable=solo_var, command=_on_solo,
             ).pack(side="left", padx=(0, 6))
 
         if ch == 10:

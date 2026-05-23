@@ -661,7 +661,8 @@ def _repl_input_loop(
                     "  /reset              clear style/tempo/seed overrides\n"
                     "  /mute N             mute channel N (1-16)\n"
                     "  /unmute N | all     unmute channel(s)\n"
-                    "  /solo N | off       solo channel N (mute everything else)\n"
+                    "  /solo N             toggle solo on channel N (additive)\n"
+                    "  /solo off           clear all solos\n"
                     "  /gain N             master gain (0–2; default 0.6)\n"
                     "  /reverb N | on|off  reverb room (0–1) or active toggle\n"
                     "  /chorus N | on|off  chorus depth (0–50) or active toggle\n"
@@ -780,7 +781,10 @@ def _handle_transport_command(line: str, player) -> str | None:
         if not arg or arg.lower() == "off":
             return player.unsolo()
         try:
-            return player.solo(int(arg))
+            # /solo N toggles — if already solo'd, remove from set;
+            # otherwise add. DAW convention: clicking a solo button
+            # that's already lit unlights it.
+            return player.toggle_solo(int(arg))
         except ValueError:
             return "usage: /solo <1-16> | /solo off"
     if cmd == "/preserve":

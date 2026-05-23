@@ -84,9 +84,19 @@ class Player:
         # thread while a playback thread is mid-stop.
         self._lock = threading.RLock()
 
-        # Mute set (1-indexed channels). Mutated under _lock; read by
-        # the scheduler thread on every event.
+        # Channel state. The scheduler reads ``muted_channels`` by
+        # reference on every event — we never reassign it, only
+        # mutate in-place, so the worker thread always sees the
+        # current set without re-passing it.
+        #
+        # Effective mutes are computed from two underlying sources:
+        # ``_user_mutes`` (channels the user explicitly muted) and
+        # ``_solo`` (channels the user solo'd). When ``_solo`` is
+        # non-empty, only solo'd channels are audible (DAW-style
+        # solo); otherwise the user-mute set takes effect.
         self.muted_channels: set[int] = set()
+        self._user_mutes: set[int] = set()
+        self._solo: set[int] = set()
         # Reference to the currently-running Scheduler. Used by the
         # transport to read its ``current_tick`` for seek-preserving
         # parameter changes.
@@ -175,44 +185,89 @@ class Player:
 
     def mute(self, channel: int) -> str:
         with self._lock:
-            self.muted_channels.add(int(channel))
-            self._silence_channel(channel)
+            self._user_mutes.add(int(channel))
+            self._recompute_mutes()
             self.on_state_change()
-            return f"muted ch {channel} (active mutes: {sorted(self.muted_channels)})"
+            return self._mute_status_line()
 
     def unmute(self, channel: int) -> str:
         with self._lock:
-            self.muted_channels.discard(int(channel))
+            self._user_mutes.discard(int(channel))
+            self._recompute_mutes()
             self.on_state_change()
-            return (
-                f"unmuted ch {channel} (active mutes: {sorted(self.muted_channels)})"
-                if self.muted_channels else
-                f"unmuted ch {channel} (no active mutes)"
-            )
+            return self._mute_status_line()
 
     def toggle_mute(self, channel: int) -> str:
         with self._lock:
-            if int(channel) in self.muted_channels:
+            if int(channel) in self._user_mutes:
                 return self.unmute(channel)
             return self.mute(channel)
 
     def solo(self, channel: int) -> str:
-        """Mute every channel except *channel*. Slackbeatz uses ch 1
-        (lead), 2 (bass), 3 (pad), 4 (candy), 10 (drums) by default —
-        solo'ing one of these gives you that part in isolation."""
+        """Add *channel* to the solo set. While the solo set is non-
+        empty, only solo'd channels are audible (DAW-style: solo'ing a
+        second channel ADDS it to what's playing rather than replacing
+        the first). Calling :meth:`unsolo` (no arg) or
+        :meth:`unsolo_channel` removes channels from the solo set."""
         with self._lock:
-            target = int(channel)
-            self.muted_channels = {ch for ch in range(1, 17) if ch != target}
-            for ch in self.muted_channels:
-                self._silence_channel(ch)
+            self._solo.add(int(channel))
+            self._recompute_mutes()
             self.on_state_change()
-            return f"solo ch {target} (muted: {sorted(self.muted_channels)})"
+            return self._mute_status_line()
+
+    def toggle_solo(self, channel: int) -> str:
+        with self._lock:
+            if int(channel) in self._solo:
+                return self.unsolo_channel(channel)
+            return self.solo(channel)
 
     def unsolo(self) -> str:
+        """Clear the entire solo set. User mutes take effect again."""
         with self._lock:
-            self.muted_channels.clear()
+            self._solo.clear()
+            self._recompute_mutes()
             self.on_state_change()
-            return "unmuted all channels"
+            return self._mute_status_line()
+
+    def unsolo_channel(self, channel: int) -> str:
+        """Remove *channel* from the solo set without clearing the
+        others."""
+        with self._lock:
+            self._solo.discard(int(channel))
+            self._recompute_mutes()
+            self.on_state_change()
+            return self._mute_status_line()
+
+    def _recompute_mutes(self) -> None:
+        """Recalculate ``muted_channels`` from ``_user_mutes`` + ``_solo``.
+
+        Caller holds ``_lock``. Mutates the existing set in-place so
+        the scheduler's by-reference read stays current.
+
+        Newly-muted channels get an immediate CC 123 so any held notes
+        stop ringing; newly-unmuted channels need no signal (the next
+        note_on plays on its own).
+        """
+        if self._solo:
+            new_mutes = {ch for ch in range(1, 17) if ch not in self._solo}
+        else:
+            new_mutes = set(self._user_mutes)
+        # Diff: channels that just became muted need a kill signal.
+        newly_muted = new_mutes - self.muted_channels
+        self.muted_channels.clear()
+        self.muted_channels.update(new_mutes)
+        for ch in newly_muted:
+            self._silence_channel(ch)
+
+    def _mute_status_line(self) -> str:
+        parts: list[str] = []
+        if self._solo:
+            parts.append(f"solo: {sorted(self._solo)}")
+        if self._user_mutes:
+            parts.append(f"muted: {sorted(self._user_mutes)}")
+        if not parts:
+            return "no mutes / solos"
+        return ", ".join(parts)
 
     # ------------------------------------------------------------------
     # Seek
