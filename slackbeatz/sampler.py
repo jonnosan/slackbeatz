@@ -23,7 +23,7 @@ import threading
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Any, Callable, Optional
 
 
 # sounddevice + soundfile + numpy are optional at import time so callers
@@ -61,6 +61,190 @@ class _PortListener:
     midi_port: object = None   # mido.ports.BaseInput
     thread: Optional[threading.Thread] = None
     stop_flag: threading.Event = field(default_factory=threading.Event)
+
+
+# --------------------------------------------------------------------------
+# Pedalboard FX catalog — used by the 🎛 Mixer tab's per-sampler-strip
+# FX-slot dropdowns (GH #33)
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PedalboardParamSpec:
+    """One slider's worth of pedalboard-plugin attribute metadata.
+
+    The Mixer GUI reads each spec, finds the matching ``attr`` on the
+    live plugin, and renders a slider whose drag mutates the plugin
+    in place. pedalboard supports in-place attribute mutation on a
+    plugin that's part of a running ``Pedalboard`` chain.
+    """
+
+    label: str          # display name shown next to the slider
+    attr: str           # python attribute name on the plugin
+    lo: float
+    hi: float
+    default: float
+
+
+@dataclass(frozen=True)
+class PedalboardFXSpec:
+    """One pedalboard FX-type catalog entry: display name + a builder
+    callable that returns a fresh plugin instance with neutral
+    defaults, plus the param specs for the mixer GUI sliders.
+
+    The builder defaults each plugin to its "no audible effect" state
+    so swapping FX types doesn't blast loud audio at the user — they
+    have to move a slider to hear anything."""
+
+    name: str
+    builder: Callable[[], Any]
+    params: tuple[PedalboardParamSpec, ...]
+
+
+def _pedalboard_catalog() -> "dict[str, PedalboardFXSpec]":
+    """Build the catalog lazily so importing this module doesn't
+    require pedalboard. Returns an empty dict if pedalboard isn't
+    installed; the Mixer GUI then renders sampler strips without FX
+    type dropdowns + falls back to the legacy fixed-chain UX."""
+    try:
+        from pedalboard import (
+            Bitcrush,
+            Chorus,
+            Compressor,
+            Delay,
+            Distortion,
+            Gain,
+            HighpassFilter,
+            LowpassFilter,
+            Phaser,
+            Reverb,
+        )
+    except ImportError:
+        return {}
+
+    # Curated subset of pedalboard built-ins biased toward "useful in
+    # a live mixer". Insertion order = dropdown order. "Off" maps to
+    # Gain(0) — pedalboard has no bypass primitive, so a passthrough
+    # gain serves the same purpose at negligible CPU cost.
+    catalog: dict[str, PedalboardFXSpec] = {}
+
+    catalog["Off"] = PedalboardFXSpec(
+        name="Off",
+        builder=lambda: Gain(gain_db=0.0),
+        params=(),
+    )
+    catalog["Distortion"] = PedalboardFXSpec(
+        name="Distortion",
+        builder=lambda: Distortion(drive_db=0.0),
+        params=(
+            PedalboardParamSpec("drive", "drive_db", 0.0, 30.0, 0.0),
+        ),
+    )
+    catalog["Delay"] = PedalboardFXSpec(
+        name="Delay",
+        builder=lambda: Delay(delay_seconds=0.25, feedback=0.0, mix=0.0),
+        params=(
+            PedalboardParamSpec("time",  "delay_seconds", 0.0,  2.0,  0.25),
+            PedalboardParamSpec("fb",    "feedback",      0.0,  0.95, 0.0),
+            PedalboardParamSpec("mix",   "mix",           0.0,  1.0,  0.0),
+        ),
+    )
+    catalog["Reverb"] = PedalboardFXSpec(
+        name="Reverb",
+        builder=lambda: Reverb(
+            room_size=0.5, damping=0.5, wet_level=0.0, dry_level=1.0,
+        ),
+        params=(
+            PedalboardParamSpec("size", "room_size", 0.0, 1.0, 0.5),
+            PedalboardParamSpec("damp", "damping",   0.0, 1.0, 0.5),
+            PedalboardParamSpec("wet",  "wet_level", 0.0, 1.0, 0.0),
+        ),
+    )
+    catalog["Chorus"] = PedalboardFXSpec(
+        name="Chorus",
+        builder=lambda: Chorus(rate_hz=1.0, depth=0.0, mix=0.0),
+        params=(
+            PedalboardParamSpec("rate",  "rate_hz", 0.1, 7.0, 1.0),
+            PedalboardParamSpec("depth", "depth",   0.0, 1.0, 0.0),
+            PedalboardParamSpec("mix",   "mix",     0.0, 1.0, 0.0),
+        ),
+    )
+    catalog["Phaser"] = PedalboardFXSpec(
+        name="Phaser",
+        builder=lambda: Phaser(rate_hz=0.5, depth=0.0, mix=0.0),
+        params=(
+            PedalboardParamSpec("rate",  "rate_hz", 0.1, 7.0, 0.5),
+            PedalboardParamSpec("depth", "depth",   0.0, 1.0, 0.0),
+            PedalboardParamSpec("mix",   "mix",     0.0, 1.0, 0.0),
+        ),
+    )
+    catalog["Compressor"] = PedalboardFXSpec(
+        name="Compressor",
+        builder=lambda: Compressor(threshold_db=-10.0, ratio=4.0),
+        params=(
+            PedalboardParamSpec("thresh", "threshold_db", -50.0, 0.0, -10.0),
+            PedalboardParamSpec("ratio",  "ratio",         1.0, 20.0, 4.0),
+        ),
+    )
+    catalog["Gain"] = PedalboardFXSpec(
+        name="Gain",
+        builder=lambda: Gain(gain_db=0.0),
+        params=(
+            PedalboardParamSpec("dB", "gain_db", -30.0, 30.0, 0.0),
+        ),
+    )
+    catalog["Bitcrush"] = PedalboardFXSpec(
+        name="Bitcrush",
+        # pedalboard Bitcrush: bit_depth lower = more lo-fi. Default
+        # 32 = effectively no crush; user dials down to hear the
+        # effect. Range 4..32 keeps the GUI slider linear-musical.
+        builder=lambda: Bitcrush(bit_depth=32),
+        params=(
+            PedalboardParamSpec("bits", "bit_depth", 4.0, 32.0, 32.0),
+        ),
+    )
+    catalog["Highpass"] = PedalboardFXSpec(
+        name="Highpass",
+        builder=lambda: HighpassFilter(cutoff_frequency_hz=20.0),
+        params=(
+            PedalboardParamSpec("cutoff", "cutoff_frequency_hz",
+                                20.0, 2000.0, 20.0),
+        ),
+    )
+    catalog["Lowpass"] = PedalboardFXSpec(
+        name="Lowpass",
+        builder=lambda: LowpassFilter(cutoff_frequency_hz=20000.0),
+        params=(
+            PedalboardParamSpec("cutoff", "cutoff_frequency_hz",
+                                200.0, 20000.0, 20000.0),
+        ),
+    )
+    return catalog
+
+
+# Built once at import time so repeated lookups are cheap. Empty when
+# pedalboard isn't installed — callers should treat that as "no FX
+# surface on this run" rather than an error.
+PEDALBOARD_FX_CATALOG: dict[str, PedalboardFXSpec] = _pedalboard_catalog()
+
+# Default slot loadout for new sampler FX chains. Two slots —
+# Distortion in slot 0, Delay in slot 1 — matching the original
+# fixed-chain behaviour before #33 introduced the type pickers.
+_DEFAULT_FX_SLOT_KEYS: tuple[str, ...] = ("Distortion", "Delay")
+
+
+@dataclass
+class _FXSlot:
+    """One slot in a port's pedalboard chain. Each slot tracks its
+    FX type (key into :data:`PEDALBOARD_FX_CATALOG`), the live plugin
+    instance the GUI mutates, and whether the slot is currently
+    audible (Power toggle). Power-off swaps the plugin out of the
+    Pedalboard chain rather than zeroing its mix, so re-powering
+    restores the user's sliders exactly."""
+
+    type_key: str
+    plugin: Any
+    powered: bool = False
 
 
 class Sampler:
@@ -120,10 +304,15 @@ class Sampler:
 
         # Per-port mix-bus gain (post-mix, pre-output). Defaults to 1.0
         # (unity). Driven from the slackbeatz Mixer GUI tab via
-        # :meth:`set_port_gain`. Phase 3 will also stash per-port
-        # pedalboard FX chains here keyed by port name.
+        # :meth:`set_port_gain`.
         self._port_gains: dict[str, float] = {}
+        # Per-port pedalboard FX chains, plus per-port slot state so
+        # the Mixer GUI can render type-pickers + power toggles for
+        # each slot. The chains are mutable from the GUI thread via
+        # :meth:`set_slot_fx` / :meth:`set_slot_power`; the audio
+        # callback reads atomically via dict.get.
         self._fx_chains: dict[str, object] = {}  # port_name → pedalboard.Pedalboard
+        self._fx_slots: dict[str, list[_FXSlot]] = {}  # port_name → [slot0, slot1, ...]
 
     # ------------------------------------------------------------------
     # Bank management
@@ -170,20 +359,21 @@ class Sampler:
         """Current per-port gain (default 1.0 if never set)."""
         return float(self._port_gains.get(port_name, 1.0))
 
-    def enable_fx(self, port_name: str) -> bool:
-        """Install a default ``Pedalboard([Distortion(), Delay()])``
-        chain on *port_name*. Returns True if the chain is now live,
-        False if pedalboard isn't available (caller's mixer GUI then
-        renders the strip without FX controls).
+    def enable_fx(
+        self,
+        port_name: str,
+        slot_keys: tuple[str, ...] = _DEFAULT_FX_SLOT_KEYS,
+    ) -> bool:
+        """Install an FX chain on *port_name* with one slot per
+        entry of *slot_keys* (each a key into
+        :data:`PEDALBOARD_FX_CATALOG`). Default loadout: Distortion
+        + Delay, both Power=off so the chain is audibly transparent
+        until the user opts in via the Mixer's Power toggles.
 
-        Both effects start with neutral params — Distortion at 0 dB
-        drive, Delay with a small default time + low feedback — so the
-        chain is audibly transparent until the user moves a slider. The
-        chain stays installed across notes; lock-free reads from the
-        audio thread are fine because dict.get is atomic in CPython."""
-        try:
-            from pedalboard import Pedalboard, Distortion, Delay
-        except ImportError:
+        Returns True on success, False if pedalboard isn't installed
+        (the Mixer GUI then renders the strip without FX controls +
+        prints a one-line install hint)."""
+        if not PEDALBOARD_FX_CATALOG:
             import sys
             print(
                 "slackbeatz sampler: pedalboard not installed — FX chain "
@@ -192,18 +382,94 @@ class Sampler:
                 file=sys.stderr,
             )
             return False
-        self._fx_chains[port_name] = Pedalboard([
-            Distortion(drive_db=0.0),
-            Delay(delay_seconds=0.25, feedback=0.0, mix=0.0),
-        ])
+        slots = [
+            _FXSlot(
+                type_key=key,
+                plugin=PEDALBOARD_FX_CATALOG[key].builder(),
+                powered=False,
+            )
+            for key in slot_keys
+            if key in PEDALBOARD_FX_CATALOG
+        ]
+        self._fx_slots[port_name] = slots
+        self._rebuild_chain(port_name)
         return True
+
+    def set_slot_fx(
+        self, port_name: str, slot_idx: int, type_key: str,
+    ) -> bool:
+        """Swap slot *slot_idx*'s FX type to *type_key* (a key into
+        :data:`PEDALBOARD_FX_CATALOG`). The slot keeps its Power
+        state but loses its prior slider values — switching FX type
+        builds a fresh plugin with the new type's defaults. Returns
+        True on success."""
+        slots = self._fx_slots.get(port_name)
+        if slots is None or slot_idx >= len(slots):
+            return False
+        spec = PEDALBOARD_FX_CATALOG.get(type_key)
+        if spec is None:
+            return False
+        slots[slot_idx] = _FXSlot(
+            type_key=type_key,
+            plugin=spec.builder(),
+            powered=slots[slot_idx].powered,
+        )
+        self._rebuild_chain(port_name)
+        return True
+
+    def set_slot_power(
+        self, port_name: str, slot_idx: int, powered: bool,
+    ) -> bool:
+        """Toggle slot *slot_idx*'s Power state. Power-off removes
+        the slot's plugin from the live Pedalboard chain (vs zeroing
+        its mix) so re-powering restores the user's slider values
+        exactly. Returns True on success."""
+        slots = self._fx_slots.get(port_name)
+        if slots is None or slot_idx >= len(slots):
+            return False
+        slots[slot_idx].powered = bool(powered)
+        self._rebuild_chain(port_name)
+        return True
+
+    def get_slot_state(
+        self, port_name: str, slot_idx: int,
+    ) -> Optional[_FXSlot]:
+        """Return the live :class:`_FXSlot` for read-only inspection
+        (type_key + plugin instance + powered flag). The Mixer GUI
+        mutates plugin attributes (``slot.plugin.drive_db = 12.0``)
+        in place — pedalboard supports that on a running chain."""
+        slots = self._fx_slots.get(port_name)
+        if slots is None or slot_idx >= len(slots):
+            return None
+        return slots[slot_idx]
 
     def get_fx_chain(self, port_name: str):
         """Return the live :class:`pedalboard.Pedalboard` chain for
-        *port_name*, or ``None`` if FX aren't enabled. The mixer GUI
-        mutates plugin attributes (``chain[0].drive_db = 12.0``) in
-        place — pedalboard supports that on a running chain."""
+        *port_name*, or ``None`` if FX aren't enabled. Kept for
+        backward compat with the pre-#33 GUI which mutated the chain
+        directly; new code should use :meth:`get_slot_state` /
+        :meth:`set_slot_fx`."""
         return self._fx_chains.get(port_name)
+
+    def _rebuild_chain(self, port_name: str) -> None:
+        """Atomically swap *port_name*'s Pedalboard chain to a fresh
+        instance containing only the currently-powered slot plugins.
+        Called whenever slot type / power state changes. The audio
+        callback's ``dict.get`` is atomic in CPython, so the worst
+        case is one audio block still using the old chain — no
+        torn-state risk."""
+        if not PEDALBOARD_FX_CATALOG:
+            return
+        from pedalboard import Pedalboard
+        slots = self._fx_slots.get(port_name, [])
+        live_plugins = [s.plugin for s in slots if s.powered]
+        if live_plugins:
+            self._fx_chains[port_name] = Pedalboard(live_plugins)
+        else:
+            # No plugins powered → no chain at all. The audio
+            # callback's `if chain is not None` skip avoids the
+            # round-trip into pedalboard for a no-op.
+            self._fx_chains.pop(port_name, None)
 
     # ------------------------------------------------------------------
     # Lifecycle

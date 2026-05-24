@@ -741,17 +741,20 @@ def _build_mixer_tab(
         elif kind in ("sampler-voice", "sampler-fx"):
             role = "voice" if kind == "sampler-voice" else "fx"
             port = sampler_port_for_role[role]
-            chain = sampler.get_fx_chain(port) if port else None
-            if chain is None:
+            # Slot state is initialised by `sampler.enable_fx` from
+            # cli.py at startup. If pedalboard isn't installed the
+            # state is missing — render an install hint instead of
+            # the FX surface.
+            if port is None or sampler.get_slot_state(port, 0) is None:
                 ttk.Label(
                     strip,
                     text="(pedalboard not installed — `pip install "
-                         "slackbeatz[tts]` to enable distortion + delay)",
+                         "slackbeatz[tts]` to enable per-slot FX)",
                     foreground="#888",
                     font=("TkDefaultFont", 9, "italic"),
                 ).pack(anchor="w", padx=8, pady=(0, 6))
             else:
-                _build_sampler_fx(strip, chain, _var, ttk, tk)
+                _build_sampler_fx_slots(strip, sampler, port, _var, ttk, tk)
 
     # Master strip — slim row at the bottom that scales every per-strip
     # slider's effective value.
@@ -946,87 +949,108 @@ def _build_surge_fx_slots(parent, surge_instance, _var, ttk, tk) -> None:
         cb.bind("<<ComboboxSelected>>", _on_type_change)
 
 
-def _build_sampler_fx(parent, chain, _var, ttk, tk) -> None:
-    """Render Distortion + Delay controls for one sampler strip.
+def _build_sampler_fx_slots(parent, sampler, port_name, _var, ttk, tk) -> None:
+    """Render two pedalboard FX-slot rows (FX-1 + FX-2) for one
+    sampler strip — mirror of :func:`_build_surge_fx_slots` for the
+    Surge strips.
 
-    *chain* is a live :class:`pedalboard.Pedalboard` constructed by
-    :meth:`Sampler.enable_fx` — index 0 is Distortion, index 1 is
-    Delay. Sliders mutate the plugin attributes in place (pedalboard
-    supports live parameter updates on a running chain). Power
-    toggles flip the plugin's ``bypass`` attribute when supported,
-    otherwise zero the wet mix as a fallback."""
-    dist = chain[0]
-    delay = chain[1]
+    Each row has a type-picker dropdown (sourced from
+    :data:`PEDALBOARD_FX_CATALOG`) + Power toggle + dynamic param
+    sliders that re-render when the dropdown changes. Type swap
+    rebuilds the underlying Pedalboard chain atomically via
+    :meth:`Sampler.set_slot_fx`; Power toggles add/remove the slot's
+    plugin from the live chain via :meth:`Sampler.set_slot_power`."""
+    from slackbeatz.sampler import PEDALBOARD_FX_CATALOG
 
-    # Distortion row.
-    d_row = ttk.Frame(parent)
-    d_row.pack(fill="x", padx=8, pady=(0, 2))
-    ttk.Label(d_row, text="Dist", width=8, anchor="w").pack(side="left")
-    dist_power = _var(tk.IntVar, value=0)  # default Off — drive=0 anyway
+    catalog_names = list(PEDALBOARD_FX_CATALOG.keys())
 
-    def _set_drive(val: str, dv=dist_power, plugin=dist):
-        plugin.drive_db = float(val) if dv.get() else 0.0
+    for slot_idx in (0, 1):
+        slot_state = sampler.get_slot_state(port_name, slot_idx)
+        if slot_state is None:
+            continue
 
-    drive_var = _var(tk.DoubleVar, value=0.0)
-    ttk.Checkbutton(
-        d_row, text="Power", variable=dist_power,
-        command=lambda: _set_drive(drive_var.get()),
-    ).pack(side="left", padx=(0, 6))
-    ttk.Label(d_row, text="drive", width=6, anchor="w").pack(side="left")
-    tk.Scale(
-        d_row, from_=0.0, to=30.0, resolution=0.1,
-        orient="horizontal", variable=drive_var,
-        showvalue=False, length=200,
-        command=_set_drive,
-    ).pack(side="left", fill="x", expand=True)
+        row = ttk.Frame(parent)
+        row.pack(fill="x", padx=8, pady=(0, 4))
 
-    # Delay row.
-    de_row = ttk.Frame(parent)
-    de_row.pack(fill="x", padx=8, pady=(0, 6))
-    ttk.Label(de_row, text="Delay", width=8, anchor="w").pack(side="left")
-    delay_power = _var(tk.IntVar, value=0)
+        header = ttk.Frame(row)
+        header.pack(fill="x")
+        ttk.Label(header, text=f"FX-{slot_idx + 1}", width=8, anchor="w").pack(side="left")
 
-    # Pre-create vars so the power-toggle can read all three.
-    time_var = _var(tk.DoubleVar, value=delay.delay_seconds)
-    fb_var = _var(tk.DoubleVar, value=delay.feedback)
-    mix_var = _var(tk.DoubleVar, value=0.0)
-
-    def _push_delay(*_args):
-        if delay_power.get():
-            delay.delay_seconds = float(time_var.get())
-            delay.feedback = float(fb_var.get())
-            delay.mix = float(mix_var.get())
-        else:
-            # Off → zero mix (lets the dry signal through unchanged
-            # without removing the plugin from the chain).
-            delay.mix = 0.0
-
-    ttk.Checkbutton(
-        de_row, text="Power", variable=delay_power,
-        command=_push_delay,
-    ).pack(side="left", padx=(0, 6))
-
-    grid = ttk.Frame(de_row)
-    grid.pack(side="left", fill="x", expand=True)
-    grid.columnconfigure(1, weight=1)
-    grid.columnconfigure(3, weight=1)
-    grid.columnconfigure(5, weight=1)
-    for col, (label, var, lo, hi) in enumerate(
-        [
-            ("time", time_var, 0.0, 2.0),
-            ("fb",   fb_var,   0.0, 0.95),
-            ("mix",  mix_var,  0.0, 1.0),
-        ],
-    ):
-        ttk.Label(grid, text=label, anchor="w").grid(
-            row=0, column=col * 2, sticky="w", padx=(0, 2),
+        type_var = _var(tk.StringVar, value=slot_state.type_key)
+        cb = ttk.Combobox(
+            header, values=catalog_names, textvariable=type_var,
+            state="readonly", width=12,
         )
-        tk.Scale(
-            grid, from_=lo, to=hi, resolution=0.01,
-            orient="horizontal", variable=var,
-            showvalue=False, length=110,
-            command=lambda _v: _push_delay(),
-        ).grid(row=0, column=col * 2 + 1, sticky="ew", padx=(0, 6))
+        cb.pack(side="left", padx=(0, 8))
+
+        power_var = _var(tk.IntVar, value=1 if slot_state.powered else 0)
+        ttk.Checkbutton(
+            header, text="Power", variable=power_var,
+            command=lambda s=slot_idx, v=power_var:
+                sampler.set_slot_power(port_name, s, bool(v.get())),
+        ).pack(side="left")
+
+        # Params re-render on type change; pre-allocated frame so
+        # _rebuild_params can wipe + repopulate cleanly.
+        params_frame = ttk.Frame(row)
+        params_frame.pack(fill="x", padx=(0, 4), pady=(2, 0))
+
+        def _rebuild_params(slot_=slot_idx, frame=params_frame) -> None:
+            for w in frame.winfo_children():
+                w.destroy()
+            state = sampler.get_slot_state(port_name, slot_)
+            if state is None:
+                return
+            spec = PEDALBOARD_FX_CATALOG.get(state.type_key)
+            if spec is None or not spec.params:
+                ttk.Label(
+                    frame, text="(no live params for this FX)",
+                    foreground="#888",
+                    font=("TkDefaultFont", 9, "italic"),
+                ).pack(anchor="w")
+                return
+            for param in spec.params:
+                p_row = ttk.Frame(frame)
+                p_row.pack(fill="x", pady=1)
+                ttk.Label(p_row, text=param.label, width=8, anchor="w").pack(side="left")
+                current = float(getattr(state.plugin, param.attr, param.default))
+                p_var = _var(tk.DoubleVar, value=current)
+                # Choose a resolution scaled to the range so the
+                # slider feels musical without being twitchy.
+                rng = max(0.001, param.hi - param.lo)
+                resolution = round(rng / 200, 6) if rng > 0 else 0.01
+                tk.Scale(
+                    p_row, from_=param.lo, to=param.hi,
+                    resolution=resolution,
+                    orient="horizontal", variable=p_var,
+                    showvalue=False, length=200,
+                    command=lambda _v, attr=param.attr, var=p_var, slot__=slot_:
+                        _mutate_slot_plugin(slot__, attr, float(var.get())),
+                ).pack(side="left", fill="x", expand=True)
+
+        def _mutate_slot_plugin(slot_, attr, value) -> None:
+            """Mutate the slot's live plugin in place. The plugin is
+            held by reference inside the Pedalboard chain so the
+            audio thread sees the change on the next callback."""
+            state = sampler.get_slot_state(port_name, slot_)
+            if state is None:
+                return
+            try:
+                setattr(state.plugin, attr, value)
+            except (AttributeError, ValueError):
+                # Plugin doesn't accept that value — silently keep
+                # the previous setting rather than crash the GUI.
+                pass
+
+        _rebuild_params()
+
+        def _on_type_change(_event=None, var=type_var, slot_=slot_idx) -> None:
+            new_key = var.get()
+            if not sampler.set_slot_fx(port_name, slot_, new_key):
+                return
+            _rebuild_params(slot_=slot_)
+
+        cb.bind("<<ComboboxSelected>>", _on_type_change)
 
 
 def _build_fluidsynth_fx(parent, send, _var, ttk, tk, initial_reverb_room) -> None:
