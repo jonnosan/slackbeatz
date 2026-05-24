@@ -1241,7 +1241,13 @@ def _build_surge_fx_slots(parent, surge_instance, _var, ttk, tk) -> None:
 
         _rebuild_params(cur_type_id)
 
-        def _on_type_change(_event=None, var=type_var, slot_=slot) -> None:
+        # Capture this iteration's _rebuild_params via default arg —
+        # otherwise the name resolves at call time and the for-loop
+        # has by then rebound it to slot 2's version, so swapping
+        # slot 1's FX type paints slot 2's frame (and vice versa).
+        def _on_type_change(
+            _event=None, var=type_var, slot_=slot, rb=_rebuild_params,
+        ) -> None:
             new_label = var.get()
             new_id = label_to_typeid.get(new_label)
             if new_id is None:
@@ -1253,9 +1259,9 @@ def _build_surge_fx_slots(parent, surge_instance, _var, ttk, tk) -> None:
             # spawn) and reschedule a few times so any slow /doc
             # replies still get a chance to paint.
             surge_instance.query_fx_slot_docs(slot_)
-            _rebuild_params(new_id)
+            rb(new_id)
             for delay_ms in (150, 400, 1000):
-                parent.after(delay_ms, lambda nid=new_id: _rebuild_params(nid))
+                parent.after(delay_ms, lambda nid=new_id, rb=rb: rb(nid))
 
         cb.bind("<<ComboboxSelected>>", _on_type_change)
 
@@ -1355,11 +1361,20 @@ def _build_sampler_fx_slots(parent, sampler, port_name, _var, ttk, tk) -> None:
 
         _rebuild_params()
 
-        def _on_type_change(_event=None, var=type_var, slot_=slot_idx) -> None:
+        # Capture this iteration's _rebuild_params via default arg —
+        # otherwise `_rebuild_params` resolves by name at call time,
+        # and the for-loop has by then rebound that name to slot 1's
+        # version. Result before this fix: changing FX-1's type
+        # repainted FX-2's params with FX-1's content (and vice
+        # versa), so the two FX rows showed each other's params.
+        def _on_type_change(
+            _event=None, var=type_var, slot_=slot_idx,
+            rb=_rebuild_params,
+        ) -> None:
             new_key = var.get()
             if not sampler.set_slot_fx(port_name, slot_, new_key):
                 return
-            _rebuild_params(slot_=slot_)
+            rb(slot_=slot_)
 
         cb.bind("<<ComboboxSelected>>", _on_type_change)
 
