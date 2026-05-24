@@ -410,7 +410,9 @@ def render_song_with_surge(
     from slackbeatz.engine.midifile import build_midifile
     from slackbeatz.sampler import get_active_sampler, set_active_sampler
     from slackbeatz.synthhost import OSC_CHANNELS
-    from slackbeatz.surge_host import _SURGE_FACTORY, SYNTH_ROLES
+    from slackbeatz.surge_host import (
+        _GEN_TYPE_TO_ROLE, _SURGE_FACTORY, SYNTH_ROLES, style_patch_for_role,
+    )
 
     if progress is None:
         progress = lambda _msg: None  # noqa: E731 — small enough
@@ -449,16 +451,36 @@ def render_song_with_surge(
     # sampler phrases that extend past the last note_on.
     song_seconds = full_midi.length + tail_seconds
 
-    # Map: channel_1idx → role → patch path. Built from SYNTH_ROLES
-    # so the same patches that --surge live uses get baked into the
-    # offline render.
-    surge_role_by_channel: dict[int, dict] = {
-        cfg.channel_1idx: {
+    # Map: channel_1idx → role → patch path. The patch is style-
+    # selected (see :data:`slackbeatz.surge_host._STYLE_PATCH_FOR_ROLE`)
+    # so the offline render uses the same (role, style) patch the
+    # live --surge path picks. Falls back to the role's
+    # :attr:`SynthRoleConfig.initial_patch` when no style-specific
+    # patch is registered.
+    gen_style_by_channel: dict[int, str] = {}
+    for handle in sorted(resolved.gens.keys()):
+        gen = resolved.gens[handle]
+        if gen.instrument is None:
+            continue
+        ch = gen.instrument.channel
+        if ch in gen_style_by_channel:
+            continue
+        if _GEN_TYPE_TO_ROLE.get(gen.type_) is None:
+            continue
+        gen_style_by_channel[ch] = gen.style
+
+    surge_role_by_channel: dict[int, dict] = {}
+    for cfg in SYNTH_ROLES:
+        style = gen_style_by_channel.get(cfg.channel_1idx)
+        patch_path: Optional[Path] = None
+        if style is not None:
+            patch_path = style_patch_for_role(cfg.role, style)
+        if patch_path is None:
+            patch_path = _SURGE_FACTORY / cfg.initial_patch
+        surge_role_by_channel[cfg.channel_1idx] = {
             "role": cfg.role,
-            "patch": _SURGE_FACTORY / cfg.initial_patch,
+            "patch": patch_path,
         }
-        for cfg in SYNTH_ROLES
-    }
 
     # Group MIDI events by channel for stem rendering. Use mido
     # 0-indexed channels internally; report 1-indexed in progress.

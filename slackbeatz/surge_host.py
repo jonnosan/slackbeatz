@@ -164,6 +164,163 @@ def resolve_factory_patch(relpath: str) -> Optional[Path]:
     return candidate if candidate.is_file() else None
 
 
+# Per-(role, style) Surge factory patch. Mirrors the FluidSynth
+# :data:`slackbeatz.engine.midifile._GM_PROGRAM_DEFAULTS` table — FS
+# already picks a style-appropriate GM program for each pitched
+# channel, so the Surge path should do the same.
+#
+# Lookup: ``_STYLE_PATCH_FOR_ROLE[(role, style)]``. Missing entries
+# fall back to :attr:`SynthRoleConfig.initial_patch` so an unmapped
+# style still gets *some* sound rather than silence. Roles match the
+# entries in :data:`SYNTH_ROLES`. The gen-type → role mapping used
+# by :func:`apply_song_patches` is:
+#
+#   bass    → bass    (channel 2)
+#   melody  → lead    (channel 1)
+#   chords  → pad     (channel 3)
+#   candy   → candy   (channel 4)
+#   subbass → sub     (channel 6)
+#
+# Picks lean on factory-patch character: 303-y for acid, FM-punchy
+# for psytrance, deep/atmospheric for dub-techno, Rhodes-leaning for
+# lofi / vaporwave, and so on. The user can always override any
+# instance via the Sound tab patch picker — these are starting
+# defaults that change automatically when the song's style changes.
+_STYLE_PATCH_FOR_ROLE: dict[tuple[str, str], str] = {
+    # ----- bass -----
+    ("bass", "euclid"):        "Basses/Bass 1.fxp",
+    ("bass", "acid"):          "Basses/Mmm... Pointy!.fxp",
+    ("bass", "psytrance"):     "Basses/FM Bass 1.fxp",
+    ("bass", "deep_techno"):   "Basses/Sub 2.fxp",
+    ("bass", "dub_techno"):    "Basses/Sub 3.fxp",
+    ("bass", "vaporwave"):     "Basses/E-Bass.fxp",
+    ("bass", "drum_and_bass"): "Basses/Lord Sawtooth.fxp",
+    ("bass", "garage"):        "Basses/Rubber Bass.fxp",
+    ("bass", "lofi"):          "Basses/Piano Bass.fxp",
+
+    # ----- lead (melody) -----
+    ("lead", "euclid"):        "Leads/Classic Lead 1.fxp",
+    ("lead", "acid"):          "Leads/Acidofil.fxp",
+    ("lead", "psytrance"):     "Leads/Square.fxp",
+    ("lead", "deep_techno"):   "Leads/Etwas.fxp",
+    ("lead", "dub_techno"):    "Leads/Fluff.fxp",
+    ("lead", "vaporwave"):     "Leads/Cottage.fxp",
+    ("lead", "drum_and_bass"): "Leads/Bee.fxp",
+    ("lead", "garage"):        "Leads/Cell.fxp",
+    ("lead", "lofi"):          "Keys/EP 1.fxp",
+
+    # ----- pad (chords) -----
+    ("pad", "euclid"):         "Pads/MKS-70 Warm Pad.fxp",
+    ("pad", "acid"):           "Keys/House Organ.fxp",
+    ("pad", "psytrance"):      "Pads/Communication.fxp",
+    ("pad", "deep_techno"):    "Pads/Ghost Pad.fxp",
+    ("pad", "dub_techno"):     "Pads/Pad 3.fxp",
+    ("pad", "vaporwave"):      "Keys/DX EP.fxp",
+    ("pad", "drum_and_bass"):  "Pads/Distant.fxp",
+    ("pad", "garage"):         "Keys/EP 2.fxp",
+    ("pad", "lofi"):           "Keys/EP 1.fxp",
+
+    # ----- candy (sequences/FX) -----
+    ("candy", "euclid"):        "Sequences/Bell Seq.fxp",
+    ("candy", "acid"):          "Sequences/Acid Seq 1.fxp",
+    ("candy", "psytrance"):     "Sequences/Acid Seq 2.fxp",
+    ("candy", "deep_techno"):   "Sequences/Phase 1.fxp",
+    ("candy", "dub_techno"):    "Sequences/Burial Ground.fxp",
+    ("candy", "vaporwave"):     "Sequences/Bell Seq.fxp",
+    ("candy", "drum_and_bass"): "Sequences/Phase 2.fxp",
+    ("candy", "garage"):        "Sequences/Step Phaser.fxp",
+    ("candy", "lofi"):          "Sequences/Sine Sequencer 1.fxp",
+
+    # ----- sub (subbass) -----
+    ("sub", "euclid"):          "Basses/Sub 1.fxp",
+    ("sub", "acid"):            "Basses/Sub 1.fxp",
+    ("sub", "psytrance"):       "Basses/Sub Square.fxp",
+    ("sub", "deep_techno"):     "Basses/Sub 2.fxp",
+    ("sub", "dub_techno"):      "Basses/Sub 3.fxp",
+    ("sub", "vaporwave"):       "Basses/Sub 2.fxp",
+    ("sub", "drum_and_bass"):   "Basses/Sub 1.fxp",
+    ("sub", "garage"):          "Basses/Sub 1.fxp",
+    ("sub", "lofi"):            "Basses/Sub 4.fxp",
+}
+
+
+# Pitched gen type → SYNTH_ROLES role. Used by
+# :func:`apply_song_patches` to pick the right (role, style) key for
+# each spawned Surge instance.
+_GEN_TYPE_TO_ROLE: dict[str, str] = {
+    "bass":    "bass",
+    "melody":  "lead",
+    "chords":  "pad",
+    "candy":   "candy",
+    "subbass": "sub",
+}
+
+
+def style_patch_for_role(role: str, style: str) -> Optional[Path]:
+    """Absolute path to the (role, style) factory patch, or None if
+    no mapping exists (caller falls back to the role's default
+    :attr:`SynthRoleConfig.initial_patch`)."""
+    relpath = _STYLE_PATCH_FOR_ROLE.get((role, style))
+    if relpath is None:
+        return None
+    return resolve_factory_patch(relpath)
+
+
+def apply_song_patches(surge_instances, resolved_song) -> int:
+    """Reload each Surge instance's patch to match the current song's
+    style for that role.
+
+    For every :class:`SurgeInstance` in *surge_instances*, find the
+    first gen in *resolved_song* whose ``(type, channel)`` maps to
+    that instance's role, look up the (role, style) patch, and
+    :meth:`SurgeInstance.load_patch` it if it differs from the
+    currently-loaded patch.
+
+    Returns the number of instances whose patch was reloaded.
+    Idempotent — repeat calls with the same song are no-ops.
+    """
+    if not surge_instances or resolved_song is None:
+        return 0
+
+    # Build channel → first matching gen (sorted by handle for
+    # determinism) so we can find one gen per Surge instance.
+    by_channel: dict[int, object] = {}
+    for handle in sorted(resolved_song.gens.keys()):
+        gen = resolved_song.gens[handle]
+        if gen.instrument is None:
+            continue
+        ch = gen.instrument.channel
+        if ch in by_channel:
+            continue
+        by_channel[ch] = gen
+
+    reloaded = 0
+    for inst in surge_instances:
+        role = inst.config.role
+        gen = by_channel.get(inst.config.channel_1idx)
+        if gen is None:
+            continue
+        # Verify the gen's type maps to this role — otherwise the
+        # song is using the channel for something the (role, style)
+        # table doesn't cover, and we leave the current patch alone.
+        if _GEN_TYPE_TO_ROLE.get(gen.type_) != role:
+            continue
+        patch_path = style_patch_for_role(role, gen.style)
+        if patch_path is None:
+            continue
+        target_rel = str(patch_path.relative_to(_SURGE_FACTORY))
+        if inst.current_patch_rel == target_rel:
+            continue
+        try:
+            inst.load_patch(patch_path)
+            reloaded += 1
+        except Exception:
+            # Best-effort — a failed patch load shouldn't tear down
+            # the whole song-state-change pipeline.
+            continue
+    return reloaded
+
+
 # Per-role default category under _SURGE_FACTORY. Drives the
 # Instruments-tab dropdown so each Surge channel shows a role-
 # appropriate subset of factory patches (~50-130 each) rather than the

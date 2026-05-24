@@ -3347,6 +3347,27 @@ def run_tweak_gui(
         main_thread_callbacks.append(_rebuild_gens_tab)
 
     # ------------------------------------------------------------------
+    # Per-style Surge patch swap — when the song's style changes, each
+    # spawned Surge instance reloads to its (role, style) factory
+    # patch (see :data:`surge_host._STYLE_PATCH_FOR_ROLE`). Mirrors
+    # how the FluidSynth path's _GM_PROGRAM_DEFAULTS picks a
+    # style-appropriate GM program per channel; the Surge side was
+    # using one fixed patch per role regardless of style before this.
+    # No-op when --surge isn't on (surge_instances is empty).
+    # ------------------------------------------------------------------
+    if player is not None and surge_instances:
+        from slackbeatz.surge_host import apply_song_patches
+
+        def _refresh_surge_patches() -> None:
+            try:
+                apply_song_patches(surge_instances, player.current_resolved)
+            except Exception:
+                pass
+
+        _refresh_surge_patches()
+        main_thread_callbacks.append(_refresh_surge_patches)
+
+    # ------------------------------------------------------------------
     # Sound tab — per-Surge-XT knobs (only when --surge spawned the
     # headless quartet). Drives surge-xt-cli over OSC for live tweaking.
     # The sampler-backed voice + fx sub-tabs render alongside if a
