@@ -1750,6 +1750,8 @@ def _build_builder_tab(parent, *, player, _var, ttk, tk) -> None:
                     side="left", padx=(4, 0),
                 )
 
+            _entry("bars", "bars",
+                   overrides.get("bars", part.bars), kind="int")
             _entry("tempo", "tempo",
                    overrides.get("tempo", part.tempo), kind="int")
             _entry("key", "key",

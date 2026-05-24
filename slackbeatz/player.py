@@ -891,7 +891,7 @@ class Player:
         :meth:`_resolve_current` via :func:`object.__setattr__` on
         the frozen :class:`ResolvedPart`."""
         allowed = {"tempo", "key", "role", "tension",
-                   "transpose_prob", "scale_override"}
+                   "transpose_prob", "scale_override", "bars"}
         if attr not in allowed:
             return f"error: unknown part attr {attr!r} (try {sorted(allowed)})"
         with self._lock:
@@ -1146,6 +1146,15 @@ class Player:
                         # whose Part doesn't have this attr — skip
                         # rather than crash playback.
                         continue
+                # `bars` is the lower bound of `bars=N..M` ranges; if
+                # the user pins it via override, also clear bars_max
+                # so the scheduler doesn't randint() back into the old
+                # upper bound.
+                if "bars" in attrs:
+                    try:
+                        object.__setattr__(part, "bars_max", None)
+                    except Exception:
+                        pass
 
         # Apply per-gen knob overrides (last so they win against
         # everything baked into the composed / loaded .sb).
