@@ -301,7 +301,7 @@ def cmd_live(args) -> int:
 
     if use_surge_gui:
         from slackbeatz.synthhost import (
-            DEFAULT_SURGE_CHANNELS, _resolve_factory_patch,
+            OSC_CHANNELS, _resolve_factory_patch,
             channel_routing_summary, install_hint, is_surge_installed,
             spawn_surge_xt,
         )
@@ -312,9 +312,9 @@ def cmd_live(args) -> int:
                 file=sys.stderr,
             )
         else:
-            print(f"\nslackbeatz: spawning {len(DEFAULT_SURGE_CHANNELS)} Surge XT GUI windows.")
+            print(f"\nslackbeatz: spawning {len(OSC_CHANNELS)} Surge XT GUI windows.")
             print(channel_routing_summary())
-            for inst, (ch_1idx, _port, patch_rel) in DEFAULT_SURGE_CHANNELS.items():
+            for inst, (ch_1idx, _port, patch_rel) in OSC_CHANNELS.items():
                 patch_path = _resolve_factory_patch(patch_rel)
                 proc = spawn_surge_xt(ch_1idx, initial_patch=patch_path)
                 if proc is not None:
@@ -520,10 +520,10 @@ def _build_live_sink(fluidsynth_port: str, surge_routing: bool):
         return fs_sink
     from slackbeatz.sinks.composite import CompositeSink
     from slackbeatz.sinks.multiport import MultiPortSink
-    from slackbeatz.synthhost import DEFAULT_SURGE_CHANNELS
+    from slackbeatz.synthhost import OSC_CHANNELS
     ch_to_port = {
         ch_1idx - 1: port
-        for (ch_1idx, port, _patch) in DEFAULT_SURGE_CHANNELS.values()
+        for (ch_1idx, port, _patch) in OSC_CHANNELS.values()
     }
     multi = MultiPortSink(ch_to_port)
     overrides = {ch: multi for ch in ch_to_port}
@@ -861,7 +861,7 @@ def cmd_repl(args) -> int:
 
             if use_surge_gui:
                 from slackbeatz.synthhost import (
-                    DEFAULT_SURGE_CHANNELS, _resolve_factory_patch,
+                    OSC_CHANNELS, _resolve_factory_patch,
                     channel_routing_summary,
                     install_hint as _gui_install_hint,
                     is_surge_installed, spawn_surge_xt,
@@ -874,11 +874,11 @@ def cmd_repl(args) -> int:
                     )
                 else:
                     print(
-                        f"\nslackbeatz: spawning {len(DEFAULT_SURGE_CHANNELS)} Surge XT "
+                        f"\nslackbeatz: spawning {len(OSC_CHANNELS)} Surge XT "
                         f"GUI windows.",
                     )
                     print(channel_routing_summary())
-                    for inst_name, (ch_1idx, _port, patch_rel) in DEFAULT_SURGE_CHANNELS.items():
+                    for inst_name, (ch_1idx, _port, patch_rel) in OSC_CHANNELS.items():
                         patch_path = _resolve_factory_patch(patch_rel)
                         proc = spawn_surge_xt(ch_1idx, initial_patch=patch_path)
                         if proc is not None:

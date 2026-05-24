@@ -691,12 +691,12 @@ def run_tweak_gui(
                 text="🎛  Surge XT routing",
                 font=("TkDefaultFont", 11, "bold"),
             ).pack(padx=10, anchor="w")
-            from slackbeatz.synthhost import DEFAULT_SURGE_CHANNELS
+            from slackbeatz.synthhost import OSC_CHANNELS
             routing_text = (
                 "Each Surge XT window listens on its own dedicated MIDI port.\n"
                 "In each window: Settings → MIDI Settings → MIDI Input =\n"
             )
-            for inst, (ch, port, _patch) in DEFAULT_SURGE_CHANNELS.items():
+            for inst, (ch, port, _patch) in OSC_CHANNELS.items():
                 routing_text += f"     • window {ch} ({inst}):  {port!r}\n"
             routing_text += (
                 "\nSurge XT remembers the choice across launches, so it's a "

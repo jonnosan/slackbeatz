@@ -249,7 +249,7 @@ class Player:
         self.on_state_change = on_state_change or (lambda: None)
         # When True, every playback opens a CompositeSink that splits
         # pitched channels onto dedicated virtual ports (one per
-        # ``DEFAULT_SURGE_CHANNELS`` entry) — so each Surge XT window
+        # ``OSC_CHANNELS`` entry) — so each Surge XT window
         # has its own MIDI input. Drums + anything else stay on
         # ``port_name`` (FluidSynth).
         self.surge_routing = surge_routing
@@ -945,10 +945,10 @@ class Player:
         if not self.surge_routing or self._shared_surge_sink is not None:
             return
         from slackbeatz.sinks.multiport import MultiPortSink
-        from slackbeatz.synthhost import DEFAULT_SURGE_CHANNELS
+        from slackbeatz.synthhost import OSC_CHANNELS
         ch_to_port = {
             ch_1idx - 1: port_name
-            for (ch_1idx, port_name, _patch) in DEFAULT_SURGE_CHANNELS.values()
+            for (ch_1idx, port_name, _patch) in OSC_CHANNELS.values()
         }
         multi = MultiPortSink(ch_to_port)
         multi.open()
@@ -968,13 +968,13 @@ class Player:
             return base
         from slackbeatz.sinks.composite import CompositeSink
         from slackbeatz.sinks.multiport import MultiPortSink
-        from slackbeatz.synthhost import DEFAULT_SURGE_CHANNELS
+        from slackbeatz.synthhost import OSC_CHANNELS
         # 0-indexed channel → virtual port name. Drums (channel 10 /
         # 0-indexed 9) are NOT in this map — they fall through to the
         # default sink (= FluidSynth).
         ch_to_port = {
             ch_1idx - 1: port_name
-            for (ch_1idx, port_name, _patch) in DEFAULT_SURGE_CHANNELS.values()
+            for (ch_1idx, port_name, _patch) in OSC_CHANNELS.values()
         }
         if self._shared_surge_sink is None:
             # Open once, lazily — the virtual ports stay alive across

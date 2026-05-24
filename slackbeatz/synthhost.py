@@ -49,12 +49,18 @@ _SURGE_FACTORY: Path = Path(
 )
 
 
-# Channel routing convention for the bundled ``gm`` setup. Each entry
-# is ``inst_name -> (channel_1idx, virtual_port_name, default_patch_relpath)``.
-# The patch path is relative to _SURGE_FACTORY; we resolve + sanity-
-# check it before spawning so a stripped install just gets a blank
-# Surge XT instead of a launch failure.
-DEFAULT_SURGE_CHANNELS: dict[str, tuple[int, str, str]] = {
+# Synth-agnostic per-role MIDI routing. Each pitched channel gets
+# its own slackbeatz virtual MIDI port, named uniquely so any OSC-
+# controllable headless synth (surge-xt-cli, ZynAddSubFX, dexed-cli,
+# …) can subscribe to one role's traffic without needing a channel
+# filter. The synth-specific bits (Surge XT factory patch paths,
+# OSC ports) live in :mod:`slackbeatz.surge_host` — the third
+# tuple element below is a Surge XT default that other backends are
+# free to ignore.
+#
+# Entry shape: ``role -> (channel_1idx, virtual_port_name,
+# default_surge_patch_relpath)``.
+OSC_CHANNELS: dict[str, tuple[int, str, str]] = {
     "lead":  (1, "slackbeatz-lead",  "Leads/Classic Lead 1.fxp"),
     "bass":  (2, "slackbeatz-bass",  "Basses/Bass 1.fxp"),
     "pad":   (3, "slackbeatz-pad",   "Pads/MKS-70 Warm Pad.fxp"),
@@ -137,7 +143,7 @@ def channel_routing_summary() -> str:
     pre-loaded in each Surge XT window. Used by the CLI banner and
     the GUI tab."""
     lines = ["Surge XT routing — pick this MIDI input in each window:"]
-    for inst, (ch, port, patch_rel) in DEFAULT_SURGE_CHANNELS.items():
+    for inst, (ch, port, patch_rel) in OSC_CHANNELS.items():
         patch_name = Path(patch_rel).stem
         lines.append(
             f"  window {ch} ({inst}):  MIDI Input → {port!r}   "
