@@ -7,13 +7,13 @@ song "Jungle rolling neurofunk"
   key   F#m
   seed  165176969454170
 
-gen kick   rhythm  drum_and_bass humanize=4
-gen snare  rhythm  drum_and_bass humanize=4 drop_prob=0.07
-gen hats   rhythm  drum_and_bass humanize=4 drop_prob=0.07
-gen sub    bass    drum_and_bass inst=bass
-gen lead   melody  drum_and_bass seed=575
-gen pad    chords  drum_and_bass voice_lead=1
-gen tex    candy   drum_and_bass inst=riser
+gen kick rhythm breakbeat humanize=4
+gen snare rhythm breakbeat humanize=4 drop_prob=0.07
+gen hats rhythm breakbeat humanize=4 drop_prob=0.07
+gen sub bass reese inst=bass
+gen lead melody atmos_lead seed=575
+gen pad chords atmos_pad voice_lead=1
+gen tex candy atmos_lfo inst=riser
 
 part intro 8 role=intro
   pad

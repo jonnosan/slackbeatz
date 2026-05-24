@@ -15,7 +15,7 @@ song "Demo"
   key   Am
   seed  42
 
-gen kick rhythm euclid swing=0.05
+gen kick rhythm euclid_drums swing=0.05
 gen pad  chords euclid
 
 part intro 16
@@ -34,7 +34,7 @@ play intro intro
     assert s.seed == 42
     assert {g.handle for g in s.gens} == {"kick", "pad"}
     kick = next(g for g in s.gens if g.handle == "kick")
-    assert kick.type_ == "rhythm" and kick.style == "euclid"
+    assert kick.type_ == "rhythm" and kick.style == "euclid_drums"
     assert kick.knobs == {"swing": 0.05}
     assert len(s.parts) == 1 and s.parts[0].gens == ["kick", "pad"]
 
@@ -58,7 +58,7 @@ kit drums ch=10 preset=909
 def test_arrangement_expansion_with_groups() -> None:
     fa = parse(
         'song "x"\n'
-        'gen k rhythm euclid\n'
+        'gen k rhythm euclid_drums\n'
         'part p 1\n'
         '  k\n'
         'play p (p p)*2 p\n'
@@ -71,7 +71,7 @@ def test_unknown_knob_rejected_at_parse_time() -> None:
     with pytest.raises(ParseError, match="unknown knob 'whoops'"):
         parse(
             'song "x"\n'
-            'gen k rhythm euclid whoops=1\n'
+            'gen k rhythm euclid_drums whoops=1\n'
             'part p 1\n'
             '  k\n'
             'play p\n'
@@ -82,7 +82,7 @@ def test_play_unmatched_paren_errors() -> None:
     with pytest.raises(ParseError, match=r"missing '\)'"):
         parse(
             'song "x"\n'
-            'gen k rhythm euclid\n'
+            'gen k rhythm euclid_drums\n'
             'part p 1\n'
             '  k\n'
             'play (p\n'

@@ -39,21 +39,21 @@ _GM_PROGRAM_DEFAULTS: dict[tuple[str, str], int] = {
     # 39 Synth Bass 2 for deep_techno (warmer / longer-sustained),
     # 34 Electric Bass (Pick) for vaporwave (lazy mid-80s pick bass).
     # Acid stays on 38 — the closest GM patch to a real TB-303.
-    ("bass", "euclid"):       38,
-    ("bass", "deep_techno"):  39,
-    ("bass", "psytrance"):    38,
-    ("bass", "vaporwave"):    34,
-    ("bass", "acid"):         38,
+    ("bass", "rolling"):       38,
+    ("bass", "subdrone"):  39,
+    ("bass", "gallop"):    38,
+    ("bass", "mellow_pick"):    34,
+    ("bass", "acid_303"):         38,
     # Dub techno: 92 Pad 5 (Bowed) — a warm sustained drone that sits
     # under the chord stabs without competing for attention.
-    ("bass", "dub_techno"):   92,
+    ("bass", "sustain_drone"):   92,
     # Drum'n'bass: 39 Synth Bass 2 — the warm sub-bass voice that
     # sits low under the breakbeat.
-    ("bass", "drum_and_bass"): 39,
+    ("bass", "reese"): 39,
     # Garage: 38 Synth Bass 1 — punchy sub-bass.
-    ("bass", "garage"):       38,
+    ("bass", "two_step_sub"):       38,
     # Lofi: Acoustic Bass (33) — warm fingered upright character.
-    ("bass", "lofi"):         33,
+    ("bass", "acoustic_walk"):         33,
 
     # Sub-bass — Synth Bass 2 (39) for the warmer-sustained voicings,
     # Synth Bass 1 (38) for the punchier styles. GM doesn't have a
@@ -73,52 +73,52 @@ _GM_PROGRAM_DEFAULTS: dict[tuple[str, str], int] = {
     # bright, cuts through. Deep techno wants Pad 1 new age (88).
     # Vaporwave wants Tenor Sax (66). Acid uses 87 (Bass+Lead) as the
     # occasional stab voice — closest to an organ punch on top of the 303.
-    ("melody", "euclid"):       81,
-    ("melody", "deep_techno"):  88,
-    ("melody", "psytrance"):    80,
-    ("melody", "vaporwave"):    66,
-    ("melody", "acid"):         87,
-    ("melody", "dub_techno"):   88,   # Pad 1 — distant lead
-    ("melody", "drum_and_bass"): 88,  # Pad 1 — sparse atmospheric lead
-    ("melody", "garage"):       53,   # Voice Aahs — vocal-stab feel
+    ("melody", "euclid_riff"):       81,
+    ("melody", "sparse_pad_lead"):  88,
+    ("melody", "psy_lead"):    80,
+    ("melody", "lazy_sax"):    66,
+    ("melody", "acid_stab"):         87,
+    ("melody", "distant_lead"):   88,   # Pad 1 — distant lead
+    ("melody", "atmos_lead"): 88,  # Pad 1 — sparse atmospheric lead
+    ("melody", "vocal_chop"):       53,   # Voice Aahs — vocal-stab feel
     # Lofi: Electric Piano 2 (5) — the warm Rhodes Mk II sound that
     # defines lofi melody. Could also use Vibraphone (11) or
     # Soprano Sax (64) for variety.
-    ("melody", "lofi"):          5,
+    ("melody", "rhodes_phrase"):          5,
 
     # Chords / pads: Warm Pad (89) for euclid, Pad 4 choir (91) for
     # deep_techno, Pad 6 Metallic (94) for psytrance, Electric Piano 1
     # Rhodes (4) for vaporwave. Acid uses Rock Organ (18) — the
     # Hammond stab that punctuates Phuture-style productions.
-    ("chords", "euclid"):       89,
-    ("chords", "deep_techno"):  91,
-    ("chords", "psytrance"):    94,
-    ("chords", "vaporwave"):     4,
-    ("chords", "acid"):         18,
+    ("chords", "triad_sustain"):       89,
+    ("chords", "pad_drift"):  91,
+    ("chords", "psy_swell"):    94,
+    ("chords", "arp_walk"):     4,
+    ("chords", "sustained_dyad"):         18,
     # Dub techno: 90 Pad 3 (Polysynth) — the iconic chord-stab voice.
-    ("chords", "dub_techno"):   90,
+    ("chords", "offbeat_stab"):   90,
     # Drum'n'bass: 89 Warm Pad — atmospheric lush voicings.
-    ("chords", "drum_and_bass"): 89,
+    ("chords", "atmos_pad"): 89,
     # Garage: 5 Electric Piano 2 (Wurli) — jazzy R&B-flavoured stabs.
-    ("chords", "garage"):        5,
+    ("chords", "wurli_chop"):        5,
     # Lofi: Electric Piano 1 (4) — the classic Rhodes Mk I sound.
     # Pairs perfectly with EP2 melody and acoustic bass.
-    ("chords", "lofi"):          4,
+    ("chords", "rhodes_chord"):          4,
 
     # Candy: FX 5 brightness (100) for euclid sweeps, FX 7 echoes (102)
     # for deep_techno LFO modulation, FX 8 sci-fi (103) for psytrance
     # acid sweeps, Tubular Bells (14) for vaporwave. Acid uses 100 —
     # the same brightness as euclid, just sparser.
-    ("candy", "euclid"):       100,
-    ("candy", "deep_techno"): 102,
-    ("candy", "psytrance"):   103,
-    ("candy", "vaporwave"):    14,
-    ("candy", "acid"):        100,
-    ("candy", "dub_techno"):  99,    # FX 4 atmosphere — slow textural drone
-    ("candy", "drum_and_bass"): 102,  # FX 7 Echoes — atmospheric texture
-    ("candy", "garage"):       100,   # FX 5 Brightness — short stabs
+    ("candy", "euclid_riser"):       100,
+    ("candy", "slow_lfo"): 102,
+    ("candy", "psy_sweep"):   103,
+    ("candy", "bell_lfo"):    14,
+    ("candy", "acid_sweep"):        100,
+    ("candy", "drone_lfo"):  99,    # FX 4 atmosphere — slow textural drone
+    ("candy", "atmos_lfo"): 102,  # FX 7 Echoes — atmospheric texture
+    ("candy", "minimal_lfo"):       100,   # FX 5 Brightness — short stabs
     # Lofi: FX 1 (96) — rain-like noise that approximates vinyl crackle.
-    ("candy", "lofi"):          96,
+    ("candy", "crackle_lfo"):          96,
 
     # rhythm / drums live on the GM percussion channel (MIDI ch 10);
     # FluidSynth auto-routes to the drum-kit bank there, no program

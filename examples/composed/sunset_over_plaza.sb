@@ -7,13 +7,13 @@ song "Sunset over Plaza"
   key   Bbm
   seed  46319003191243
 
-gen kick   rhythm  vaporwave humanize=4
-gen snare  rhythm  vaporwave humanize=4 drop_prob=0.09
-gen hats   rhythm  vaporwave humanize=4 drop_prob=0.09
-gen bass   bass    vaporwave octave_jump=0.05
-gen lead   melody  vaporwave motif_memory=4 passing_tones=0.1 seed=54
-gen pad    chords  vaporwave arp_prob=0.1
-gen bells  candy   vaporwave inst=riser
+gen kick rhythm slow_kick humanize=4
+gen snare rhythm slow_kick humanize=4 drop_prob=0.09
+gen hats rhythm slow_kick humanize=4 drop_prob=0.09
+gen bass bass mellow_pick octave_jump=0.05
+gen lead melody lazy_sax motif_memory=4 passing_tones=0.1 seed=54
+gen pad chords arp_walk arp_prob=0.1
+gen bells candy bell_lfo inst=riser
 
 part intro 16 role=intro
   pad

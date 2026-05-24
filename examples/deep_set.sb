@@ -13,15 +13,15 @@ song "Deep Set"
 # Very subtle humanization — deep techno sits flat dynamically but
 # benefits from a small timing wobble. Drop the occasional quarter-note
 # hat (drop_prob=0.05). Bass auto-ducks lightly (duck default 0.7).
-gen kick    rhythm deep_techno humanize=3
-gen hats    rhythm deep_techno humanize=3 drop_prob=0.05
-gen clap    rhythm deep_techno humanize=3
+gen kick rhythm four_floor_deep humanize=3
+gen hats rhythm four_floor_deep humanize=3 drop_prob=0.05
+gen clap rhythm four_floor_deep humanize=3
 # kick_env=0.6 emits a per-beat CC 74 envelope on the bass channel that
 # drops on each kick and recovers — the dub-techno "breathing" feel.
-gen bass    bass   deep_techno octave=-1 kick_env=0.6
-gen lead    melody deep_techno motif_memory=4
-gen pad     chords deep_techno
-gen riser   candy  deep_techno
+gen bass bass subdrone octave=-1 kick_env=0.6
+gen lead melody sparse_pad_lead motif_memory=4
+gen pad chords pad_drift
+gen riser candy slow_lfo
 
 part intro 16
   kick

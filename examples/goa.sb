@@ -14,19 +14,19 @@ song "Goa"
 # hit (drop_prob defaults to 0). Accent the downbeat-of-each-half-bar
 # kick for extra punch into drops. Bass gets heavy auto-sidechain
 # (duck default 0.45) for the signature psytrance pump.
-gen kick    rhythm psytrance humanize=1 accent=8
-gen hats    rhythm psytrance humanize=2
-gen clap    rhythm psytrance humanize=2
+gen kick rhythm gallop_kick humanize=1 accent=8
+gen hats rhythm gallop_kick humanize=2
+gen clap rhythm gallop_kick humanize=2
 # burble_prob=0.07 → ~7% of bass notes hit the phrygian b2 instead of
 # the root — the signature acid burble. octave_jump=0.04 occasionally
 # kicks the bass up an octave for the gallop "ping" feel. The style's
 # default sits the gallop at E2 (~82 Hz) — audible on laptop speakers.
-gen bass    bass   psytrance burble_prob=0.07 octave_jump=0.04
+gen bass bass gallop burble_prob=0.07 octave_jump=0.04
 # motif_memory=6 makes the phrygian arpeggio more hypnotic — recent
 # degrees get reused with ~60% probability.
-gen lead    melody psytrance octave=1 motif_memory=6
-gen pad     chords psytrance
-gen riser   candy  psytrance
+gen lead melody psy_lead octave=1 motif_memory=6
+gen pad chords psy_swell
+gen riser candy psy_sweep
 
 part intro 8
   kick

@@ -59,8 +59,8 @@ song "R"
   tempo 130
   key   Am
   seed  {seed}
-gen kick rhythm euclid
-gen bass bass   euclid
+gen kick rhythm euclid_drums
+gen bass bass   rolling
 part p 4
   kick
   bass
@@ -219,7 +219,7 @@ def test_bars_range_resolves_within_bounds() -> None:
     setup = setup_from_ast(parse('setup "x"\ninst kick ch=10 note=36').setup)
     song = parse(
         'song "T"\n  tempo 120\n  key Am\n  seed 1\n'
-        'gen kick rhythm euclid\n'
+        'gen kick rhythm euclid_drums\n'
         'part main 8..16\n  kick\n'
         'play main main main\n'
     ).song
@@ -236,7 +236,7 @@ def test_bars_range_deterministic_per_seed() -> None:
     setup = setup_from_ast(parse('setup "x"\ninst kick ch=10 note=36').setup)
     src = (
         'song "T"\n  tempo 120\n  key Am\n  seed {seed}\n'
-        'gen kick rhythm euclid\n'
+        'gen kick rhythm euclid_drums\n'
         'part main 8..32\n  kick\n'
         'play main main\n'
     )

@@ -1,3 +1,3 @@
 """``candy`` generator style modules."""
 
-from . import euclid, deep_techno, psytrance, vaporwave, acid, dub_techno, drum_and_bass, garage, lofi  # noqa: F401
+from . import euclid_riser, slow_lfo, psy_sweep, bell_lfo, acid_sweep, drone_lfo, atmos_lfo, minimal_lfo, crackle_lfo  # noqa: F401

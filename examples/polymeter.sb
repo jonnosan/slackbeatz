@@ -15,12 +15,12 @@ song "Polymeter"
   tempo 120
   key   Am
 
-gen kick    rhythm euclid humanize=2
-gen snare   rhythm euclid
-gen hats    rhythm euclid swing=0.05
+gen kick rhythm euclid_drums humanize=2
+gen snare rhythm euclid_drums
+gen hats rhythm euclid_drums swing=0.05
 # Bass at 3/4 against the part's 4/4 — polymeter.
-gen sub     bass   euclid inst=bass meter=3/4
-gen pad     chords euclid inst=pad
+gen sub bass rolling inst=bass meter=3/4
+gen pad chords triad_sustain inst=pad
 
 part main 12
   kick

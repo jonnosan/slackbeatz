@@ -30,71 +30,71 @@ song "Style Tour"
   seed  42
 
 # ---------- euclid gens (default Arduino baseline) ----------
-gen kick_eu  rhythm euclid inst=kick
-gen snare_eu rhythm euclid inst=snare
-gen hats_eu  rhythm euclid inst=hats
-gen bass_eu  bass   euclid inst=bass
-gen pad_eu   chords euclid inst=pad
+gen kick_eu rhythm euclid_drums inst=kick
+gen snare_eu rhythm euclid_drums inst=snare
+gen hats_eu rhythm euclid_drums inst=hats
+gen bass_eu bass rolling inst=bass
+gen pad_eu chords triad_sustain inst=pad
 
 # ---------- deep_techno ----------
-gen kick_dt  rhythm deep_techno inst=kick
-gen hats_dt  rhythm deep_techno inst=hats
-gen clap_dt  rhythm deep_techno inst=clap
-gen bass_dt  bass   deep_techno inst=bass
-gen lead_dt  melody deep_techno inst=lead
-gen pad_dt   chords deep_techno inst=pad
+gen kick_dt rhythm four_floor_deep inst=kick
+gen hats_dt rhythm four_floor_deep inst=hats
+gen clap_dt rhythm four_floor_deep inst=clap
+gen bass_dt bass subdrone inst=bass
+gen lead_dt melody sparse_pad_lead inst=lead
+gen pad_dt chords pad_drift inst=pad
 
 # ---------- psytrance ----------
-gen kick_ps  rhythm psytrance inst=kick
-gen hats_ps  rhythm psytrance inst=hats
-gen bass_ps  bass   psytrance inst=bass
-gen lead_ps  melody psytrance inst=lead
-gen pad_ps   chords psytrance inst=pad
+gen kick_ps rhythm gallop_kick inst=kick
+gen hats_ps rhythm gallop_kick inst=hats
+gen bass_ps bass gallop inst=bass
+gen lead_ps melody psy_lead inst=lead
+gen pad_ps chords psy_swell inst=pad
 
 # ---------- acid ----------
-gen kick_ac  rhythm acid inst=kick
-gen clap_ac  rhythm acid inst=clap
-gen hats_ac  rhythm acid inst=hats
-gen bass_ac  bass   acid inst=bass
-gen organ_ac chords acid inst=pad
+gen kick_ac rhythm four_floor_house inst=kick
+gen clap_ac rhythm four_floor_house inst=clap
+gen hats_ac rhythm four_floor_house inst=hats
+gen bass_ac bass acid_303 inst=bass
+gen organ_ac chords sustained_dyad inst=pad
 
 # ---------- garage (UK 2-step) ----------
-gen kick_ga  rhythm garage inst=kick
-gen snare_ga rhythm garage inst=snare
-gen hats_ga  rhythm garage inst=hats
-gen sub_ga   bass   garage inst=bass
-gen vocal_ga melody garage inst=lead
-gen wurli_ga chords garage inst=pad
+gen kick_ga rhythm two_step inst=kick
+gen snare_ga rhythm two_step inst=snare
+gen hats_ga rhythm two_step inst=hats
+gen sub_ga bass two_step_sub inst=bass
+gen vocal_ga melody vocal_chop inst=lead
+gen wurli_ga chords wurli_chop inst=pad
 
 # ---------- drum_and_bass ----------
-gen kick_dnb  rhythm drum_and_bass inst=kick
-gen snare_dnb rhythm drum_and_bass inst=snare
-gen hats_dnb  rhythm drum_and_bass inst=hats
-gen sub_dnb   bass   drum_and_bass inst=bass
-gen lead_dnb  melody drum_and_bass inst=lead
-gen pad_dnb   chords drum_and_bass inst=pad
+gen kick_dnb rhythm breakbeat inst=kick
+gen snare_dnb rhythm breakbeat inst=snare
+gen hats_dnb rhythm breakbeat inst=hats
+gen sub_dnb bass reese inst=bass
+gen lead_dnb melody atmos_lead inst=lead
+gen pad_dnb chords atmos_pad inst=pad
 
 # ---------- vaporwave ----------
-gen kick_vw  rhythm vaporwave inst=kick
-gen snare_vw rhythm vaporwave inst=snare
-gen hats_vw  rhythm vaporwave inst=hats
-gen bass_vw  bass   vaporwave inst=bass
-gen sax_vw   melody vaporwave inst=lead
-gen pad_vw   chords vaporwave inst=pad
+gen kick_vw rhythm slow_kick inst=kick
+gen snare_vw rhythm slow_kick inst=snare
+gen hats_vw rhythm slow_kick inst=hats
+gen bass_vw bass mellow_pick inst=bass
+gen sax_vw melody lazy_sax inst=lead
+gen pad_vw chords arp_walk inst=pad
 
 # ---------- dub_techno ----------
-gen kick_du  rhythm dub_techno inst=kick
-gen hats_du  rhythm dub_techno inst=hats
-gen drone_du bass   dub_techno inst=bass
-gen stab_du  chords dub_techno inst=pad
+gen kick_du rhythm four_floor_dub inst=kick
+gen hats_du rhythm four_floor_dub inst=hats
+gen drone_du bass sustain_drone inst=bass
+gen stab_du chords offbeat_stab inst=pad
 
 # ---------- lofi ----------
-gen kick_lo  rhythm lofi inst=kick
-gen snare_lo rhythm lofi inst=snare
-gen hats_lo  rhythm lofi inst=hats
-gen upright_lo bass   lofi inst=bass
-gen rhodes_lo  melody lofi inst=lead
-gen ep_lo      chords lofi inst=pad
+gen kick_lo rhythm dusty_swing inst=kick
+gen snare_lo rhythm dusty_swing inst=snare
+gen hats_lo rhythm dusty_swing inst=hats
+gen upright_lo bass acoustic_walk inst=bass
+gen rhodes_lo melody rhodes_phrase inst=lead
+gen ep_lo chords rhodes_chord inst=pad
 
 
 # ---------- Parts — 8 bars each, style-appropriate tempo ----------

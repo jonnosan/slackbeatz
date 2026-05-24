@@ -17,13 +17,13 @@ song "Mall"
 # hit. Accent the on-beat hats with accent=4 for a soft backbeat
 # emphasis. Bass stays un-ducked (vaporwave is half-time so the techno
 # sidechain envelope is the wrong shape).
-gen kick    rhythm vaporwave humanize=8 drop_prob=0.04
-gen snare   rhythm vaporwave humanize=8 drop_prob=0.05
-gen hats    rhythm vaporwave humanize=6 drop_prob=0.06 accent=4
-gen bass    bass   vaporwave
-gen lead    melody vaporwave
-gen pad     chords vaporwave
-gen bells   candy  vaporwave inst=riser
+gen kick rhythm slow_kick humanize=8 drop_prob=0.04
+gen snare rhythm slow_kick humanize=8 drop_prob=0.05
+gen hats rhythm slow_kick humanize=6 drop_prob=0.06 accent=4
+gen bass bass mellow_pick
+gen lead melody lazy_sax
+gen pad chords arp_walk
+gen bells candy bell_lfo inst=riser
 
 part intro 16
   pad

@@ -20,19 +20,19 @@ song "Phuture"
 # 909 drums — kick / clap / hat only (no snare in acid kits).
 # evolution=0.3 means the rng picks a +/- direction per part-instance
 # and the kick/hat ramps over the part for slow energy motion.
-gen kick   rhythm acid humanize=2 accent=8 evolution=0.3
-gen clap   rhythm acid humanize=3
-gen hats   rhythm acid humanize=2 drop_prob=0.04 evolution=0.3
+gen kick rhythm four_floor_house humanize=2 accent=8 evolution=0.3
+gen clap rhythm four_floor_house humanize=3
+gen hats rhythm four_floor_house humanize=2 drop_prob=0.04 evolution=0.3
 
 # The 303 — heavy CC modulation, wide LFO cycle, big resonance.
-gen acid303 bass acid inst=bass cycle=2 resonance=110 bend=120 evolution=0.4
+gen acid303 bass acid_303 inst=bass cycle=2 resonance=110 bend=120 evolution=0.4
 
 # Organ stabs that fade in over the part. mute_prob means it doesn't
 # always enter — sometimes parts stay sparse.
-gen organ  chords acid inst=pad mute_prob=0.3
+gen organ chords sustained_dyad inst=pad mute_prob=0.3
 
 # Candy is barely there in acid — just the build sweep.
-gen sweep  candy  acid inst=riser
+gen sweep candy acid_sweep inst=riser
 
 part intro 16
   kick

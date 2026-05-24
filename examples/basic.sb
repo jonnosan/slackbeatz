@@ -16,11 +16,11 @@ song "Basic"
   tempo 120
   key   Am
 
-gen kick   rhythm dub_techno humanize=2
-gen hats   rhythm dub_techno humanize=3 drop_prob=0.06
-gen drone  bass   dub_techno inst=bass gate_jitter=0.15
-gen stab   chords dub_techno inst=pad arp_prob=0.15
-gen tex    candy  dub_techno inst=riser
+gen kick rhythm four_floor_dub humanize=2
+gen hats rhythm four_floor_dub humanize=3 drop_prob=0.06
+gen drone bass sustain_drone inst=bass gate_jitter=0.15
+gen stab chords offbeat_stab inst=pad arp_prob=0.15
+gen tex candy drone_lfo inst=riser
 
 part intro 16
   drone

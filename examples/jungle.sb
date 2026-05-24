@@ -8,13 +8,13 @@ song "Jungle"
   tempo 170
   key   Am
 
-gen kick    rhythm drum_and_bass humanize=3 accent=8
-gen snare   rhythm drum_and_bass humanize=4 drop_prob=0.05
-gen hats    rhythm drum_and_bass humanize=3 drop_prob=0.08
-gen sub     bass   drum_and_bass inst=bass
-gen lead    melody drum_and_bass inst=lead motif_memory=3
-gen pad     chords drum_and_bass inst=pad arp_prob=0.1
-gen tex     candy  drum_and_bass inst=riser
+gen kick rhythm breakbeat humanize=3 accent=8
+gen snare rhythm breakbeat humanize=4 drop_prob=0.05
+gen hats rhythm breakbeat humanize=3 drop_prob=0.08
+gen sub bass reese inst=bass
+gen lead melody atmos_lead inst=lead motif_memory=3
+gen pad chords atmos_pad inst=pad arp_prob=0.1
+gen tex candy atmos_lfo inst=riser
 
 part intro 8
   pad

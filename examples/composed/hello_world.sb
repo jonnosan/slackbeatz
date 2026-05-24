@@ -7,13 +7,13 @@ song "Hello world"
   key   Dm
   seed  110967069999282
 
-gen kick   rhythm  euclid humanize=5
-gen snare  rhythm  euclid humanize=5 drop_prob=0.08
-gen hats   rhythm  euclid humanize=5 drop_prob=0.08
-gen bass   bass    euclid octave_jump=0.05
-gen lead   melody  euclid motif_memory=4 seed=778
-gen pad    chords  euclid
-gen riser  candy   euclid
+gen kick rhythm euclid_drums humanize=5
+gen snare rhythm euclid_drums humanize=5 drop_prob=0.08
+gen hats rhythm euclid_drums humanize=5 drop_prob=0.08
+gen bass bass rolling octave_jump=0.05
+gen lead melody euclid_riff motif_memory=4 seed=778
+gen pad chords triad_sustain
+gen riser candy euclid_riser
 
 part intro 16 role=intro
   pad

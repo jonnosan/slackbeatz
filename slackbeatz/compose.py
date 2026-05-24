@@ -168,13 +168,13 @@ _STYLE_PROFILES: dict[str, StyleProfile] = {
             ("break", 16), ("build", 8), ("drop", 32),
         ],
         gens=[
-            GenSpec("kick",  "rhythm", "euclid"),
-            GenSpec("snare", "rhythm", "euclid"),
-            GenSpec("hats",  "rhythm", "euclid"),
-            GenSpec("bass",  "bass",   "euclid"),
-            GenSpec("lead",  "melody", "euclid"),
-            GenSpec("pad",   "chords", "euclid"),
-            GenSpec("riser", "candy",  "euclid"),
+            GenSpec("kick",  "rhythm", "euclid_drums"),
+            GenSpec("snare", "rhythm", "euclid_drums"),
+            GenSpec("hats",  "rhythm", "euclid_drums"),
+            GenSpec("bass",  "bass",   "rolling"),
+            GenSpec("lead",  "melody", "euclid_riff"),
+            GenSpec("pad",   "chords", "triad_sustain"),
+            GenSpec("riser", "candy",  "euclid_riser"),
         ],
     ),
     "deep_techno": StyleProfile(
@@ -184,13 +184,13 @@ _STYLE_PROFILES: dict[str, StyleProfile] = {
             ("main", 32), ("outro", 16),
         ],
         gens=[
-            GenSpec("kick",  "rhythm", "deep_techno"),
-            GenSpec("hats",  "rhythm", "deep_techno"),
-            GenSpec("clap",  "rhythm", "deep_techno"),
-            GenSpec("bass",  "bass",   "deep_techno"),
-            GenSpec("lead",  "melody", "deep_techno"),
-            GenSpec("pad",   "chords", "deep_techno"),
-            GenSpec("riser", "candy",  "deep_techno"),
+            GenSpec("kick",  "rhythm", "four_floor_deep"),
+            GenSpec("hats",  "rhythm", "four_floor_deep"),
+            GenSpec("clap",  "rhythm", "four_floor_deep"),
+            GenSpec("bass",  "bass",   "subdrone"),
+            GenSpec("lead",  "melody", "sparse_pad_lead"),
+            GenSpec("pad",   "chords", "pad_drift"),
+            GenSpec("riser", "candy",  "slow_lfo"),
         ],
     ),
     "psytrance": StyleProfile(
@@ -200,13 +200,13 @@ _STYLE_PROFILES: dict[str, StyleProfile] = {
             ("bridge", 16), ("build", 8), ("drop", 32),
         ],
         gens=[
-            GenSpec("kick",  "rhythm", "psytrance"),
-            GenSpec("hats",  "rhythm", "psytrance"),
-            GenSpec("clap",  "rhythm", "psytrance"),
-            GenSpec("bass",  "bass",   "psytrance"),
-            GenSpec("lead",  "melody", "psytrance"),
-            GenSpec("pad",   "chords", "psytrance"),
-            GenSpec("riser", "candy",  "psytrance"),
+            GenSpec("kick",  "rhythm", "gallop_kick"),
+            GenSpec("hats",  "rhythm", "gallop_kick"),
+            GenSpec("clap",  "rhythm", "gallop_kick"),
+            GenSpec("bass",  "bass",   "gallop"),
+            GenSpec("lead",  "melody", "psy_lead"),
+            GenSpec("pad",   "chords", "psy_swell"),
+            GenSpec("riser", "candy",  "psy_sweep"),
         ],
     ),
     "vaporwave": StyleProfile(
@@ -215,13 +215,13 @@ _STYLE_PROFILES: dict[str, StyleProfile] = {
             ("intro", 16), ("main", 32), ("main", 32), ("outro", 16),
         ],
         gens=[
-            GenSpec("kick",  "rhythm", "vaporwave"),
-            GenSpec("snare", "rhythm", "vaporwave"),
-            GenSpec("hats",  "rhythm", "vaporwave"),
-            GenSpec("bass",  "bass",   "vaporwave"),
-            GenSpec("lead",  "melody", "vaporwave"),
-            GenSpec("pad",   "chords", "vaporwave"),
-            GenSpec("bells", "candy",  "vaporwave"),
+            GenSpec("kick",  "rhythm", "slow_kick"),
+            GenSpec("snare", "rhythm", "slow_kick"),
+            GenSpec("hats",  "rhythm", "slow_kick"),
+            GenSpec("bass",  "bass",   "mellow_pick"),
+            GenSpec("lead",  "melody", "lazy_sax"),
+            GenSpec("pad",   "chords", "arp_walk"),
+            GenSpec("bells", "candy",  "bell_lfo"),
         ],
     ),
     "acid": StyleProfile(
@@ -231,12 +231,12 @@ _STYLE_PROFILES: dict[str, StyleProfile] = {
             ("main", 32), ("build", 8), ("drop", 32),
         ],
         gens=[
-            GenSpec("kick",  "rhythm", "acid"),
-            GenSpec("clap",  "rhythm", "acid"),
-            GenSpec("hats",  "rhythm", "acid"),
-            GenSpec("bass",  "bass",   "acid"),
-            GenSpec("organ", "chords", "acid"),
-            GenSpec("sweep", "candy",  "acid"),
+            GenSpec("kick",  "rhythm", "four_floor_house"),
+            GenSpec("clap",  "rhythm", "four_floor_house"),
+            GenSpec("hats",  "rhythm", "four_floor_house"),
+            GenSpec("bass",  "bass",   "acid_303"),
+            GenSpec("organ", "chords", "sustained_dyad"),
+            GenSpec("sweep", "candy",  "acid_sweep"),
         ],
     ),
     "dub_techno": StyleProfile(
@@ -245,11 +245,11 @@ _STYLE_PROFILES: dict[str, StyleProfile] = {
             ("intro", 16), ("main", 64), ("outro", 16),
         ],
         gens=[
-            GenSpec("kick",  "rhythm", "dub_techno"),
-            GenSpec("hats",  "rhythm", "dub_techno"),
-            GenSpec("drone", "bass",   "dub_techno"),
-            GenSpec("stab",  "chords", "dub_techno"),
-            GenSpec("tex",   "candy",  "dub_techno"),
+            GenSpec("kick",  "rhythm", "four_floor_dub"),
+            GenSpec("hats",  "rhythm", "four_floor_dub"),
+            GenSpec("drone", "bass",   "sustain_drone"),
+            GenSpec("stab",  "chords", "offbeat_stab"),
+            GenSpec("tex",   "candy",  "drone_lfo"),
         ],
     ),
     "drum_and_bass": StyleProfile(
@@ -258,13 +258,13 @@ _STYLE_PROFILES: dict[str, StyleProfile] = {
             ("intro", 8), ("main", 32), ("break", 8), ("main", 32),
         ],
         gens=[
-            GenSpec("kick",  "rhythm", "drum_and_bass"),
-            GenSpec("snare", "rhythm", "drum_and_bass"),
-            GenSpec("hats",  "rhythm", "drum_and_bass"),
-            GenSpec("sub",   "bass",   "drum_and_bass"),
-            GenSpec("lead",  "melody", "drum_and_bass"),
-            GenSpec("pad",   "chords", "drum_and_bass"),
-            GenSpec("tex",   "candy",  "drum_and_bass"),
+            GenSpec("kick",  "rhythm", "breakbeat"),
+            GenSpec("snare", "rhythm", "breakbeat"),
+            GenSpec("hats",  "rhythm", "breakbeat"),
+            GenSpec("sub",   "bass",   "reese"),
+            GenSpec("lead",  "melody", "atmos_lead"),
+            GenSpec("pad",   "chords", "atmos_pad"),
+            GenSpec("tex",   "candy",  "atmos_lfo"),
         ],
     ),
     "garage": StyleProfile(
@@ -273,13 +273,13 @@ _STYLE_PROFILES: dict[str, StyleProfile] = {
             ("intro", 8), ("main", 32), ("break", 8), ("main", 32),
         ],
         gens=[
-            GenSpec("kick",  "rhythm", "garage"),
-            GenSpec("snare", "rhythm", "garage"),
-            GenSpec("hats",  "rhythm", "garage"),
-            GenSpec("sub",   "bass",   "garage"),
-            GenSpec("vocal", "melody", "garage"),
-            GenSpec("wurli", "chords", "garage"),
-            GenSpec("tex",   "candy",  "garage"),
+            GenSpec("kick",  "rhythm", "two_step"),
+            GenSpec("snare", "rhythm", "two_step"),
+            GenSpec("hats",  "rhythm", "two_step"),
+            GenSpec("sub",   "bass",   "two_step_sub"),
+            GenSpec("vocal", "melody", "vocal_chop"),
+            GenSpec("wurli", "chords", "wurli_chop"),
+            GenSpec("tex",   "candy",  "minimal_lfo"),
         ],
     ),
     "lofi": StyleProfile(
@@ -288,13 +288,13 @@ _STYLE_PROFILES: dict[str, StyleProfile] = {
             ("intro", 8), ("main", 32), ("break", 8), ("main", 32), ("outro", 16),
         ],
         gens=[
-            GenSpec("kick",    "rhythm", "lofi"),
-            GenSpec("snare",   "rhythm", "lofi"),
-            GenSpec("hats",    "rhythm", "lofi"),
-            GenSpec("upright", "bass",   "lofi"),
-            GenSpec("rhodes",  "melody", "lofi"),
-            GenSpec("ep",      "chords", "lofi"),
-            GenSpec("crackle", "candy",  "lofi"),
+            GenSpec("kick",    "rhythm", "dusty_swing"),
+            GenSpec("snare",   "rhythm", "dusty_swing"),
+            GenSpec("hats",    "rhythm", "dusty_swing"),
+            GenSpec("upright", "bass",   "acoustic_walk"),
+            GenSpec("rhodes",  "melody", "rhodes_phrase"),
+            GenSpec("ep",      "chords", "rhodes_chord"),
+            GenSpec("crackle", "candy",  "crackle_lfo"),
         ],
     ),
 }
@@ -618,7 +618,7 @@ def render_sb(
             if flair & 0x10:
                 parts.append("octave_jump=0.05")
             # Acid bass gets burble.
-            if gen_algorithm == "psytrance" and flair & 0x20:
+            if gen_algorithm == "gallop" and flair & 0x20:
                 parts.append("burble_prob=0.08")
         elif gen_type == "melody":
             if flair & 0x40:
@@ -630,7 +630,7 @@ def render_sb(
         elif gen_type == "chords":
             if flair & 0x04:
                 parts.append("voice_lead=1")
-            if gen_algorithm == "vaporwave" and flair & 0x02:
+            if gen_algorithm == "arp_walk" and flair & 0x02:
                 parts.append("arp_prob=0.1")
         lines.append(" ".join(parts))
     lines.append("")

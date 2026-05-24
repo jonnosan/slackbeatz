@@ -7,13 +7,13 @@ song "Lonely night in Berlin"
   key   Em
   seed  266977654733147
 
-gen kick   rhythm  deep_techno humanize=4 accent=4
-gen hats   rhythm  deep_techno humanize=4 drop_prob=0.06 accent=4
-gen clap   rhythm  deep_techno humanize=4 drop_prob=0.06
-gen bass   bass    deep_techno octave_jump=0.05
-gen lead   melody  deep_techno passing_tones=0.1 seed=345
-gen pad    chords  deep_techno
-gen riser  candy   deep_techno
+gen kick rhythm four_floor_deep humanize=4 accent=4
+gen hats rhythm four_floor_deep humanize=4 drop_prob=0.06 accent=4
+gen clap rhythm four_floor_deep humanize=4 drop_prob=0.06
+gen bass bass subdrone octave_jump=0.05
+gen lead melody sparse_pad_lead passing_tones=0.1 seed=345
+gen pad chords pad_drift
+gen riser candy slow_lfo
 
 part intro 16 role=intro
   pad

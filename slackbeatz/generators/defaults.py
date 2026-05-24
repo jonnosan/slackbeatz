@@ -28,15 +28,15 @@ from slackbeatz.generators.base import Generator
 # Velocity baseline before per-hit jitter / intensity scaling.
 STYLE_BASE_VEL: dict[tuple[str, str], int] = {
     # bass
-    ("bass", "euclid"):       95,
-    ("bass", "deep_techno"):  80,
-    ("bass", "psytrance"):   105,
-    ("bass", "vaporwave"):    75,
-    ("bass", "acid"):        105,
-    ("bass", "dub_techno"):   70,   # sustained drone, soft
-    ("bass", "drum_and_bass"): 100,  # punchy sub-bass
-    ("bass", "garage"):       105,   # punchy sub
-    ("bass", "lofi"):          78,   # warm walking bass, fingered upright feel
+    ("bass", "rolling"):       95,
+    ("bass", "subdrone"):  80,
+    ("bass", "gallop"):   105,
+    ("bass", "mellow_pick"):    75,
+    ("bass", "acid_303"):        105,
+    ("bass", "sustain_drone"):   70,   # sustained drone, soft
+    ("bass", "reese"): 100,  # punchy sub-bass
+    ("bass", "two_step_sub"):       105,   # punchy sub
+    ("bass", "acoustic_walk"):          78,   # warm walking bass, fingered upright feel
 
     # subbass — sits below the main bass voice on its own channel.
     # Slightly softer than the bass so it reinforces rather than
@@ -47,38 +47,38 @@ STYLE_BASE_VEL: dict[tuple[str, str], int] = {
     ("subbass", "pulse"): 95,   # pulsing hits — felt as a kick reinforcement
 
     # melody
-    ("melody", "euclid"):       90,
-    ("melody", "deep_techno"):  75,
-    ("melody", "psytrance"):    88,
-    ("melody", "vaporwave"):    75,
-    ("melody", "acid"):         85,
-    ("melody", "dub_techno"):   65,   # near-silent
-    ("melody", "drum_and_bass"): 78,
-    ("melody", "garage"):        92,   # vocal-stab punch
-    ("melody", "lofi"):          70,   # soft Rhodes EP
+    ("melody", "euclid_riff"):       90,
+    ("melody", "sparse_pad_lead"):  75,
+    ("melody", "psy_lead"):    88,
+    ("melody", "lazy_sax"):    75,
+    ("melody", "acid_stab"):         85,
+    ("melody", "distant_lead"):   65,   # near-silent
+    ("melody", "atmos_lead"): 78,
+    ("melody", "vocal_chop"):        92,   # vocal-stab punch
+    ("melody", "rhodes_phrase"):          70,   # soft Rhodes EP
     # chords
-    ("chords", "euclid"):       85,
-    ("chords", "deep_techno"):  70,
-    ("chords", "psytrance"):    75,
-    ("chords", "vaporwave"):    70,
-    ("chords", "acid"):         78,
-    ("chords", "dub_techno"):   95,   # the chord stab is the centerpiece — punch
-    ("chords", "drum_and_bass"): 78,  # lush pads
-    ("chords", "garage"):        90,  # punchy stabs
-    ("chords", "lofi"):          78,  # warm Rhodes pad chords
+    ("chords", "triad_sustain"):       85,
+    ("chords", "pad_drift"):  70,
+    ("chords", "psy_swell"):    75,
+    ("chords", "arp_walk"):    70,
+    ("chords", "sustained_dyad"):         78,
+    ("chords", "offbeat_stab"):   95,   # the chord stab is the centerpiece — punch
+    ("chords", "atmos_pad"): 78,  # lush pads
+    ("chords", "wurli_chop"):        90,  # punchy stabs
+    ("chords", "rhodes_chord"):          78,  # warm Rhodes pad chords
 }
 
 # Octave offset (added to the style's natural register).
 STYLE_BASE_OCTAVE: dict[tuple[str, str], int] = {
-    ("bass", "euclid"):      -1,
-    ("bass", "deep_techno"): -1,
-    ("bass", "psytrance"):    0,    # A2 / E2 (82-110 Hz) — rolling gallop sits in midrange, audible on laptop speakers
-    ("bass", "vaporwave"):   -1,
-    ("bass", "acid"):         0,   # TB-303 sits high for the lead-bass feel
-    ("bass", "dub_techno"): -1,
-    ("bass", "drum_and_bass"): -1,    # A1 (55 Hz) — classic DnB Reese register
-    ("bass", "garage"):       -1,
-    ("bass", "lofi"):         -1,    # A1 (55 Hz) — warm fingered bass
+    ("bass", "rolling"):      -1,
+    ("bass", "subdrone"): -1,
+    ("bass", "gallop"):    0,    # A2 / E2 (82-110 Hz) — rolling gallop sits in midrange, audible on laptop speakers
+    ("bass", "mellow_pick"):   -1,
+    ("bass", "acid_303"):         0,   # TB-303 sits high for the lead-bass feel
+    ("bass", "sustain_drone"): -1,
+    ("bass", "reese"): -1,    # A1 (55 Hz) — classic DnB Reese register
+    ("bass", "two_step_sub"):       -1,
+    ("bass", "acoustic_walk"):         -1,    # A1 (55 Hz) — warm fingered bass
 
     # subbass sits an octave below the bass register — A0 / A1
     # territory. Below ~30 Hz human ears stop hearing pitch and only
@@ -89,88 +89,94 @@ STYLE_BASE_OCTAVE: dict[tuple[str, str], int] = {
     ("subbass", "drone"): -2,
     ("subbass", "pulse"): -1,   # pulse styles sit slightly higher so the kick room stays clear
 
-    ("melody", "euclid"):       0,
-    ("melody", "deep_techno"):  0,
-    ("melody", "psytrance"):    1,
-    ("melody", "vaporwave"):    1,
-    ("melody", "acid"):         0,
-    ("melody", "dub_techno"):   1,
-    ("melody", "drum_and_bass"): 1,
-    ("melody", "garage"):        0,
-    ("melody", "lofi"):          0,    # Rhodes mid-register C4-C5
+    ("melody", "euclid_riff"):       0,
+    ("melody", "sparse_pad_lead"):  0,
+    ("melody", "psy_lead"):    1,
+    ("melody", "lazy_sax"):    1,
+    ("melody", "acid_stab"):         0,
+    ("melody", "distant_lead"):   1,
+    ("melody", "atmos_lead"): 1,
+    ("melody", "vocal_chop"):        0,
+    ("melody", "rhodes_phrase"):          0,    # Rhodes mid-register C4-C5
 
 
-    ("chords", "euclid"):       0,
-    ("chords", "deep_techno"):  0,
-    ("chords", "psytrance"):    0,
-    ("chords", "vaporwave"):    0,
-    ("chords", "acid"):         0,
-    ("chords", "dub_techno"):   0,
-    ("chords", "drum_and_bass"): 0,
-    ("chords", "garage"):       0,
-    ("chords", "lofi"):         0,
+    ("chords", "triad_sustain"):       0,
+    ("chords", "pad_drift"):  0,
+    ("chords", "psy_swell"):    0,
+    ("chords", "arp_walk"):    0,
+    ("chords", "sustained_dyad"):         0,
+    ("chords", "offbeat_stab"):   0,
+    ("chords", "atmos_pad"): 0,
+    ("chords", "wurli_chop"):       0,
+    ("chords", "rhodes_chord"):         0,
 }
 
 # Note-length ratio (1.0 = full step length; lower = staccato).
 STYLE_GATE: dict[tuple[str, str], float] = {
-    ("bass", "euclid"):      0.85,
-    ("bass", "deep_techno"): 0.90,
-    ("bass", "psytrance"):   0.30,   # short pumps for the gallop
-    ("bass", "vaporwave"):   0.90,
-    ("bass", "acid"):        0.55,   # mid — the 303 envelope is per-note
-    ("bass", "dub_techno"):  0.98,   # sustained drone, long
-    ("bass", "drum_and_bass"): 0.95,
-    ("bass", "garage"):       0.55,
-    ("bass", "lofi"):         0.85,   # sustained walking bass
+    ("bass", "rolling"):      0.85,
+    ("bass", "subdrone"): 0.90,
+    ("bass", "gallop"):   0.30,   # short pumps for the gallop
+    ("bass", "mellow_pick"):   0.90,
+    ("bass", "acid_303"):        0.55,   # mid — the 303 envelope is per-note
+    ("bass", "sustain_drone"):  0.98,   # sustained drone, long
+    ("bass", "reese"): 0.95,
+    ("bass", "two_step_sub"):       0.55,
+    ("bass", "acoustic_walk"):         0.85,   # sustained walking bass
     # subbass — drones run nearly tied (gate ≈ 1); pulse hits sit
     # mid-short so adjacent pulses read as distinct. Consolidated
     # per-algorithm in #49.
     ("subbass", "drone"): 0.95,
     ("subbass", "pulse"): 0.50,
-    ("melody", "euclid"):       0.60,
-    ("melody", "deep_techno"):  0.95,
-    ("melody", "psytrance"):    0.50,
-    ("melody", "vaporwave"):    0.85,
-    ("melody", "acid"):         0.40,
-    ("melody", "dub_techno"):   0.90,
-    ("melody", "drum_and_bass"): 0.75,
-    ("melody", "garage"):       0.25,   # short stabs
-    ("melody", "lofi"):         0.85,   # long sustained Rhodes notes
-    ("chords", "euclid"):       0.95,
-    ("chords", "deep_techno"):  0.98,
-    ("chords", "psytrance"):    0.90,
-    ("chords", "vaporwave"):    0.96,
-    ("chords", "acid"):         0.30,   # short organ stabs in acid house
-    ("chords", "dub_techno"):   0.18,   # signature short stab — punch then fade
-    ("chords", "drum_and_bass"): 0.92,  # sustained pad
-    ("chords", "garage"):       0.30,   # short stab
-    ("chords", "lofi"):         0.96,   # sustained Rhodes EP
+    ("melody", "euclid_riff"):       0.60,
+    ("melody", "sparse_pad_lead"):  0.95,
+    ("melody", "psy_lead"):    0.50,
+    ("melody", "lazy_sax"):    0.85,
+    ("melody", "acid_stab"):         0.40,
+    ("melody", "distant_lead"):   0.90,
+    ("melody", "atmos_lead"): 0.75,
+    ("melody", "vocal_chop"):       0.25,   # short stabs
+    ("melody", "rhodes_phrase"):         0.85,   # long sustained Rhodes notes
+    ("chords", "triad_sustain"):       0.95,
+    ("chords", "pad_drift"):  0.98,
+    ("chords", "psy_swell"):    0.90,
+    ("chords", "arp_walk"):    0.96,
+    ("chords", "sustained_dyad"):         0.30,   # short organ stabs in acid house
+    ("chords", "offbeat_stab"):   0.18,   # signature short stab — punch then fade
+    ("chords", "atmos_pad"): 0.92,  # sustained pad
+    ("chords", "wurli_chop"):       0.30,   # short stab
+    ("chords", "rhodes_chord"):         0.96,   # sustained Rhodes EP
 }
 
-# Sidechain ducking depth on bass gens. 1.0 = off.
+# Sidechain ducking depth on bass / subbass gens — keyed by
+# algorithm name (globally unique across gen types). 1.0 = off.
 BASS_DUCK: dict[str, float] = {
-    "euclid":      0.55,
-    "deep_techno": 0.70,
-    "psytrance":   0.45,
-    "vaporwave":   1.00,
-    "acid":        0.50,
-    "dub_techno":  0.75,   # gentle duck — bass is more drone than punch
-    "drum_and_bass": 0.80,
-    "garage":        0.55,  # noticeable pump
-    "lofi":          1.00,   # no sidechain — lofi sits back
+    # bass algorithms (old style → new name): see #50.
+    "rolling":         0.55,
+    "subdrone":        0.70,
+    "gallop":          0.45,
+    "mellow_pick":     1.00,
+    "acid_303":        0.50,
+    "sustain_drone":   0.75,   # gentle duck — bass is more drone than punch
+    "reese":           0.80,
+    "two_step_sub":    0.55,   # noticeable pump
+    "acoustic_walk":   1.00,   # no sidechain — lofi sits back
+    # subbass algorithms (consolidated to two in #49).
+    "drone":           0.95,   # drone subs don't need much pump
+    "pulse":           0.45,   # pulse subs duck under each kick
 }
 
-# Per-style velocity jitter range (±N) for rhythm/drums humanisation.
+# Velocity-jitter range (±N) for rhythm humanisation — keyed by
+# rhythm algorithm name.
 STYLE_VEL_JITTER: dict[str, int] = {
-    "euclid":      8,
-    "deep_techno": 5,
-    "psytrance":   6,
-    "vaporwave":   4,
-    "acid":        4,   # acid is tight
-    "dub_techno":  4,   # dub techno wants smooth dynamics
-    "drum_and_bass": 7,
-    "garage":      6,
-    "lofi":        6,
+    "euclid_drums":      8,
+    "four_floor_deep":   5,
+    "gallop_kick":       6,
+    "slow_kick":         4,
+    "four_floor_house":  4,   # acid house is tight
+    "four_floor_dub":    4,   # dub techno wants smooth dynamics
+    "breakbeat":         7,
+    "two_step":          6,
+    "dusty_swing":       6,
 }
 
 
@@ -199,24 +205,24 @@ STYLE_SCALE: dict[tuple[str, str], str] = {
     # the style profile's GenSpec.knob_defaults.
     ("subbass", "drone"): "minor",
     ("subbass", "pulse"): "minor",
-    ("melody", "euclid"):       "minor",
-    ("melody", "deep_techno"):  "dorian",
-    ("melody", "psytrance"):    "phrygian",
-    ("melody", "vaporwave"):    "dorian",
-    ("melody", "acid"):         "minor",
-    ("melody", "dub_techno"):   "dorian",
-    ("melody", "drum_and_bass"): "dorian",
-    ("melody", "garage"):       "minor_pentatonic",
-    ("melody", "lofi"):         "minor_pentatonic",
-    ("chords", "euclid"):       "minor",
-    ("chords", "deep_techno"):  "minor",  # chord roots are scale degrees, not modes
-    ("chords", "psytrance"):    "phrygian",
-    ("chords", "vaporwave"):    "minor",
-    ("chords", "acid"):         "minor",
-    ("chords", "dub_techno"):   "dorian",
-    ("chords", "drum_and_bass"): "dorian",
-    ("chords", "garage"):       "minor",
-    ("chords", "lofi"):         "minor",
+    ("melody", "euclid_riff"):       "minor",
+    ("melody", "sparse_pad_lead"):  "dorian",
+    ("melody", "psy_lead"):    "phrygian",
+    ("melody", "lazy_sax"):    "dorian",
+    ("melody", "acid_stab"):         "minor",
+    ("melody", "distant_lead"):   "dorian",
+    ("melody", "atmos_lead"): "dorian",
+    ("melody", "vocal_chop"):       "minor_pentatonic",
+    ("melody", "rhodes_phrase"):         "minor_pentatonic",
+    ("chords", "triad_sustain"):       "minor",
+    ("chords", "pad_drift"):  "minor",  # chord roots are scale degrees, not modes
+    ("chords", "psy_swell"):    "phrygian",
+    ("chords", "arp_walk"):    "minor",
+    ("chords", "sustained_dyad"):         "minor",
+    ("chords", "offbeat_stab"):   "dorian",
+    ("chords", "atmos_pad"): "dorian",
+    ("chords", "wurli_chop"):       "minor",
+    ("chords", "rhodes_chord"):         "minor",
 }
 
 

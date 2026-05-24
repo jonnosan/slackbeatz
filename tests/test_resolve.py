@@ -29,7 +29,7 @@ def _song(body: str):
 
 def test_resolve_binds_inst() -> None:
     s = _song(
-        'gen kick rhythm euclid\n'
+        'gen kick rhythm euclid_drums\n'
         'gen bass bass   euclid\n'
         'part p 1\n  kick\n  bass\nplay p\n'
     )
@@ -41,12 +41,12 @@ def test_resolve_binds_inst() -> None:
 
 def test_rhythm_pointed_at_pitched_inst_errors() -> None:
     s = _song(
-        'gen lead rhythm euclid\n'
+        'gen lead rhythm euclid_drums\n'
         'part p 1\n  lead\nplay p\n'
     )
     # `lead` doesn't exist as an inst in our setup, and `bass` is pitched.
     s = _song(
-        'gen bass rhythm euclid\n'
+        'gen bass rhythm euclid_drums\n'
         'part p 1\n  bass\nplay p\n'
     )
     with pytest.raises(ResolveError, match="is pitched"):
@@ -55,7 +55,7 @@ def test_rhythm_pointed_at_pitched_inst_errors() -> None:
 
 def test_pitched_pointed_at_drum_inst_errors() -> None:
     s = _song(
-        'gen kick bass euclid\n'
+        'gen kick bass rolling\n'
         'part p 1\n  kick\nplay p\n'
     )
     with pytest.raises(ResolveError, match="one-shot drum"):
@@ -64,7 +64,7 @@ def test_pitched_pointed_at_drum_inst_errors() -> None:
 
 def test_unknown_part_in_play_errors() -> None:
     s = _song(
-        'gen kick rhythm euclid\n'
+        'gen kick rhythm euclid_drums\n'
         'part p 1\n  kick\nplay nope\n'
     )
     with pytest.raises(ResolveError, match="undeclared part"):
@@ -74,7 +74,7 @@ def test_unknown_part_in_play_errors() -> None:
 def test_inline_ch_fallback_works_with_empty_setup() -> None:
     from slackbeatz.setup.model import Setup
     s = _song(
-        'gen kick rhythm euclid ch=10 note=36\n'
+        'gen kick rhythm euclid_drums ch=10 note=36\n'
         'part p 1\n  kick\nplay p\n'
     )
     r = resolve_song(s, Setup(name="(empty)"))

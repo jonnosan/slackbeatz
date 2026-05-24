@@ -7,11 +7,11 @@ song "Smoke and fog submerged"
   key   Dm
   seed  150596815365107
 
-gen kick   rhythm  dub_techno humanize=5 accent=4
-gen hats   rhythm  dub_techno humanize=5 drop_prob=0.09 accent=4
-gen drone  bass    dub_techno inst=bass octave_jump=0.05
-gen stab   chords  dub_techno inst=pad voice_lead=1
-gen tex    candy   dub_techno inst=riser
+gen kick rhythm four_floor_dub humanize=5 accent=4
+gen hats rhythm four_floor_dub humanize=5 drop_prob=0.09 accent=4
+gen drone bass sustain_drone inst=bass octave_jump=0.05
+gen stab chords offbeat_stab inst=pad voice_lead=1
+gen tex candy drone_lfo inst=riser
 
 part intro 16 role=intro
   stab

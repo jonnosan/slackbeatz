@@ -7,12 +7,12 @@ song "Acid trax forever"
   key   F#m
   seed  214222990300064
 
-gen kick   rhythm  acid humanize=2
-gen clap   rhythm  acid humanize=2 drop_prob=0.08
-gen hats   rhythm  acid humanize=2 drop_prob=0.08
-gen bass   bass    acid octave_jump=0.05
-gen organ  chords  acid inst=pad
-gen sweep  candy   acid inst=riser
+gen kick rhythm four_floor_house humanize=2
+gen clap rhythm four_floor_house humanize=2 drop_prob=0.08
+gen hats rhythm four_floor_house humanize=2 drop_prob=0.08
+gen bass bass acid_303 octave_jump=0.05
+gen organ chords sustained_dyad inst=pad
+gen sweep candy acid_sweep inst=riser
 
 part intro 16 role=intro
   organ

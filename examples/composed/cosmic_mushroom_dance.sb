@@ -7,13 +7,13 @@ song "Cosmic mushroom dance"
   key   Am
   seed  281440764047807
 
-gen kick   rhythm  psytrance humanize=4
-gen hats   rhythm  psytrance humanize=4 drop_prob=0.07
-gen clap   rhythm  psytrance humanize=4 drop_prob=0.07
-gen bass   bass    psytrance
-gen lead   melody  psytrance motif_memory=4 passing_tones=0.1 seed=944
-gen pad    chords  psytrance
-gen riser  candy   psytrance
+gen kick rhythm gallop_kick humanize=4
+gen hats rhythm gallop_kick humanize=4 drop_prob=0.07
+gen clap rhythm gallop_kick humanize=4 drop_prob=0.07
+gen bass bass gallop
+gen lead melody psy_lead motif_memory=4 passing_tones=0.1 seed=944
+gen pad chords psy_swell
+gen riser candy psy_sweep
 
 part intro 8 role=intro
   pad
