@@ -523,7 +523,7 @@ def _build_live_sink(fluidsynth_port: str, surge_routing: bool):
     from slackbeatz.synthhost import DEFAULT_SURGE_CHANNELS
     ch_to_port = {
         ch_1idx - 1: port
-        for (ch_1idx, port) in DEFAULT_SURGE_CHANNELS.values()
+        for (ch_1idx, port, _patch) in DEFAULT_SURGE_CHANNELS.values()
     }
     multi = MultiPortSink(ch_to_port)
     overrides = {ch: multi for ch in ch_to_port}

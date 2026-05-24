@@ -507,6 +507,65 @@ class Player:
             )
 
     # ------------------------------------------------------------------
+    # Position-slider API — read current/total tick, seek to a raw tick.
+    # The Tk Transport tab polls these to keep its position slider in
+    # sync with playback + commits drag-to-seek on mouse release.
+    # ------------------------------------------------------------------
+
+    def get_current_tick(self) -> int:
+        """Current playback tick, or 0 if no scheduler is running."""
+        sch = self._current_scheduler
+        if sch is None:
+            return 0
+        return int(sch.current_tick)
+
+    def get_total_ticks(self) -> int:
+        """Length of the currently-loaded song in ticks. Returns 0 if
+        no song is loaded (so callers can guard div-by-zero)."""
+        resolved = self.current_resolved
+        if resolved is None:
+            return 0
+        try:
+            return int(build_tempo_map(resolved).end_tick)
+        except Exception:  # noqa: BLE001 — defensive against bad state
+            return 0
+
+    def get_position_label(self, tick: int) -> str:
+        """Human-readable 'bar N beat M' string for *tick* in the
+        currently-loaded song, or '—' if nothing's loaded."""
+        resolved = self.current_resolved
+        if resolved is None:
+            return "—"
+        try:
+            return self._tick_to_bar_label(resolved, max(0, int(tick)))
+        except Exception:  # noqa: BLE001
+            return "—"
+
+    def seek_to_tick(self, tick: int) -> str:
+        """Jump the playhead to absolute *tick*.
+
+        Like :meth:`seek` but takes a raw tick — the natural API for
+        the position slider (which works in continuous tick space).
+        Stops the current playback worker if running + restarts at the
+        target tick. Clamps to [0, total_ticks)."""
+        with self._lock:
+            if self.current_phrase is None and self.current_song_path is None:
+                return "no song loaded"
+            tick = max(0, int(tick))
+            try:
+                resolved = self._resolve_current()
+            except (ParseError, ResolveError, SetupError) as e:
+                return f"error: {e}"
+            total = int(build_tempo_map(resolved).end_tick)
+            if total > 0 and tick >= total:
+                tick = max(0, total - 1)
+            was_playing = self.is_playing
+            self._stop_locked()
+            if not was_playing:
+                return f"seek queued to tick {tick} — type /play"
+            return self.play(from_tick=tick)
+
+    # ------------------------------------------------------------------
     # Per-gen knob overrides
     # ------------------------------------------------------------------
 

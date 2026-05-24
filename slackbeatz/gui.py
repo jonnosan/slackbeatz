@@ -580,6 +580,73 @@ def run_tweak_gui(
             _refresh_nowplaying()
         ttk.Button(seek_row, text="Go", width=6, command=_on_seek).pack(side="left", padx=4)
 
+        # Position slider — drag to seek, polled to stay in sync with
+        # playback. Uses 0..1 normalised tick space so the Scale widget
+        # doesn't have to re-range every time the song length changes.
+        pos_row = ttk.Frame(transport); pos_row.pack(fill="x", padx=10, pady=(8, 2))
+        ttk.Label(pos_row, text="Position", width=14, anchor="w").pack(side="left")
+
+        position_var = _var(tk.DoubleVar, value=0.0)
+        position_label_var = _var(tk.StringVar, value="—")
+        # Drag-state flag so the polling loop doesn't fight the user
+        # while they're actively dragging. We *only* commit a seek on
+        # mouse release — moving the thumb mid-drag would re-resolve
+        # the song dozens of times per second.
+        position_dragging = {"on": False}
+
+        position_slider = ttk.Scale(
+            pos_row, from_=0.0, to=1.0, orient="horizontal",
+            variable=position_var, length=300,
+        )
+        position_slider.pack(side="left", fill="x", expand=True, padx=4)
+        ttk.Label(
+            pos_row, textvariable=position_label_var, width=18, anchor="w",
+            foreground="#345", font=("TkFixedFont", 10),
+        ).pack(side="left", padx=4)
+
+        def _on_pos_press(_e):
+            position_dragging["on"] = True
+
+        def _on_pos_release(_e):
+            position_dragging["on"] = False
+            if player is None:
+                return
+            total = player.get_total_ticks()
+            if total <= 0:
+                return
+            target = int(float(position_var.get()) * total)
+            player.seek_to_tick(target)
+            _refresh_nowplaying()
+
+        position_slider.bind("<ButtonPress-1>", _on_pos_press)
+        position_slider.bind("<ButtonRelease-1>", _on_pos_release)
+
+        def _refresh_position():
+            """Poll the player every 100ms and reflect playback in the
+            slider position + bar/beat readout. Skipped while the user
+            is dragging so the thumb doesn't snap away under the cursor.
+            """
+            if player is not None:
+                total = player.get_total_ticks()
+                current = player.get_current_tick()
+                label = player.get_position_label(current)
+                if total > 0:
+                    if not position_dragging["on"]:
+                        # Update the bound DoubleVar directly — going
+                        # through Scale.set() would fire the command
+                        # callback and force a re-render.
+                        position_var.set(current / total)
+                    position_label_var.set(
+                        f"{label}   ({current}/{total})"
+                    )
+                else:
+                    position_label_var.set("—")
+            # Re-arm. 100ms = noticeably-smooth playhead movement
+            # without burning CPU on Tk redraws.
+            transport.after(100, _refresh_position)
+
+        _refresh_position()
+
         # Loop + preserve-position toggles on one row.
         toggle_row = ttk.Frame(transport); toggle_row.pack(fill="x", padx=10, pady=4)
         loop_var = _var(tk.IntVar, value=1 if player.loop else 0)
@@ -629,7 +696,7 @@ def run_tweak_gui(
                 "Each Surge XT window listens on its own dedicated MIDI port.\n"
                 "In each window: Settings → MIDI Settings → MIDI Input =\n"
             )
-            for inst, (ch, port) in DEFAULT_SURGE_CHANNELS.items():
+            for inst, (ch, port, _patch) in DEFAULT_SURGE_CHANNELS.items():
                 routing_text += f"     • window {ch} ({inst}):  {port!r}\n"
             routing_text += (
                 "\nSurge XT remembers the choice across launches, so it's a "
