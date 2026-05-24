@@ -1435,32 +1435,64 @@ def run_tweak_gui(
         # the song dozens of times per second.
         position_dragging = {"on": False}
 
-        position_slider = ttk.Scale(
-            pos_row, from_=0.0, to=1.0, orient="horizontal",
-            variable=position_var, length=300,
+        # tk.Scale (not ttk.Scale) — the macOS Aqua ttk scale "pages"
+        # on trough-click (jumps by a fixed step instead of to the
+        # click x), which makes the position slider feel broken for
+        # seeking. tk.Scale gives us click-to-jump on every platform.
+        # We also force `showvalue=False` because the position label
+        # already shows "bar N beat M / TOTAL" beside the slider.
+        position_slider = tk.Scale(
+            pos_row, from_=0.0, to=1.0, resolution=0.001,
+            orient="horizontal", variable=position_var, length=300,
+            showvalue=False,
         )
         position_slider.pack(side="left", fill="x", expand=True, padx=4)
         ttk.Label(
-            pos_row, textvariable=position_label_var, width=18, anchor="w",
+            pos_row, textvariable=position_label_var, width=24, anchor="w",
             foreground="#345", font=("TkFixedFont", 10),
         ).pack(side="left", padx=4)
 
-        def _on_pos_press(_e):
+        def _on_pos_press(event):
+            # Mark "user is dragging" so the poll loop doesn't fight
+            # us by overwriting position_var. Also explicitly jump
+            # the thumb to the clicked x coordinate — belt-and-
+            # suspenders against any theme-quirky paging behaviour.
             position_dragging["on"] = True
+            widget = event.widget
+            width = max(1, widget.winfo_width())
+            fraction = max(0.0, min(1.0, event.x / width))
+            position_var.set(fraction)
 
         def _on_pos_release(_e):
+            # Read the dragged-to position FIRST. If we cleared the
+            # dragging flag before reading, the 100ms poll loop could
+            # fire in between and overwrite position_var with the
+            # current playback tick — making the seek effectively a
+            # no-op (or, worse, "snap back to where playback was").
+            target_fraction = float(position_var.get())
             position_dragging["on"] = False
             if player is None:
                 return
             total = player.get_total_ticks()
             if total <= 0:
                 return
-            target = int(float(position_var.get()) * total)
+            target = int(target_fraction * total)
             player.seek_to_tick(target)
             _refresh_nowplaying()
 
         position_slider.bind("<ButtonPress-1>", _on_pos_press)
         position_slider.bind("<ButtonRelease-1>", _on_pos_release)
+        # Also handle drag motion — without this the thumb wouldn't
+        # follow the cursor when the user click-and-drags from a
+        # trough position past the original click.
+        def _on_pos_motion(event):
+            if not position_dragging["on"]:
+                return
+            widget = event.widget
+            width = max(1, widget.winfo_width())
+            fraction = max(0.0, min(1.0, event.x / width))
+            position_var.set(fraction)
+        position_slider.bind("<B1-Motion>", _on_pos_motion)
 
         def _refresh_position():
             """Poll the player every 100ms and reflect playback in the
