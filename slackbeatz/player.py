@@ -349,6 +349,21 @@ class Player:
         self.tempo_override: Optional[int] = None
         self.seed_offset: int = 0
 
+        # Arrangement-level overrides applied AFTER resolution but
+        # BEFORE the scheduler reads it. Set by the GUI's Builder
+        # tab; both are empty when no skip / no per-part meter is in
+        # play, in which case _resolve_current is a no-op for these.
+        # `skip_parts` strips any matching part name from
+        # resolved.arrangement (skips ALL occurrences if a part
+        # appears multiple times — fine for v1, the user can save +
+        # hand-edit if they need finer control).
+        # `part_meter_overrides` mutates each named part's meter in
+        # place via object.__setattr__ (ResolvedPart is frozen but
+        # the field is settable through that escape hatch — same
+        # pattern as tempo_override on file-loaded songs).
+        self.skip_parts: set[str] = set()
+        self.part_meter_overrides: dict[str, str] = {}
+
         # Loop on song end — re-render the same params and play again.
         self.loop: bool = False
 
@@ -802,6 +817,49 @@ class Player:
                 f"tempo → {self.tempo_override or 'auto'}",
             )
 
+    def set_skip_part(self, part_name: str, skip: bool) -> str:
+        """Add or remove *part_name* from the arrangement skip list.
+
+        Used by the 🎼 Builder tab's part-row checkboxes. Skipping
+        affects EVERY arrangement occurrence of that part name —
+        good enough for "skip the intro" but doesn't differentiate
+        when the same part appears multiple times in the
+        arrangement (e.g. two drops). Hand-edit the saved .sb for
+        finer control."""
+        with self._lock:
+            if skip:
+                self.skip_parts.add(part_name)
+            else:
+                self.skip_parts.discard(part_name)
+            verb = "muted" if skip else "live"
+            return self._restart_after_change(f"part {part_name!r} {verb}")
+
+    def set_part_meter(self, part_name: str, meter: Optional[str]) -> str:
+        """Override the meter (time signature) of one named part.
+        ``meter=None`` clears the override and the part reverts to
+        whatever the composer / .sb file set.
+
+        Enables polymeter compositions — different parts can run
+        in different time signatures. The DSL already supports this
+        via ``part NAME N meter=3/4``; this Player method exposes
+        the same control at runtime via the Builder UI."""
+        with self._lock:
+            if meter:
+                # Validate now so a bad string from the GUI doesn't
+                # silently break playback on the next resolve.
+                from slackbeatz.theory.meter import Meter
+                try:
+                    Meter.parse(meter)
+                except ValueError as e:
+                    return f"error: {e}"
+                self.part_meter_overrides[part_name] = meter
+            else:
+                self.part_meter_overrides.pop(part_name, None)
+            label = meter or "default"
+            return self._restart_after_change(
+                f"part {part_name!r} meter → {label}",
+            )
+
     def set_style(self, style: Optional[str]) -> str:
         """Override the style (None = restore composer's keyword pick).
 
@@ -978,6 +1036,36 @@ class Player:
         # Apply per-gen knob overrides (last so they win against
         # everything baked into the composed / loaded .sb).
         self._apply_knob_overrides(resolved)
+
+        # Per-part meter overrides (polymeter via the Builder UI). The
+        # ResolvedPart dataclass is frozen at the class level but its
+        # meter field is settable through object.__setattr__ — same
+        # escape hatch the tempo_override branch uses above.
+        if self.part_meter_overrides:
+            from slackbeatz.theory.meter import Meter
+            for name, meter_str in self.part_meter_overrides.items():
+                part = resolved.parts.get(name)
+                if part is None:
+                    continue
+                try:
+                    new_meter = Meter.parse(meter_str)
+                except ValueError:
+                    # Malformed string from a stale GUI state — skip
+                    # rather than crash playback.
+                    continue
+                object.__setattr__(part, "meter", new_meter)
+
+        # Arrangement filter (skip-part toggles from the Builder).
+        # In-place mutation because resolved.arrangement is a list +
+        # the dataclass is frozen at the class level only. Skips ALL
+        # occurrences of each named part — fine for "skip the intro";
+        # the user can save + hand-edit the .sb if they want finer
+        # control over individual arrangement positions.
+        if self.skip_parts:
+            resolved.arrangement[:] = [
+                p for p in resolved.arrangement if p not in self.skip_parts
+            ]
+
         self.current_resolved = resolved
         return resolved
 

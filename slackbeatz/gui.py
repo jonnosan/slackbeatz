@@ -1436,9 +1436,120 @@ def _build_builder_tab(parent, *, player, _var, ttk, tk) -> None:
     ttk.Button(actions, text="↻  Re-roll", command=_reroll).pack(side="left", padx=2)
     ttk.Button(actions, text="💾  Save as…", command=_save_as).pack(side="left", padx=2)
 
-    # The Mixer + Transport already register their own on_state_change
-    # callbacks; we just need to keep our own status fresh too.
-    return _refresh_status
+    # ------------------------------------------------------------------
+    # Parts panel — shows the song's arrangement once a song is loaded.
+    # Each part gets a checkbox (skip toggle) + a meter dropdown
+    # (polymeter override). Both fire Player setters that regenerate
+    # playback if the song is currently playing.
+    # ------------------------------------------------------------------
+    parts_frame = ttk.LabelFrame(parent, text="🧱  Parts")
+    parts_frame.pack(fill="both", expand=True, padx=10, pady=(8, 8))
+
+    parts_body = ttk.Frame(parts_frame)
+    parts_body.pack(fill="both", expand=True, padx=8, pady=4)
+
+    # Meter dropdown choices — common signatures plus "auto" for
+    # "no override, use the part's composed meter". The Builder
+    # stores per-part overrides on Player.part_meter_overrides;
+    # selecting "auto" clears the override.
+    METER_CHOICES = ("auto", "4/4", "3/4", "6/8", "5/4", "7/8", "2/4", "9/8", "12/8")
+
+    def _refresh_parts() -> None:
+        # Wipe + rebuild — cheap. Fires on every state change
+        # (Generate, Re-roll, REPL phrase load, skip-toggle, …).
+        for w in parts_body.winfo_children():
+            w.destroy()
+        resolved = player.current_resolved
+        if resolved is None:
+            ttk.Label(
+                parts_body,
+                text="(generate a song to see its parts here)",
+                foreground="#888", font=("TkDefaultFont", 10, "italic"),
+            ).pack(anchor="w")
+            return
+        # Build a sorted list of unique part names from the
+        # composed arrangement (drop duplicates — skip is by name,
+        # not by arrangement index in v1). Show bars + use-count
+        # so the user knows what each part contributes.
+        seen: list[str] = []
+        uses: dict[str, int] = {}
+        for name in resolved.arrangement:
+            if name not in seen:
+                seen.append(name)
+            uses[name] = uses.get(name, 0) + 1
+        # Also include parts in resolved.parts that aren't in
+        # arrangement — they might be in skip_parts already.
+        for name in resolved.parts:
+            if name not in seen and name in player.skip_parts:
+                seen.append(name)
+                uses[name] = 0
+        if not seen:
+            ttk.Label(
+                parts_body,
+                text="(this song has no parts? unusual — check the .sb)",
+                foreground="#888", font=("TkDefaultFont", 10, "italic"),
+            ).pack(anchor="w")
+            return
+        for name in seen:
+            row = ttk.Frame(parts_body)
+            row.pack(fill="x", pady=1)
+            include_var = _var(
+                tk.IntVar, value=0 if name in player.skip_parts else 1,
+            )
+
+            def _on_include(n=name, v=include_var):
+                # Checkbox is "include"; skip = not include.
+                player.set_skip_part(n, not bool(v.get()))
+
+            ttk.Checkbutton(
+                row, text="", variable=include_var, command=_on_include,
+            ).pack(side="left")
+
+            part = resolved.parts.get(name)
+            bars = part.bars if part is not None else 0
+            use_count = uses.get(name, 0)
+            count_hint = f" ×{use_count}" if use_count > 1 else ""
+            ttk.Label(
+                row, text=f"{name}", width=14, anchor="w",
+            ).pack(side="left")
+            ttk.Label(
+                row, text=f"({bars} bars{count_hint})",
+                width=14, anchor="w", foreground="#666",
+            ).pack(side="left", padx=(4, 8))
+
+            # Meter dropdown — current value from override map,
+            # or the part's composed meter as a fallback display.
+            current_meter = player.part_meter_overrides.get(name)
+            if current_meter is None and part is not None:
+                current_meter = str(part.meter)
+            meter_var = _var(tk.StringVar, value=current_meter or "auto")
+            meter_cb = ttk.Combobox(
+                row, values=METER_CHOICES, textvariable=meter_var,
+                state="readonly", width=6,
+            )
+            meter_cb.pack(side="left", padx=(0, 4))
+
+            def _on_meter(_event, n=name, v=meter_var, part_=part):
+                choice = v.get()
+                if choice == "auto":
+                    # Clear override. Compose layer / .sb gives us
+                    # the part's composed meter back.
+                    player.set_part_meter(n, None)
+                else:
+                    player.set_part_meter(n, choice)
+
+            meter_cb.bind("<<ComboboxSelected>>", _on_meter)
+
+    _refresh_parts()
+
+    # Single state-change callback that refreshes BOTH the status
+    # line and the parts panel. Both share the same trigger (player
+    # state change) so one entry on main_thread_callbacks is enough.
+    def _refresh_all() -> None:
+        _refresh_status()
+        _refresh_parts()
+
+    return _refresh_all
 
 
 def run_tweak_gui(
