@@ -263,8 +263,9 @@ def cmd_live(args) -> int:
     surge_routing_enabled = False
     if getattr(args, "surge", False):
         from slackbeatz.synthhost import (
-            DEFAULT_SURGE_CHANNELS, channel_routing_summary,
-            install_hint, is_surge_installed, spawn_surge_xt,
+            DEFAULT_SURGE_CHANNELS, _resolve_factory_patch,
+            channel_routing_summary, install_hint, is_surge_installed,
+            spawn_surge_xt,
         )
         if not is_surge_installed():
             print(
@@ -276,8 +277,9 @@ def cmd_live(args) -> int:
         else:
             print(f"\nslackbeatz: spawning {len(DEFAULT_SURGE_CHANNELS)} Surge XT windows.")
             print(channel_routing_summary())
-            for inst, (ch_1idx, _port) in DEFAULT_SURGE_CHANNELS.items():
-                proc = spawn_surge_xt(ch_1idx)
+            for inst, (ch_1idx, _port, patch_rel) in DEFAULT_SURGE_CHANNELS.items():
+                patch_path = _resolve_factory_patch(patch_rel)
+                proc = spawn_surge_xt(ch_1idx, initial_patch=patch_path)
                 if proc is not None:
                     surge_procs.append(proc)
             surge_routing_enabled = True
@@ -716,8 +718,9 @@ def cmd_repl(args) -> int:
     surge_routing_enabled = False
     if getattr(args, "surge", False):
         from slackbeatz.synthhost import (
-            DEFAULT_SURGE_CHANNELS, channel_routing_summary,
-            install_hint, is_surge_installed, spawn_surge_xt,
+            DEFAULT_SURGE_CHANNELS, _resolve_factory_patch,
+            channel_routing_summary, install_hint, is_surge_installed,
+            spawn_surge_xt,
         )
         if not is_surge_installed():
             print(
@@ -732,8 +735,9 @@ def cmd_repl(args) -> int:
                 f"windows alongside FluidSynth — one per pitched channel.",
             )
             print(channel_routing_summary())
-            for inst, (ch_1idx, _port) in DEFAULT_SURGE_CHANNELS.items():
-                proc = spawn_surge_xt(ch_1idx)
+            for inst, (ch_1idx, _port, patch_rel) in DEFAULT_SURGE_CHANNELS.items():
+                patch_path = _resolve_factory_patch(patch_rel)
+                proc = spawn_surge_xt(ch_1idx, initial_patch=patch_path)
                 if proc is not None:
                     surge_procs.append(proc)
             surge_routing_enabled = True
