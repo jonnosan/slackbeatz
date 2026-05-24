@@ -36,9 +36,11 @@ sampler = [
     "numpy>=1.24",        # mixing buffer
 ]
 # Local Piper TTS — speech generator synthesises phrases into the
-# sampler bank. See `slackbeatz/tts.py`.
+# sampler bank. See `slackbeatz/tts.py`. pedalboard adds the
+# meditation-studio post-FX chain (issue #30).
 tts = [
     "piper-tts",
+    "pedalboard>=0.9",
 ]
 
 [project.scripts]

@@ -26,9 +26,10 @@ HuggingFace repo into
 already present on disk are reused; ``download_voice`` is the explicit
 entry point if a caller wants to pre-warm before synthesis.
 
-Post-FX (lowpass + reverb for a meditation-studio feel) lands in
-issue #30 — for now ``post_fx=True`` is honoured by the cache key
-but otherwise a no-op.
+Issue #30 (post-FX: lowpass + reverb) layers a
+`pedalboard <https://github.com/spotify/pedalboard>`_ filter chain on
+top of the raw Piper output when ``post_fx=True``. The chain falls
+back to a no-op if pedalboard isn't installed.
 """
 
 from __future__ import annotations
@@ -187,9 +188,9 @@ def synthesize(
         Optional explicit destination. If omitted, the cache directory
         is used.
     post_fx:
-        Reserved for issue #30 (lowpass + reverb meditation chain).
-        Honoured by the cache key today; the actual FX chain lands in
-        #30.
+        Apply the meditation-studio post-FX chain (lowpass + compressor
+        + reverb) via pedalboard. Falls back to raw Piper output if
+        pedalboard is missing.
 
     Returns
     -------
@@ -214,8 +215,8 @@ def synthesize(
     tmp_path = target.with_suffix(target.suffix + ".part")
     try:
         _run_piper(text, model_path, config_path, tmp_path)
-        # post-FX hook is wired in by issue #30. Until then this
-        # is a no-op even when post_fx=True.
+        if post_fx:
+            _apply_post_fx(tmp_path)
         tmp_path.replace(target)
     finally:
         tmp_path.unlink(missing_ok=True)
@@ -279,3 +280,44 @@ def _run_piper(
         )
 
 
+# --------------------------------------------------------------------------
+# Post-FX chain (issue #30)
+# --------------------------------------------------------------------------
+
+def _apply_post_fx(wav_path: Path) -> None:
+    """In-place: layer the meditation-studio post-FX chain on top of
+    Piper's raw output.
+
+    Chain:
+      Lowpass(6 kHz)  →  Compressor(-3 dB, 2:1)  →  Reverb(small hall)
+
+    If pedalboard isn't installed (or import fails for any reason),
+    the file is left as-is and a single warning is printed."""
+    try:
+        import soundfile as sf
+        from pedalboard import (   # type: ignore[import]
+            Compressor, LowpassFilter, Pedalboard, Reverb,
+        )
+    except ImportError:
+        global _PEDALBOARD_WARNED
+        if not _PEDALBOARD_WARNED:
+            print(
+                "slackbeatz tts: pedalboard not installed — skipping "
+                "post-FX. Install with `pip install pedalboard` for "
+                "softer lowpass + reverb on TTS phrases.",
+                file=sys.stderr,
+            )
+            _PEDALBOARD_WARNED = True
+        return
+
+    audio, sr = sf.read(str(wav_path), dtype="float32", always_2d=False)
+    board = Pedalboard([
+        LowpassFilter(cutoff_frequency_hz=6000),
+        Compressor(threshold_db=-3.0, ratio=2.0),
+        Reverb(room_size=0.4, damping=0.5, wet_level=0.2, dry_level=0.8),
+    ])
+    fx_audio = board(audio, sample_rate=sr)
+    sf.write(str(wav_path), fx_audio, sr)
+
+
+_PEDALBOARD_WARNED = False
