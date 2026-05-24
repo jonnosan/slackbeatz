@@ -684,19 +684,25 @@ def _build_mixer_tab(
                 return
         # FluidSynth drums → gain shell command. The historical
         # default is 0.6; we treat the user's slider as a 0..2 range
-        # to match the old Effects-tab "Master gain" surface.
-        if channel_1idx == 10:
+        # to match the old Effects-tab "Master gain" surface. `send`
+        # is None in bare-MIDI mode (no FluidSynth running), but the
+        # drums strip is also hidden there — this guard is purely
+        # defensive in case a stale closure fires post-cleanup.
+        if channel_1idx == 10 and send is not None:
             send(f"gain {effective:.2f}")
 
     # Build one strip per known channel (skip strips whose backend isn't
     # present this run — e.g. without --surge there are no Surge handles
-    # so those strips don't render).
+    # so those strips don't render; in bare-MIDI mode FluidSynth isn't
+    # running so the drums strip's reverb / chorus / gain knobs would
+    # silently no-op).
+    has_fluidsynth = send is not None
     for ch_1idx, role, emoji, kind in _MIXER_STRIPS:
         backend_present = (
             (kind == "surge" and ch_1idx in surge_by_channel)
             or (kind == "sampler-voice" and sampler_port_for_role["voice"] is not None)
             or (kind == "sampler-fx" and sampler_port_for_role["fx"] is not None)
-            or kind == "fluidsynth-drums"
+            or (kind == "fluidsynth-drums" and has_fluidsynth)
         )
         if not backend_present:
             continue
@@ -1105,7 +1111,7 @@ def _build_fluidsynth_fx(parent, send, _var, ttk, tk, initial_reverb_room) -> No
 
 
 def run_tweak_gui(
-    fs_stdin: IO[bytes],
+    fs_stdin: Optional[IO[bytes]],
     *,
     initial_gain: float | None = None,
     initial_reverb_room: float | None = None,
@@ -1122,10 +1128,12 @@ def run_tweak_gui(
     fs_stdin:
         FluidSynth's stdin pipe (from ``subprocess.Popen(..., stdin=PIPE)``).
         Slider movements / dropdown changes write shell commands to
-        this file handle.
+        this file handle. ``None`` in bare-MIDI mode — the Mixer hides
+        the drums strip + Instruments tab features that need
+        FluidSynth, but the rest of the GUI still works.
     initial_gain, initial_reverb_room:
         Override the slider defaults to match values the user passed via
-        ``--gain`` / ``--reverb`` on the CLI.
+        ``--gain`` / ``--reverb`` on the CLI. Ignored when fs_stdin is None.
     initial_programs:
         Optional ``{channel_1_indexed: gm_program}`` map. Pre-populates
         the per-channel program dropdowns so the GUI starts with the
@@ -1155,6 +1163,13 @@ def run_tweak_gui(
         ) from e
 
     def send(cmd: str) -> None:
+        # In bare-MIDI mode there is no FluidSynth → no stdin to write
+        # to. The Mixer + Instruments tabs hide their FluidSynth-only
+        # controls in that case, so this branch is rarely hit; the
+        # guard is defensive against a stale slider callback firing
+        # mid-shutdown.
+        if fs_stdin is None:
+            return
         try:
             fs_stdin.write((cmd + "\n").encode("utf-8"))
             fs_stdin.flush()
@@ -1726,7 +1741,10 @@ def run_tweak_gui(
         mixer_tab,
         surge_instances=surge_instances or [],
         sampler=_sampler,
-        send=send,
+        # Pass send=None in bare-MIDI mode (no FluidSynth running)
+        # so _build_mixer_tab can detect the absence + hide the
+        # drums strip rather than rendering controls that no-op.
+        send=send if fs_stdin is not None else None,
         initial_gain=initial_gain,
         initial_reverb_room=initial_reverb_room,
         _var=_var,
