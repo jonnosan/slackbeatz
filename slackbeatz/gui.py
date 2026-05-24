@@ -1466,20 +1466,36 @@ def run_tweak_gui(
             """Poll the player every 100ms and reflect playback in the
             slider position + bar/beat readout. Skipped while the user
             is dragging so the thumb doesn't snap away under the cursor.
+
+            Readout format: ``bar N beat M.M / TOTAL`` where N is the
+            current bar (1-indexed), M.M is the fractional beat within
+            it, and TOTAL is the song's total bars across all
+            arrangement instances. When the playhead is on a downbeat
+            the beat is omitted (just ``bar 5 / 16``); past the song
+            end we show ``TOTAL (end)`` so it's clear playback has
+            wrapped.
             """
             if player is not None:
                 total = player.get_total_ticks()
                 current = player.get_current_tick()
-                label = player.get_position_label(current)
                 if total > 0:
                     if not position_dragging["on"]:
                         # Update the bound DoubleVar directly — going
                         # through Scale.set() would fire the command
                         # callback and force a re-render.
                         position_var.set(current / total)
-                    position_label_var.set(
-                        f"{label}   ({current}/{total})"
-                    )
+                    label = player.get_position_label(current)
+                    total_bars = player.get_total_bars()
+                    if label.startswith("end"):
+                        # _tick_to_bar_label returns "end (N)" when the
+                        # tick is past the song; collapse to a tidy
+                        # "TOTAL (end)" since we already know total.
+                        text = f"{total_bars} (end)"
+                    else:
+                        text = f"bar {label}"
+                        if total_bars > 0:
+                            text += f" / {total_bars}"
+                    position_label_var.set(text)
                 else:
                     position_label_var.set("—")
             # Re-arm. 100ms = noticeably-smooth playhead movement

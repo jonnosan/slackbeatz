@@ -532,6 +532,24 @@ class Player:
         except Exception:  # noqa: BLE001 — defensive against bad state
             return 0
 
+    def get_total_bars(self) -> int:
+        """Length of the currently-loaded song in bars (summed across
+        all arrangement instances). Returns 0 if no song is loaded.
+
+        Used by the GUI's position pointer to draw a 'bar N / M' style
+        readout. Counts per-arrangement-instance — a 4-bar part played
+        twice contributes 8 to the total."""
+        resolved = self.current_resolved
+        if resolved is None:
+            return 0
+        try:
+            return sum(
+                resolved.parts[part_name].bars
+                for part_name in resolved.arrangement
+            )
+        except (KeyError, AttributeError):
+            return 0
+
     def get_position_label(self, tick: int) -> str:
         """Human-readable 'bar N beat M' string for *tick* in the
         currently-loaded song, or '—' if nothing's loaded."""
