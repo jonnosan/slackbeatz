@@ -38,6 +38,18 @@ STYLE_BASE_VEL: dict[tuple[str, str], int] = {
     ("bass", "garage"):       105,   # punchy sub
     ("bass", "lofi"):          78,   # warm walking bass, fingered upright feel
 
+    # subbass — sits below the main bass voice on its own channel.
+    # Slightly softer than the bass so it reinforces rather than masks.
+    ("subbass", "euclid"):       85,
+    ("subbass", "deep_techno"):  75,
+    ("subbass", "psytrance"):    95,   # quarter-note pulse must be felt
+    ("subbass", "vaporwave"):    70,
+    ("subbass", "acid"):         85,
+    ("subbass", "dub_techno"):   65,   # sub drone, gentle
+    ("subbass", "drum_and_bass"): 100,  # the sub IS the bass in DnB
+    ("subbass", "garage"):        95,
+    ("subbass", "lofi"):          70,
+
     # melody
     ("melody", "euclid"):       90,
     ("melody", "deep_techno"):  75,
@@ -72,6 +84,19 @@ STYLE_BASE_OCTAVE: dict[tuple[str, str], int] = {
     ("bass", "garage"):       -1,
     ("bass", "lofi"):         -1,    # A1 (55 Hz) — warm fingered bass
 
+    # subbass sits an octave below the bass register — A0 / A1
+    # territory. Below ~30 Hz human ears stop hearing pitch and only
+    # feel pressure; that's the whole point of the layer.
+    ("subbass", "euclid"):       -2,
+    ("subbass", "deep_techno"):  -2,
+    ("subbass", "psytrance"):    -1,   # psy sub at A1 — kick covers below
+    ("subbass", "vaporwave"):    -2,
+    ("subbass", "acid"):         -1,   # acid bass already sits high; sub fills A1
+    ("subbass", "dub_techno"):   -2,
+    ("subbass", "drum_and_bass"): -2,   # classic 30 Hz sub
+    ("subbass", "garage"):       -2,
+    ("subbass", "lofi"):         -2,
+
     ("melody", "euclid"):       0,
     ("melody", "deep_techno"):  0,
     ("melody", "psytrance"):    1,
@@ -105,6 +130,17 @@ STYLE_GATE: dict[tuple[str, str], float] = {
     ("bass", "drum_and_bass"): 0.95,
     ("bass", "garage"):       0.55,
     ("bass", "lofi"):         0.85,   # sustained walking bass
+    # subbass — mostly long sustained notes; short only for psy / garage
+    # where the rhythm demands punctuation.
+    ("subbass", "euclid"):       0.95,
+    ("subbass", "deep_techno"):  0.98,   # whole-note drone
+    ("subbass", "psytrance"):    0.45,   # quarter-note pulses, room to breathe
+    ("subbass", "vaporwave"):    0.98,
+    ("subbass", "acid"):         0.95,
+    ("subbass", "dub_techno"):   0.99,   # nearly tied — 8-bar drone
+    ("subbass", "drum_and_bass"): 0.92,   # Reese sustains across the bar
+    ("subbass", "garage"):       0.55,    # snappier — punch on the 2 & 4
+    ("subbass", "lofi"):         0.95,
     ("melody", "euclid"):       0.60,
     ("melody", "deep_techno"):  0.95,
     ("melody", "psytrance"):    0.50,
@@ -167,6 +203,19 @@ STYLE_SCALE: dict[tuple[str, str], str] = {
     ("bass",   "drum_and_bass"): "dorian",
     ("bass",   "garage"):       "minor",
     ("bass",   "lofi"):         "dorian",
+    # subbass scale — mirrors the matching bass style so root + fifth
+    # land on the same notes as the main bass voice. Sub-bass that
+    # plays only the root rarely needs the scale, but octave-jump /
+    # fifth_prob knobs do reach for it.
+    ("subbass", "euclid"):       "minor",
+    ("subbass", "deep_techno"):  "dorian",
+    ("subbass", "psytrance"):    "phrygian",
+    ("subbass", "vaporwave"):    "minor",
+    ("subbass", "acid"):         "minor",
+    ("subbass", "dub_techno"):   "dorian",
+    ("subbass", "drum_and_bass"): "dorian",
+    ("subbass", "garage"):       "minor",
+    ("subbass", "lofi"):         "dorian",
     ("melody", "euclid"):       "minor",
     ("melody", "deep_techno"):  "dorian",
     ("melody", "psytrance"):    "phrygian",

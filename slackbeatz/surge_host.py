@@ -108,6 +108,14 @@ SURGE_ROLES: tuple[SurgeRoleConfig, ...] = (
         osc_in_port=53031,
         osc_recv_port=53032,
     ),
+    SurgeRoleConfig(
+        role="sub",
+        channel_1idx=6,
+        midi_port_name="slackbeatz-sub",
+        initial_patch="Basses/Sub 1.fxp",
+        osc_in_port=53041,
+        osc_recv_port=53042,
+    ),
 )
 
 

@@ -55,6 +55,20 @@ _GM_PROGRAM_DEFAULTS: dict[tuple[str, str], int] = {
     # Lofi: Acoustic Bass (33) — warm fingered upright character.
     ("bass", "lofi"):         33,
 
+    # Sub-bass — Synth Bass 2 (39) for the warmer-sustained voicings,
+    # Synth Bass 1 (38) for the punchier styles. GM doesn't have a
+    # dedicated "sub" voice; 39 is the closest deep-sub texture in the
+    # standard FluidSynth soundfont.
+    ("subbass", "euclid"):       39,
+    ("subbass", "deep_techno"):  39,
+    ("subbass", "psytrance"):    38,   # punchier — matches the gallop
+    ("subbass", "vaporwave"):    39,
+    ("subbass", "acid"):         39,
+    ("subbass", "dub_techno"):   39,
+    ("subbass", "drum_and_bass"): 39,   # the Reese is a sustained 39
+    ("subbass", "garage"):       38,    # snappy
+    ("subbass", "lofi"):         39,
+
     # Melody: Saw Lead (81) for euclid / Square Lead (80) for psytrance —
     # bright, cuts through. Deep techno wants Pad 1 new age (88).
     # Vaporwave wants Tenor Sax (66). Acid uses 87 (Bass+Lead) as the

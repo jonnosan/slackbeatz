@@ -104,7 +104,10 @@ _CHANNEL_LABELS: dict[int, str] = {
     2:  "bass",
     3:  "pad / chords",
     4:  "candy / FX",
+    5:  "voice (TTS)",
+    6:  "sub-bass",
     10: "drums",
+    11: "fx (sampler)",
 }
 
 

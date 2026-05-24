@@ -29,7 +29,7 @@ from slackbeatz.theory.meter import COMMON_TIME, Meter
 
 from .model import Instrument, Kit, Setup
 
-_PITCHED_TYPES = {"bass", "melody", "chords", "candy"}
+_PITCHED_TYPES = {"bass", "melody", "chords", "candy", "subbass"}
 # Sampler-backed gen types: emit notes on a fixed channel routed
 # (via OSC_CHANNELS in :mod:`slackbeatz.synthhost`) to the in-process
 # :class:`slackbeatz.sampler.Sampler` instead of a synth. Each MIDI
@@ -41,6 +41,17 @@ _SAMPLER_TYPE_CHANNELS: dict[str, int] = {
     "sample": 11,  # the `fx` role
 }
 _SAMPLER_TYPES = frozenset(_SAMPLER_TYPE_CHANNELS)
+
+# Pitched types that have a fixed channel convention when no setup
+# entry matches the gen's handle. The user can still override via
+# ``inst=NAME`` (look the inst up in the setup) or ``ch=N`` (force a
+# channel inline). subbass is the canonical example — every song
+# wants its sub on the same channel so the user's Surge XT sub patch
+# survives across songs.
+_PITCHED_TYPE_DEFAULT_CHANNELS: dict[str, int] = {
+    "subbass": 6,  # the `sub` role in OSC_CHANNELS
+}
+
 _KNOWN_TYPES = {"rhythm", "drums"} | _PITCHED_TYPES | _SAMPLER_TYPES
 
 
@@ -170,6 +181,15 @@ def _resolve_gen(gen: GenDecl, setup: Setup) -> ResolvedGen:
                     )
                 note = raw_note
             inst = Instrument(name=target, channel=raw_ch, note=note)
+        elif gen.type_ in _PITCHED_TYPE_DEFAULT_CHANNELS:
+            # Pitched type with a fixed channel convention (currently
+            # only subbass → ch 6). Auto-create the Instrument so the
+            # user doesn't need `inst sub ch=6` in every setup.
+            inst = Instrument(
+                name=gen.handle,
+                channel=_PITCHED_TYPE_DEFAULT_CHANNELS[gen.type_],
+                note=None,
+            )
         else:
             raise ResolveError(
                 gen.line,

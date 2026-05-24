@@ -73,6 +73,11 @@ OSC_CHANNELS: dict[str, tuple[int, str, str | None]] = {
     # Sampler-backed (TTS phrases on ch 5, FX one-shots on ch 11).
     # See ``docs/design-tts-sampler.md`` + slackbeatz/sampler.py.
     "voice": (5,  "slackbeatz-voice", None),
+    # Sub-bass reinforcement layer — root notes at the bottom of the
+    # mix, separate channel + patch so the sub can be filtered or
+    # sidechained independently of the main bass voice. Per-style
+    # rhythm patterns live in slackbeatz/generators/subbass/.
+    "sub":   (6,  "slackbeatz-sub",   "Basses/Sub 1.fxp"),
     "fx":    (11, "slackbeatz-fx",    None),
 }
 
