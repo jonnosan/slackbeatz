@@ -76,13 +76,6 @@ KNOB_SPECS: dict[str, list[tuple[str, float, float, object, str]]] = {
         ("groove",        0,    0,     "(default)", "enum"),
         ("fill_style",    0,    0,     "(default)", "enum"),
     ],
-    "drums": [
-        ("humanize",      0,    10,    2,    "int"),
-        ("accent",        0,    16,    0,    "int"),
-        ("drop_prob",     0.0,  0.5,   0.0,  "float"),
-        ("intensity",     0.0,  1.5,   1.0,  "float"),
-        ("evolution",     0.0,  1.0,   0.0,  "float"),
-    ],
     "bass": [
         ("intensity",     0.0,  1.5,   1.0,  "float"),
         ("gate",          0.1,  1.0,   0.85, "float"),

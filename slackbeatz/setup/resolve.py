@@ -2,17 +2,17 @@
 
 The resolver does three things:
 
-1. **Generator binding** — each ``gen`` line resolves to either an
-   :class:`Instrument` or a :class:`Kit`. The handle is matched against
-   the setup unless an explicit ``inst=`` / ``kit=`` knob overrides;
-   raw ``ch=`` (and ``note=`` for ``rhythm``) act as a sketch-mode
-   fallback when no setup is supplied or the handle isn't in it.
+1. **Generator binding** — each ``gen`` line resolves to an
+   :class:`Instrument`. The handle is matched against the setup
+   unless an explicit ``inst=`` knob overrides; raw ``ch=`` (and
+   ``note=`` for ``rhythm``) act as a sketch-mode fallback when no
+   setup is supplied or the handle isn't in it.
 
-2. **Type-checking** — ``rhythm`` requires a one-shot ``Instrument`` (i.e.
-   ``note is not None``), pitched types (``bass``/``melody``/``chords``/
-   ``candy``) require a pitched ``Instrument`` (``note is None``), and
-   ``drums`` requires a ``Kit``. Mismatches surface here, not in the
-   middle of playback.
+2. **Type-checking** — ``rhythm`` requires a one-shot ``Instrument``
+   (i.e. ``note is not None``); pitched types (``bass`` / ``melody``
+   / ``chords`` / ``candy``) require a pitched ``Instrument``
+   (``note is None``). Mismatches surface here, not in the middle
+   of playback.
 
 3. **Defaulting** — applies song-wide ``tempo`` / ``key`` / ``seed`` and
    resolves part-level overrides against them. Arrangement is expanded
@@ -23,11 +23,10 @@ from __future__ import annotations
 
 from slackbeatz.dsl.ast import GenDecl, PartDecl, SongAST
 from slackbeatz.dsl.parser import expand_arrangement
-from slackbeatz.drums.presets import preset_map
 from slackbeatz.model.song import ResolvedGen, ResolvedPart, ResolvedSong
 from slackbeatz.theory.meter import COMMON_TIME, Meter
 
-from .model import Instrument, Kit, Setup
+from .model import Instrument, Setup
 
 _PITCHED_TYPES = {"bass", "melody", "chords", "candy", "subbass"}
 # Sampler-backed gen types: emit notes on a fixed channel routed
@@ -52,7 +51,7 @@ _PITCHED_TYPE_DEFAULT_CHANNELS: dict[str, int] = {
     "subbass": 6,  # the `sub` role in OSC_CHANNELS
 }
 
-_KNOWN_TYPES = {"rhythm", "drums"} | _PITCHED_TYPES | _SAMPLER_TYPES
+_KNOWN_TYPES = {"rhythm"} | _PITCHED_TYPES | _SAMPLER_TYPES
 
 
 class ResolveError(Exception):
@@ -82,7 +81,6 @@ def _resolve_gen(gen: GenDecl, setup: Setup) -> ResolvedGen:
 
     knobs = dict(gen.knobs)
     inst_override = knobs.pop("inst", None)
-    kit_override = knobs.pop("kit", None)
     raw_ch = knobs.pop("ch", None)
     raw_note = knobs.pop("note", None)
     # Polymeter: gen-level meter override pops out of the knob dict so
@@ -97,45 +95,12 @@ def _resolve_gen(gen: GenDecl, setup: Setup) -> ResolvedGen:
         except ValueError as e:
             raise ResolveError(gen.line, f"gen {gen.handle!r}: {e}") from None
 
-    # Drums type: bind to a Kit.
-    if gen.type_ == "drums":
-        if inst_override is not None:
-            raise ResolveError(
-                gen.line,
-                f"drums gen {gen.handle!r}: use kit= not inst=",
-            )
-        target = str(kit_override) if kit_override is not None else gen.handle
-        kit = setup.kits.get(target)
-        if kit is None:
-            if raw_ch is not None:
-                if not isinstance(raw_ch, int):
-                    raise ResolveError(
-                        gen.line,
-                        f"drums gen {gen.handle!r}: ch= must be int",
-                    )
-                kit = Kit(name=target, channel=raw_ch, drum_notes=preset_map("gm"))
-            else:
-                raise ResolveError(
-                    gen.line,
-                    f"drums gen {gen.handle!r}: no kit named {target!r} in setup "
-                    f"(available: {sorted(setup.kits)}) and no ch= fallback",
-                )
-        return ResolvedGen(
-            handle=gen.handle,
-            type_=gen.type_,
-            style=gen.style,
-            knobs=knobs,
-            instrument=None,
-            kit=kit,
-            meter=gen_meter,
-        )
-
-    # Non-drums: bind to an Instrument.
-    if kit_override is not None:
-        raise ResolveError(
-            gen.line,
-            f"{gen.type_} gen {gen.handle!r}: kit= only applies to drums type",
-        )
+    # The `drums` gen type was removed — its `kit=` knob is silently
+    # popped from the knobs dict above (it's still in _GEN_KNOBS so
+    # old .sb files don't error at parse time), but no gen type binds
+    # to a Kit any more. Setup `kit` blocks remain valid syntax for
+    # future use; nothing in the current generator surface reads them.
+    knobs.pop("kit", None)
 
     # Sampler-backed types (speech / sample) auto-route to the
     # convention channel (5 / 11) without needing a setup entry. An

@@ -5,6 +5,6 @@ Each ``type`` subpackage is imported in turn, which in turn imports its
 side-effect, populating :data:`slackbeatz.generators.registry.REGISTRY`.
 """
 
-from . import rhythm, drums, bass, melody, chords, candy  # noqa: F401
+from . import rhythm, bass, melody, chords, candy  # noqa: F401
 from . import speech, sample  # noqa: F401 — TTS + sampler gen types
 from . import subbass  # noqa: F401 — sub-bass reinforcement layer (ch 6)

@@ -270,11 +270,11 @@ _HANDLE_TO_INST: dict[str, str] = {
 # Which gens are active in each part-role.
 _ROLE_GEN_TYPES: dict[str, frozenset[str]] = {
     "intro":   frozenset({"chords", "candy"}),
-    "build":   frozenset({"rhythm", "drums", "chords", "candy"}),
-    "drop":    frozenset({"rhythm", "drums", "bass", "melody", "chords", "candy"}),
-    "main":    frozenset({"rhythm", "drums", "bass", "melody", "chords", "candy"}),
+    "build":   frozenset({"rhythm", "chords", "candy"}),
+    "drop":    frozenset({"rhythm", "bass", "melody", "chords", "candy"}),
+    "main":    frozenset({"rhythm", "bass", "melody", "chords", "candy"}),
     "break":   frozenset({"chords", "melody", "candy"}),
-    "bridge":  frozenset({"rhythm", "drums", "bass", "chords"}),
+    "bridge":  frozenset({"rhythm", "bass", "chords"}),
     "outro":   frozenset({"chords", "candy"}),
 }
 
@@ -543,8 +543,8 @@ def render_sb(
         # add an inst= knob mapping it onto the real rig.
         if handle in _HANDLE_TO_INST:
             parts.append(f"inst={_HANDLE_TO_INST[handle]}")
-        # Rhythm + drums gens get the humanize / drop_prob knobs.
-        if gen_type in ("rhythm", "drums"):
+        # Rhythm gens get the humanize / drop_prob knobs.
+        if gen_type == "rhythm":
             parts.append(f"humanize={humanize}")
             if drop_prob > 0 and handle in ("hats", "hat", "snare", "clap"):
                 parts.append(f"drop_prob={drop_prob}")

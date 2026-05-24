@@ -683,7 +683,7 @@ def _knob_list_all_specs() -> str:
 
     lines = ["knobs by gen type (range shown for /knob HANDLE NAME VALUE):"]
     listed_enums: set[tuple[str, str]] = set()
-    for gen_type in ("rhythm", "drums", "bass", "melody", "chords", "candy"):
+    for gen_type in ("rhythm", "bass", "melody", "chords", "candy"):
         lines.append(f"\n  {gen_type}:")
         for name, lo, hi, default, kind in KNOB_SPECS.get(gen_type, []):
             if kind == "enum":

@@ -1531,7 +1531,7 @@ def _build_builder_tab(parent, *, player, _var, ttk, tk) -> None:
     # Roles surfaced in the UI — order matches the song's natural
     # layering (drums → bass → leads → chords → ear-candy).
     _PER_VOICE_ROLES = (
-        "rhythm", "drums", "bass", "subbass", "melody", "chords", "candy",
+        "rhythm", "bass", "subbass", "melody", "chords", "candy",
     )
     per_voice_frame = ttk.Frame(form)
     per_voice_vars: dict[str, "tk.StringVar"] = {}

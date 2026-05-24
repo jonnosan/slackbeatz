@@ -27,18 +27,16 @@ def _song(body: str):
     ).song
 
 
-def test_resolve_binds_inst_and_kit() -> None:
+def test_resolve_binds_inst() -> None:
     s = _song(
         'gen kick rhythm euclid\n'
         'gen bass bass   euclid\n'
-        'gen kit  drums  euclid kit=drums\n'
-        'part p 1\n  kick\n  bass\n  kit\nplay p\n'
+        'part p 1\n  kick\n  bass\nplay p\n'
     )
     r = resolve_song(s, _setup())
     assert r.gens["kick"].instrument is not None
     assert r.gens["kick"].instrument.note == 36
     assert r.gens["bass"].instrument is not None and r.gens["bass"].instrument.is_pitched
-    assert r.gens["kit"].kit is not None and r.gens["kit"].kit.channel == 10
 
 
 def test_rhythm_pointed_at_pitched_inst_errors() -> None:
@@ -61,15 +59,6 @@ def test_pitched_pointed_at_drum_inst_errors() -> None:
         'part p 1\n  kick\nplay p\n'
     )
     with pytest.raises(ResolveError, match="one-shot drum"):
-        resolve_song(s, _setup())
-
-
-def test_drums_with_inst_knob_errors() -> None:
-    s = _song(
-        'gen drums drums euclid inst=kick\n'
-        'part p 1\n  drums\nplay p\n'
-    )
-    with pytest.raises(ResolveError, match="use kit= not inst="):
         resolve_song(s, _setup())
 
 

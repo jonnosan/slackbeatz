@@ -138,7 +138,7 @@ def _program_for_gen(gen) -> int | None:
     if isinstance(prog, int):
         return prog
     # Drum-style gens — let FluidSynth's percussion channel handle them.
-    if gen.type_ in ("rhythm", "drums"):
+    if gen.type_ == "rhythm":
         return None
     return _GM_PROGRAM_DEFAULTS.get((gen.type_, gen.style))
 
