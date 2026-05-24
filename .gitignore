@@ -3,6 +3,9 @@ __pycache__/
 *$py.class
 *.egg-info/
 .venv/
+# Per-Python-version venvs (e.g. .venv-3.12 for dawdreamer-only smoke
+# testing while the main venv runs on a Python with no wheels yet).
+.venv-*/
 dist/
 build/
 .pytest_cache/

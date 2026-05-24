@@ -173,13 +173,48 @@ def cmd_audio(args) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 2
 
+    output_path = Path(args.output)
+
+    # --surge: render pitched / sub channels via Surge XT VST3, voice / fx
+    # via the sampler bank, drums via FluidSynth. The non-Surge default
+    # below stays as the lean FluidSynth-only path.
+    if getattr(args, "surge", False):
+        from slackbeatz.audio_offline import (
+            OfflineRenderError, render_song_with_surge,
+        )
+        try:
+            soundfont = find_soundfont(args.soundfont)
+        except SoundfontError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 1
+        try:
+            render_song_with_surge(
+                resolved,
+                output_path,
+                soundfont=soundfont,
+                sample_rate=args.sample_rate,
+                bitrate=args.bitrate,
+                progress=print,
+            )
+        except OfflineRenderError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 1
+        except subprocess.CalledProcessError as e:
+            print(
+                f"error: subprocess failed (exit {e.returncode}): {e.cmd[0]}",
+                file=sys.stderr,
+            )
+            return 1
+        size_kb = output_path.stat().st_size // 1024
+        print(f"wrote {output_path} ({size_kb} KB)")
+        return 0
+
     try:
         soundfont = find_soundfont(args.soundfont)
     except SoundfontError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
 
-    output_path = Path(args.output)
     # Write the MIDI to a temp file so fluidsynth can read it.
     with tempfile.NamedTemporaryFile(suffix=".mid", delete=False) as tmp:
         tmp_mid = Path(tmp.name)
@@ -1544,6 +1579,14 @@ def _build_parser() -> argparse.ArgumentParser:
     sp.add_argument(
         "-o", "--output", required=True,
         help="output path; .wav stops after FluidSynth, .mp3 (or other ffmpeg fmts) goes through ffmpeg",
+    )
+    sp.add_argument(
+        "--surge", action="store_true",
+        help="render the pitched / sub channels via Surge XT VST3 (offline, "
+             "deterministic, faster-than-real-time) + sampler-bank WAVs for "
+             "voice / fx + FluidSynth for drums. Needs `pip install "
+             "slackbeatz[offline-render]` (Python 3.9-3.12) and Surge XT "
+             "installed system-wide.",
     )
     sp.set_defaults(func=cmd_audio)
 

@@ -42,6 +42,14 @@ tts = [
     "piper-tts",
     "pedalboard>=0.9",
 ]
+# `slackbeatz audio --surge` offline render — hosts the Surge XT VST3
+# plugin (already installed system-wide) via dawdreamer to bake the
+# same Surge patches you hear with `live --surge` into a deterministic
+# WAV/MP3. dawdreamer publishes wheels for Python 3.9-3.12 only today;
+# install this extra into a 3.12 venv if your main venv is newer.
+offline-render = [
+    "dawdreamer",
+]
 
 [project.scripts]
 slackbeatz = "slackbeatz.cli:main"
