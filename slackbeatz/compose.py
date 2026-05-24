@@ -31,7 +31,7 @@ Design notes:
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -129,13 +129,34 @@ _SENTIMENT_WORDS: dict[str, int] = {
 # --------------------------------------------------------------------------
 
 @dataclass(frozen=True)
+class GenSpec:
+    """One generator slot in a style profile.
+
+    Today's mapping ``(handle, type) → style`` becomes
+    ``(handle, type) → (algorithm, knob_defaults)``: a style
+    profile pins the *algorithm* each gen runs plus any baked-in
+    knob values the style wants applied unconditionally.
+
+    Pre-rename, ``algorithm`` mirrors the old style name verbatim
+    so byte output is unchanged — the field is a forward-compatible
+    column that the bulk rename in #50 will populate with
+    algorithm names.
+    """
+
+    handle: str
+    type_: str
+    algorithm: str
+    knob_defaults: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class StyleProfile:
     """Per-style musical defaults the composer falls back to."""
 
     base_tempo: int                     # central bpm
     tempo_range: int                    # ±N bpm hash-driven wobble
     arrangement: list[tuple[str, int]]  # (role, bars) pairs
-    gens: list[tuple[str, str]]         # (handle, type) for each gen
+    gens: list[GenSpec]                 # one slot per (handle, type)
     favours_minor: bool = True           # bias key picker toward minor
 
 
@@ -147,9 +168,13 @@ _STYLE_PROFILES: dict[str, StyleProfile] = {
             ("break", 16), ("build", 8), ("drop", 32),
         ],
         gens=[
-            ("kick", "rhythm"), ("snare", "rhythm"), ("hats", "rhythm"),
-            ("bass", "bass"),  ("lead", "melody"),
-            ("pad",  "chords"), ("riser", "candy"),
+            GenSpec("kick",  "rhythm", "euclid"),
+            GenSpec("snare", "rhythm", "euclid"),
+            GenSpec("hats",  "rhythm", "euclid"),
+            GenSpec("bass",  "bass",   "euclid"),
+            GenSpec("lead",  "melody", "euclid"),
+            GenSpec("pad",   "chords", "euclid"),
+            GenSpec("riser", "candy",  "euclid"),
         ],
     ),
     "deep_techno": StyleProfile(
@@ -159,9 +184,13 @@ _STYLE_PROFILES: dict[str, StyleProfile] = {
             ("main", 32), ("outro", 16),
         ],
         gens=[
-            ("kick", "rhythm"), ("hats", "rhythm"), ("clap", "rhythm"),
-            ("bass", "bass"), ("lead", "melody"),
-            ("pad",  "chords"), ("riser", "candy"),
+            GenSpec("kick",  "rhythm", "deep_techno"),
+            GenSpec("hats",  "rhythm", "deep_techno"),
+            GenSpec("clap",  "rhythm", "deep_techno"),
+            GenSpec("bass",  "bass",   "deep_techno"),
+            GenSpec("lead",  "melody", "deep_techno"),
+            GenSpec("pad",   "chords", "deep_techno"),
+            GenSpec("riser", "candy",  "deep_techno"),
         ],
     ),
     "psytrance": StyleProfile(
@@ -171,9 +200,13 @@ _STYLE_PROFILES: dict[str, StyleProfile] = {
             ("bridge", 16), ("build", 8), ("drop", 32),
         ],
         gens=[
-            ("kick", "rhythm"), ("hats", "rhythm"), ("clap", "rhythm"),
-            ("bass", "bass"), ("lead", "melody"),
-            ("pad",  "chords"), ("riser", "candy"),
+            GenSpec("kick",  "rhythm", "psytrance"),
+            GenSpec("hats",  "rhythm", "psytrance"),
+            GenSpec("clap",  "rhythm", "psytrance"),
+            GenSpec("bass",  "bass",   "psytrance"),
+            GenSpec("lead",  "melody", "psytrance"),
+            GenSpec("pad",   "chords", "psytrance"),
+            GenSpec("riser", "candy",  "psytrance"),
         ],
     ),
     "vaporwave": StyleProfile(
@@ -182,9 +215,13 @@ _STYLE_PROFILES: dict[str, StyleProfile] = {
             ("intro", 16), ("main", 32), ("main", 32), ("outro", 16),
         ],
         gens=[
-            ("kick", "rhythm"), ("snare", "rhythm"), ("hats", "rhythm"),
-            ("bass", "bass"), ("lead", "melody"),
-            ("pad",  "chords"), ("bells", "candy"),
+            GenSpec("kick",  "rhythm", "vaporwave"),
+            GenSpec("snare", "rhythm", "vaporwave"),
+            GenSpec("hats",  "rhythm", "vaporwave"),
+            GenSpec("bass",  "bass",   "vaporwave"),
+            GenSpec("lead",  "melody", "vaporwave"),
+            GenSpec("pad",   "chords", "vaporwave"),
+            GenSpec("bells", "candy",  "vaporwave"),
         ],
     ),
     "acid": StyleProfile(
@@ -194,9 +231,12 @@ _STYLE_PROFILES: dict[str, StyleProfile] = {
             ("main", 32), ("build", 8), ("drop", 32),
         ],
         gens=[
-            ("kick", "rhythm"), ("clap", "rhythm"), ("hats", "rhythm"),
-            ("bass", "bass"),
-            ("organ", "chords"), ("sweep", "candy"),
+            GenSpec("kick",  "rhythm", "acid"),
+            GenSpec("clap",  "rhythm", "acid"),
+            GenSpec("hats",  "rhythm", "acid"),
+            GenSpec("bass",  "bass",   "acid"),
+            GenSpec("organ", "chords", "acid"),
+            GenSpec("sweep", "candy",  "acid"),
         ],
     ),
     "dub_techno": StyleProfile(
@@ -205,9 +245,11 @@ _STYLE_PROFILES: dict[str, StyleProfile] = {
             ("intro", 16), ("main", 64), ("outro", 16),
         ],
         gens=[
-            ("kick", "rhythm"), ("hats", "rhythm"),
-            ("drone", "bass"),
-            ("stab", "chords"), ("tex", "candy"),
+            GenSpec("kick",  "rhythm", "dub_techno"),
+            GenSpec("hats",  "rhythm", "dub_techno"),
+            GenSpec("drone", "bass",   "dub_techno"),
+            GenSpec("stab",  "chords", "dub_techno"),
+            GenSpec("tex",   "candy",  "dub_techno"),
         ],
     ),
     "drum_and_bass": StyleProfile(
@@ -216,9 +258,13 @@ _STYLE_PROFILES: dict[str, StyleProfile] = {
             ("intro", 8), ("main", 32), ("break", 8), ("main", 32),
         ],
         gens=[
-            ("kick", "rhythm"), ("snare", "rhythm"), ("hats", "rhythm"),
-            ("sub",  "bass"),  ("lead", "melody"),
-            ("pad",  "chords"), ("tex", "candy"),
+            GenSpec("kick",  "rhythm", "drum_and_bass"),
+            GenSpec("snare", "rhythm", "drum_and_bass"),
+            GenSpec("hats",  "rhythm", "drum_and_bass"),
+            GenSpec("sub",   "bass",   "drum_and_bass"),
+            GenSpec("lead",  "melody", "drum_and_bass"),
+            GenSpec("pad",   "chords", "drum_and_bass"),
+            GenSpec("tex",   "candy",  "drum_and_bass"),
         ],
     ),
     "garage": StyleProfile(
@@ -227,9 +273,13 @@ _STYLE_PROFILES: dict[str, StyleProfile] = {
             ("intro", 8), ("main", 32), ("break", 8), ("main", 32),
         ],
         gens=[
-            ("kick", "rhythm"), ("snare", "rhythm"), ("hats", "rhythm"),
-            ("sub",  "bass"),  ("vocal", "melody"),
-            ("wurli", "chords"), ("tex", "candy"),
+            GenSpec("kick",  "rhythm", "garage"),
+            GenSpec("snare", "rhythm", "garage"),
+            GenSpec("hats",  "rhythm", "garage"),
+            GenSpec("sub",   "bass",   "garage"),
+            GenSpec("vocal", "melody", "garage"),
+            GenSpec("wurli", "chords", "garage"),
+            GenSpec("tex",   "candy",  "garage"),
         ],
     ),
     "lofi": StyleProfile(
@@ -238,9 +288,13 @@ _STYLE_PROFILES: dict[str, StyleProfile] = {
             ("intro", 8), ("main", 32), ("break", 8), ("main", 32), ("outro", 16),
         ],
         gens=[
-            ("kick", "rhythm"), ("snare", "rhythm"), ("hats", "rhythm"),
-            ("upright", "bass"),  ("rhodes", "melody"),
-            ("ep",     "chords"), ("crackle", "candy"),
+            GenSpec("kick",    "rhythm", "lofi"),
+            GenSpec("snare",   "rhythm", "lofi"),
+            GenSpec("hats",    "rhythm", "lofi"),
+            GenSpec("upright", "bass",   "lofi"),
+            GenSpec("rhodes",  "melody", "lofi"),
+            GenSpec("ep",      "chords", "lofi"),
+            GenSpec("crackle", "candy",  "lofi"),
         ],
     ),
 }
@@ -536,13 +590,22 @@ def render_sb(
 
     # Gens with style-aware knobs sprinkled in.
     gens = profile.gens
-    for handle, gen_type in gens:
-        gen_style = style_per_type.get(gen_type, style)
-        parts = [f"gen {handle:<6} {gen_type:<7} {gen_style}"]
+    for spec in gens:
+        handle = spec.handle
+        gen_type = spec.type_
+        # Per-type override (from the Builder 🎨 Per-voice section)
+        # still wins; otherwise the style profile's algorithm is what
+        # ends up on the .sb gen line.
+        gen_algorithm = style_per_type.get(gen_type, spec.algorithm)
+        parts = [f"gen {handle:<6} {gen_type:<7} {gen_algorithm}"]
         # If the chosen handle isn't a standard gm-setup instrument name,
         # add an inst= knob mapping it onto the real rig.
         if handle in _HANDLE_TO_INST:
             parts.append(f"inst={_HANDLE_TO_INST[handle]}")
+        # Static knob defaults baked into the style profile — empty
+        # today, populated by the subbass + candy consolidation in #49.
+        for k, v in spec.knob_defaults.items():
+            parts.append(f"{k}={v}")
         # Rhythm gens get the humanize / drop_prob knobs.
         if gen_type == "rhythm":
             parts.append(f"humanize={humanize}")
@@ -555,7 +618,7 @@ def render_sb(
             if flair & 0x10:
                 parts.append("octave_jump=0.05")
             # Acid bass gets burble.
-            if gen_style == "psytrance" and flair & 0x20:
+            if gen_algorithm == "psytrance" and flair & 0x20:
                 parts.append("burble_prob=0.08")
         elif gen_type == "melody":
             if flair & 0x40:
@@ -567,7 +630,7 @@ def render_sb(
         elif gen_type == "chords":
             if flair & 0x04:
                 parts.append("voice_lead=1")
-            if gen_style == "vaporwave" and flair & 0x02:
+            if gen_algorithm == "vaporwave" and flair & 0x02:
                 parts.append("arp_prob=0.1")
         lines.append(" ".join(parts))
     lines.append("")
@@ -586,16 +649,18 @@ def render_sb(
         arrangement_names.append(part_name)
 
         active = [
-            (handle, gtype) for handle, gtype in gens
-            if gtype in _ROLE_GEN_TYPES.get(role, frozenset(gtype for _, gtype in gens))
+            spec for spec in gens
+            if spec.type_ in _ROLE_GEN_TYPES.get(
+                role, frozenset(s.type_ for s in gens)
+            )
         ]
         # Always include at least one gen so empty parts don't render silent.
         if not active:
             active = gens[:1]
 
         lines.append(f"part {part_name} {bars} role={role}")
-        for handle, _ in active:
-            lines.append(f"  {handle}")
+        for spec in active:
+            lines.append(f"  {spec.handle}")
         lines.append("")
 
     lines.append(f"play {' '.join(arrangement_names)}")
