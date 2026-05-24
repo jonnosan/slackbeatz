@@ -12,9 +12,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-# Knob values are kept as their lexed type — int / float / str — so that
-# downstream validation can complain with type-appropriate messages.
-KnobValue = int | float | str
+# Knob values are kept as their lexed type — int / float / str / tuple-of-str
+# — so that downstream validation can complain with type-appropriate
+# messages. The tuple form covers list-valued knobs like
+# ``phrases=["breathe in", "and out"]`` on the speech generator.
+KnobValue = int | float | str | tuple[str, ...]
 Knobs = dict[str, KnobValue]
 
 

@@ -86,7 +86,10 @@ _GEN_KNOBS = frozenset(
      "groove", "ghost", "ghost_vel", "hat_variant",
      "fill_every", "fill_style", "phrase_lift",
      "harmonize_with", "interval", "modulate_to",
-     "tension_dyn", "drop_intensity", "stutter", "mistakes"}
+     "tension_dyn", "drop_intensity", "stutter", "mistakes",
+     # TTS list-of-strings example knob (issue #26). The full set
+     # of speech / sample gen knobs lands alongside those gens.
+     "phrases"}
 )
 # Part-level knobs:
 #   transpose_prob — per-instance roll for transposition (issue #10)
@@ -151,6 +154,81 @@ def _parse_knob_value(raw: str) -> KnobValue:
     return raw
 
 
+def _parse_string_list(raw: str, line_no: int) -> tuple[str, ...]:
+    """Parse a ``[...]`` literal as a tuple of strings.
+
+    Accepts ``[]`` (empty) and ``["a", "b", ...]``. Strings must use
+    double quotes — single quotes aren't part of the DSL. Whitespace
+    between tokens is ignored. Trailing commas (``["a",]``) are
+    rejected because they're a common typo for "I forgot something
+    here".
+    """
+    inner = raw.strip()
+    if not (inner.startswith("[") and inner.endswith("]")):
+        raise ParseError(line_no, f"expected [..], got {raw!r}")
+    inner = inner[1:-1].strip()
+    if not inner:
+        return ()
+    out: list[str] = []
+    i = 0
+    expect_value = True
+    n = len(inner)
+    while i < n:
+        c = inner[i]
+        if c.isspace():
+            i += 1
+            continue
+        if c == ",":
+            if expect_value:
+                raise ParseError(
+                    line_no, f"unexpected ',' in list {raw!r}",
+                )
+            expect_value = True
+            i += 1
+            continue
+        if c != '"':
+            raise ParseError(
+                line_no,
+                f"expected STRING (in double quotes) in list {raw!r}",
+            )
+        end = inner.find('"', i + 1)
+        if end < 0:
+            raise ParseError(line_no, f"unterminated string in list {raw!r}")
+        out.append(inner[i + 1:end])
+        i = end + 1
+        expect_value = False
+    if expect_value:
+        # E.g. ``["a", ]`` — comma then nothing.
+        raise ParseError(line_no, f"trailing ',' in list {raw!r}")
+    return tuple(out)
+
+
+def _coalesce_list_tokens(
+    head_value: str, tokens: list[str], start: int, line_no: int,
+) -> tuple[str, int]:
+    """Return ``(joined, next_index)`` for a multi-token list value
+    whose first piece (the RHS of the ``key=`` token) is *head_value*
+    and whose subsequent pieces live at ``tokens[start:]``.
+
+    The lexer doesn't know about list syntax, so a value like
+    ``phrases=["a", "b"]`` arrives as the tokens
+    ``['phrases=[', '"a"', ',', '"b"', ']']`` — caller has already
+    stripped the ``phrases=`` prefix and passes ``[`` as *head_value*.
+    This helper walks forward until the closing ``]`` and joins the
+    pieces back into a single ``[..]`` string.
+    """
+    pieces = [head_value]
+    depth = head_value.count("[") - head_value.count("]")
+    i = start
+    while depth > 0:
+        if i >= len(tokens):
+            raise ParseError(line_no, "unterminated list value")
+        pieces.append(tokens[i])
+        depth += tokens[i].count("[") - tokens[i].count("]")
+        i += 1
+    return " ".join(pieces), i
+
+
 def _parse_kv_pairs(
     tokens: list[str],
     *,
@@ -160,10 +238,14 @@ def _parse_kv_pairs(
     """Parse the trailing `k=v` portion of a declaration.
 
     Each token must contain exactly one `=`. Unknown keys (not in *allowed*)
-    raise :class:`ParseError`.
+    raise :class:`ParseError`. Values starting with ``[`` are treated as
+    a list-of-strings spanning subsequent tokens (until the matching
+    ``]``).
     """
     out: dict[str, KnobValue] = {}
-    for tok in tokens:
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
         if "=" not in tok:
             raise ParseError(line_no, f"expected key=value, got {tok!r}")
         key, _, value = tok.partition("=")
@@ -176,7 +258,16 @@ def _parse_kv_pairs(
             )
         if key in out:
             raise ParseError(line_no, f"duplicate knob {key!r}")
+        # List value? Coalesce subsequent tokens until ``]``.
+        if value.startswith("["):
+            joined, next_i = _coalesce_list_tokens(
+                value, tokens, i + 1, line_no,
+            )
+            out[key] = _parse_string_list(joined, line_no)
+            i = next_i
+            continue
         out[key] = _parse_knob_value(value)
+        i += 1
     return out
 
 
