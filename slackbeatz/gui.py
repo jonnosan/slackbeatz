@@ -145,13 +145,18 @@ _SURGE_ENUM_OPTIONS: dict[str, list[str]] = {
 }
 
 
-def _build_sound_tab(parent, surge_instances, ttk, tk) -> None:
+def _build_sound_tab(parent, surge_instances, ttk, tk, *, sampler=None) -> None:
     """Render the per-instance Surge XT knob panels into *parent*.
 
     Each :class:`SurgeInstance` becomes an inner notebook tab with the
     standard knob set. Slider movements / dropdown selects fire OSC
     parameter writes to the corresponding instance. A bottom toolbar
     has "Load patch…" and "Open GUI editor…" buttons per instance.
+
+    If *sampler* is provided, two additional sub-tabs appear: 🎙 Voice
+    (manage TTS phrases on ch 5) and 🔊 FX (manage WAV samples on
+    ch 11). Both write into the live :class:`Sampler` bank so changes
+    take effect immediately.
     """
     from pathlib import Path as _Path
     from tkinter import filedialog
@@ -163,8 +168,9 @@ def _build_sound_tab(parent, surge_instances, ttk, tk) -> None:
 
     ttk.Label(
         parent,
-        text="🎚 Live sound tweaking — each tab maps to one surge-xt-cli "
-             "instance. Slider/dropdown changes send OSC to that instance.",
+        text="🎚 Live sound tweaking — each tab maps to one synth "
+             "instance. Slider/dropdown changes send OSC to surge-xt-cli; "
+             "Voice/FX tabs manage the sampler bank.",
         wraplength=580, justify="left", foreground="#444",
     ).pack(padx=10, pady=(10, 6), anchor="w")
 
@@ -276,6 +282,290 @@ def _build_sound_tab(parent, surge_instances, ttk, tk) -> None:
 
                 combo.bind("<<ComboboxSelected>>", _on_combo)
                 combo.grid(row=row, column=1, columnspan=2, sticky="ew", padx=(6, 0), pady=2)
+
+    # Sampler-backed sub-tabs (🎙 Voice + 🔊 FX). Only render if a live
+    # sampler was passed in — without one (e.g. when --surge wasn't
+    # specified, or the sampler couldn't start) we'd just be drawing
+    # widgets that can't take effect.
+    if sampler is not None:
+        from slackbeatz.synthhost import OSC_CHANNELS
+        voice_port = OSC_CHANNELS["voice"][1]
+        fx_port = OSC_CHANNELS["fx"][1]
+        voice_frame = ttk.Frame(inner)
+        inner.add(voice_frame, text="🎙 Voice (ch 5)")
+        _build_voice_subtab(voice_frame, sampler, voice_port, ttk, tk)
+        fx_frame = ttk.Frame(inner)
+        inner.add(fx_frame, text="🔊 FX (ch 11)")
+        _build_fx_subtab(fx_frame, sampler, fx_port, ttk, tk)
+
+
+# --------------------------------------------------------------------------
+# Sampler sub-tabs (issue #29)
+# --------------------------------------------------------------------------
+
+def _build_voice_subtab(parent, sampler, port_name: str, ttk, tk) -> None:
+    """🎙 Voice — manage TTS phrases on the voice channel.
+
+    Top half: a Treeview listing ``midi_note → wav_path`` entries from
+    the current bank, with ▶ (audition) / ✕ (remove) buttons.
+
+    Bottom half: a "synthesize new phrase" form. Text entry + voice
+    dropdown + note picker → calls :func:`tts.synthesize` and
+    :meth:`Sampler.set_sample`."""
+    from pathlib import Path as _Path
+
+    ttk.Label(
+        parent,
+        text="Synthesise spoken phrases (Piper TTS). The resulting "
+             "WAV is registered with the sampler at the chosen MIDI "
+             "note — anything routed to channel 5 triggers it.",
+        wraplength=560, justify="left", foreground="#444",
+    ).pack(padx=8, pady=(8, 4), anchor="w")
+
+    list_frame = ttk.Frame(parent)
+    list_frame.pack(fill="both", expand=True, padx=8, pady=4)
+
+    tree = ttk.Treeview(
+        list_frame, columns=("note", "label", "path"),
+        show="headings", height=8,
+    )
+    tree.heading("note", text="Note")
+    tree.heading("label", text="Phrase / file")
+    tree.heading("path", text="Path")
+    tree.column("note", width=80, anchor="w")
+    tree.column("label", width=180, anchor="w")
+    tree.column("path", width=300, anchor="w")
+    tree.pack(side="left", fill="both", expand=True)
+    sb = ttk.Scrollbar(list_frame, orient="vertical", command=tree.yview)
+    tree.configure(yscrollcommand=sb.set)
+    sb.pack(side="right", fill="y")
+
+    def _refresh_tree() -> None:
+        for iid in tree.get_children():
+            tree.delete(iid)
+        for note, path in sorted(sampler.get_bank(port_name).items()):
+            tree.insert("", "end", iid=str(note), values=(
+                f"{note} ({_midi_note_name(note)})",
+                _Path(path).stem,
+                str(path),
+            ))
+
+    _refresh_tree()
+
+    btn_row = ttk.Frame(parent)
+    btn_row.pack(fill="x", padx=8, pady=(0, 6))
+
+    def _audition_selected() -> None:
+        sel = tree.selection()
+        if not sel:
+            return
+        note = int(sel[0])
+        path = sampler.get_bank(port_name).get(note)
+        if path is not None:
+            _audition_wav(path)
+
+    def _remove_selected() -> None:
+        sel = tree.selection()
+        if not sel:
+            return
+        note = int(sel[0])
+        sampler.remove_sample(port_name, note)
+        _refresh_tree()
+
+    ttk.Button(btn_row, text="▶ Audition", command=_audition_selected).pack(side="left", padx=2)
+    ttk.Button(btn_row, text="✕ Remove", command=_remove_selected).pack(side="left", padx=2)
+
+    # Synthesize-new form.
+    ttk.Separator(parent, orient="horizontal").pack(fill="x", padx=8, pady=6)
+    form = ttk.Frame(parent)
+    form.pack(fill="x", padx=8, pady=4)
+
+    ttk.Label(form, text="Phrase:").grid(row=0, column=0, sticky="w", padx=2, pady=2)
+    text_var = tk.StringVar(value="breathe in slowly")
+    text_entry = ttk.Entry(form, textvariable=text_var, width=40)
+    text_entry.grid(row=0, column=1, columnspan=3, sticky="ew", padx=2, pady=2)
+
+    ttk.Label(form, text="Voice:").grid(row=1, column=0, sticky="w", padx=2, pady=2)
+    voice_var = tk.StringVar(value="en_US-amy-low")
+    try:
+        from slackbeatz.tts import available_voices
+        voices = available_voices() or ["en_US-amy-low"]
+    except ImportError:
+        voices = ["en_US-amy-low"]
+    voice_combo = ttk.Combobox(
+        form, textvariable=voice_var, values=voices, state="readonly", width=24,
+    )
+    voice_combo.grid(row=1, column=1, sticky="w", padx=2, pady=2)
+
+    ttk.Label(form, text="Note:").grid(row=1, column=2, sticky="e", padx=2, pady=2)
+    note_var = tk.IntVar(value=_next_free_note(sampler, port_name, 60))
+    ttk.Spinbox(
+        form, from_=0, to=127, textvariable=note_var, width=6,
+    ).grid(row=1, column=3, sticky="w", padx=2, pady=2)
+
+    status_var = tk.StringVar(value="")
+    ttk.Label(form, textvariable=status_var, foreground="#345").grid(
+        row=3, column=0, columnspan=4, sticky="w", padx=2, pady=(4, 0),
+    )
+
+    def _on_generate() -> None:
+        text = text_var.get().strip()
+        if not text:
+            status_var.set("(empty phrase — type something)")
+            return
+        status_var.set(f"synthesising {text!r}…")
+        parent.update_idletasks()
+        try:
+            from slackbeatz.tts import synthesize
+            wav_path = synthesize(text, voice=voice_var.get())
+        except Exception as e:  # noqa: BLE001 — surface to user
+            status_var.set(f"failed: {e}")
+            return
+        sampler.set_sample(port_name, int(note_var.get()), wav_path)
+        _refresh_tree()
+        # Advance to the next free note so repeated clicks add new phrases.
+        note_var.set(_next_free_note(sampler, port_name, int(note_var.get()) + 1))
+        status_var.set(f"added → {wav_path.name}")
+
+    ttk.Button(form, text="Generate", command=_on_generate).grid(
+        row=2, column=0, columnspan=4, sticky="w", padx=2, pady=4,
+    )
+    form.columnconfigure(1, weight=1)
+
+
+def _build_fx_subtab(parent, sampler, port_name: str, ttk, tk) -> None:
+    """🔊 FX — manage arbitrary WAVs on the fx channel.
+
+    Tree listing + "+ Add WAV" file picker. Drag-and-drop support
+    requires the optional ``tkdnd`` pip dep; without it, the file
+    picker covers the same ground."""
+    from pathlib import Path as _Path
+    from tkinter import filedialog
+
+    ttk.Label(
+        parent,
+        text="Map .wav files to MIDI notes on channel 11. Anything "
+             "the song sends to ch 11 plays the matching sample.",
+        wraplength=560, justify="left", foreground="#444",
+    ).pack(padx=8, pady=(8, 4), anchor="w")
+
+    list_frame = ttk.Frame(parent)
+    list_frame.pack(fill="both", expand=True, padx=8, pady=4)
+
+    tree = ttk.Treeview(
+        list_frame, columns=("note", "path"),
+        show="headings", height=10,
+    )
+    tree.heading("note", text="Note")
+    tree.heading("path", text="WAV path")
+    tree.column("note", width=80, anchor="w")
+    tree.column("path", width=400, anchor="w")
+    tree.pack(side="left", fill="both", expand=True)
+    sb = ttk.Scrollbar(list_frame, orient="vertical", command=tree.yview)
+    tree.configure(yscrollcommand=sb.set)
+    sb.pack(side="right", fill="y")
+
+    def _refresh_tree() -> None:
+        for iid in tree.get_children():
+            tree.delete(iid)
+        for note, path in sorted(sampler.get_bank(port_name).items()):
+            tree.insert("", "end", iid=str(note), values=(
+                f"{note} ({_midi_note_name(note)})",
+                str(path),
+            ))
+
+    _refresh_tree()
+
+    btn_row = ttk.Frame(parent)
+    btn_row.pack(fill="x", padx=8, pady=(0, 6))
+
+    note_var = tk.IntVar(value=_next_free_note(sampler, port_name, 36))
+    ttk.Label(btn_row, text="Note for next add:").pack(side="left", padx=(0, 4))
+    ttk.Spinbox(
+        btn_row, from_=0, to=127, textvariable=note_var, width=6,
+    ).pack(side="left", padx=2)
+
+    def _on_add() -> None:
+        paths = filedialog.askopenfilenames(
+            title="Add WAV samples",
+            filetypes=[("WAV audio", "*.wav"), ("All files", "*.*")],
+        )
+        if not paths:
+            return
+        note = int(note_var.get())
+        for p in paths:
+            sampler.set_sample(port_name, note, _Path(p))
+            note = _next_free_note(sampler, port_name, note + 1)
+        note_var.set(note)
+        _refresh_tree()
+
+    def _audition_selected() -> None:
+        sel = tree.selection()
+        if not sel:
+            return
+        note = int(sel[0])
+        path = sampler.get_bank(port_name).get(note)
+        if path is not None:
+            _audition_wav(path)
+
+    def _remove_selected() -> None:
+        sel = tree.selection()
+        if not sel:
+            return
+        note = int(sel[0])
+        sampler.remove_sample(port_name, note)
+        _refresh_tree()
+
+    ttk.Button(btn_row, text="+ Add WAV…", command=_on_add).pack(side="left", padx=4)
+    ttk.Button(btn_row, text="▶ Audition", command=_audition_selected).pack(side="left", padx=2)
+    ttk.Button(btn_row, text="✕ Remove", command=_remove_selected).pack(side="left", padx=2)
+
+
+def _next_free_note(sampler, port_name: str, start: int) -> int:
+    """Return the lowest unmapped MIDI note in [start, 128). Falls
+    back to ``start`` if every note above is taken."""
+    bank = sampler.get_bank(port_name)
+    for note in range(max(0, start), 128):
+        if note not in bank:
+            return note
+    return start
+
+
+def _audition_wav(path) -> None:
+    """Play *path* through the system default audio player. Used by
+    the ▶ buttons in the sampler sub-tabs. Cheap + portable;
+    ``afplay`` on macOS, ``aplay`` on Linux."""
+    import shutil
+    import subprocess
+    import sys
+    binary = None
+    if sys.platform == "darwin":
+        binary = "afplay"
+    elif sys.platform.startswith("linux"):
+        binary = "aplay"
+    if binary is None or shutil.which(binary) is None:
+        print(f"slackbeatz gui: no audition player available for {path}",
+              file=sys.stderr)
+        return
+    subprocess.Popen(
+        [binary, str(path)],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+
+_MIDI_NOTE_NAMES = (
+    "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+)
+
+
+def _midi_note_name(note: int) -> str:
+    """Return e.g. ``C4`` for MIDI note 60."""
+    pitch = _MIDI_NOTE_NAMES[note % 12]
+    octave = note // 12 - 1  # MIDI 60 = C4
+    return f"{pitch}{octave}"
 
 
 def run_tweak_gui(
@@ -878,11 +1168,16 @@ def run_tweak_gui(
     # ------------------------------------------------------------------
     # Sound tab — per-Surge-XT knobs (only when --surge spawned the
     # headless quartet). Drives surge-xt-cli over OSC for live tweaking.
+    # The sampler-backed voice + fx sub-tabs render alongside if a
+    # sampler is running (it always does when --surge is on).
     # ------------------------------------------------------------------
-    if surge_instances:
+    from slackbeatz.sampler import get_active_sampler
+    _sampler = get_active_sampler()
+    if surge_instances or _sampler is not None:
         sound_tab = ttk.Frame(notebook)
         notebook.add(sound_tab, text="🎚 Sound")
-        _build_sound_tab(sound_tab, surge_instances, ttk, tk)
+        _build_sound_tab(sound_tab, surge_instances or [], ttk, tk,
+                         sampler=_sampler)
 
     # ------------------------------------------------------------------
     # Effects tab — gain / reverb / chorus sliders + on-off toggles.
