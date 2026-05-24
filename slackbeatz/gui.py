@@ -442,9 +442,10 @@ def run_tweak_gui(
         ).pack(padx=10, pady=(10, 4), anchor="w")
 
         # When --surge spawned external Surge XT instances, show the
-        # channel routing inside the GUI so users can match each
-        # Surge XT window to the right slackbeatz channel without
-        # leaving Tk to consult the terminal.
+        # per-window MIDI input picklist inside the GUI so users can
+        # configure each Surge XT window without leaving Tk to consult
+        # the terminal. Each window listens on its own dedicated
+        # slackbeatz virtual port (no channel filter needed).
         if surge_port_name is not None:
             ttk.Separator(transport, orient="horizontal").pack(fill="x", padx=10, pady=8)
             ttk.Label(
@@ -454,15 +455,14 @@ def run_tweak_gui(
             ).pack(padx=10, anchor="w")
             from slackbeatz.synthhost import DEFAULT_SURGE_CHANNELS
             routing_text = (
-                f"In each Surge XT window:\n"
-                f"  Settings → MIDI Settings → MIDI Input = {surge_port_name!r}\n"
-                f"  MIDI Channel = (per window):\n"
+                "Each Surge XT window listens on its own dedicated MIDI port.\n"
+                "In each window: Settings → MIDI Settings → MIDI Input =\n"
             )
-            for inst, ch in DEFAULT_SURGE_CHANNELS.items():
-                routing_text += f"     • ch {ch} = {inst}\n"
+            for inst, (ch, port) in DEFAULT_SURGE_CHANNELS.items():
+                routing_text += f"     • window {ch} ({inst}):  {port!r}\n"
             routing_text += (
-                f"\nFluidSynth handles drums (ch 10); channels {sorted(DEFAULT_SURGE_CHANNELS.values())} "
-                f"are muted in FluidSynth and routed to Surge XT instead."
+                "\nSurge XT remembers the choice across launches, so it's a "
+                "one-time per-window setup. Drums (channel 10) stay on FluidSynth."
             )
             ttk.Label(
                 transport, text=routing_text,

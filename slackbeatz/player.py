@@ -242,10 +242,22 @@ class Player:
         port_name: str,
         setup_arg: Optional[str] = None,
         on_state_change: Optional[Callable[[], None]] = None,
+        surge_routing: bool = False,
     ) -> None:
         self.port_name = port_name
         self.setup_arg = setup_arg
         self.on_state_change = on_state_change or (lambda: None)
+        # When True, every playback opens a CompositeSink that splits
+        # pitched channels onto dedicated virtual ports (one per
+        # ``DEFAULT_SURGE_CHANNELS`` entry) — so each Surge XT window
+        # has its own MIDI input. Drums + anything else stay on
+        # ``port_name`` (FluidSynth).
+        self.surge_routing = surge_routing
+        # Lazily-created shared MultiPortSink — we create it once and
+        # reuse it across playback runs so the virtual ports survive
+        # song restarts (otherwise Surge XT loses its MIDI input each
+        # time the user tweaks a param).
+        self._shared_surge_sink = None
 
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
@@ -866,13 +878,51 @@ class Player:
         # need it, which is the right behaviour.
         return load_setup("gm", base_path=song_path)
 
+    def _make_sink(self):
+        """Build the sink for one playback run.
+
+        Returns :class:`RealtimeSink` when ``surge_routing`` is off, or
+        a :class:`CompositeSink` that routes pitched channels onto
+        dedicated virtual ports (for Surge XT instances to subscribe
+        to) when on. The CompositeSink reuses a shared MultiPortSink
+        across runs so the virtual ports persist between songs.
+        """
+        base = RealtimeSink(port_name=self.port_name)
+        if not self.surge_routing:
+            return base
+        from slackbeatz.sinks.composite import CompositeSink
+        from slackbeatz.sinks.multiport import MultiPortSink
+        from slackbeatz.synthhost import DEFAULT_SURGE_CHANNELS
+        # 0-indexed channel → virtual port name. Drums (channel 10 /
+        # 0-indexed 9) are NOT in this map — they fall through to the
+        # default sink (= FluidSynth).
+        ch_to_port = {
+            ch_1idx - 1: port_name
+            for (ch_1idx, port_name) in DEFAULT_SURGE_CHANNELS.values()
+        }
+        if self._shared_surge_sink is None:
+            # Open once, lazily — the virtual ports stay alive across
+            # song restarts so Surge XT's MIDI input subscription
+            # doesn't blink out every time the user nudges a slider.
+            multi = MultiPortSink(ch_to_port)
+            multi.open()
+            self._shared_surge_sink = multi
+        overrides = {ch: self._shared_surge_sink for ch in ch_to_port}
+        # manage_overrides=False so the per-playback open()/close()
+        # cycle doesn't touch the shared MultiPortSink.
+        return CompositeSink(
+            default=base,
+            channel_overrides=overrides,
+            manage_overrides=False,
+        )
+
     def _play_loop(self, resolved, from_tick: int = 0) -> None:
         """Worker thread body. Plays *resolved* once (or repeatedly if
         loop is True), respecting :attr:`_stop_event`."""
         first_iteration_from_tick = from_tick
         try:
             while True:
-                sink = RealtimeSink(port_name=self.port_name)
+                sink = self._make_sink()
                 tempo_map = build_tempo_map(resolved)
                 clock = InternalClock(tempo_map)
                 scheduler = Scheduler(resolved, sink, clock)
@@ -917,9 +967,11 @@ class Player:
                     break
         finally:
             # Defensive: ensure no notes hang on the synth if the
-            # worker exits abnormally.
+            # worker exits abnormally. Use _make_sink() so the
+            # all-notes-off broadcasts reach Surge XT's virtual ports
+            # too when surge_routing is on.
             try:
-                tmp = RealtimeSink(port_name=self.port_name)
+                tmp = self._make_sink()
                 tmp.open()
                 tmp.close()  # close() sends all-notes-off across all channels
             except Exception:
@@ -931,12 +983,15 @@ class Player:
 
     def _silence_channel(self, channel: int) -> None:
         """Send CC 123 (all-notes-off) on *channel* so muting takes
-        effect immediately for currently-held notes."""
+        effect immediately for currently-held notes. Goes through
+        ``_make_sink()`` so it reaches the right destination (Surge
+        XT virtual port for pitched channels under surge_routing,
+        FluidSynth otherwise)."""
         try:
             import mido
-            tmp = RealtimeSink(port_name=self.port_name)
+            tmp = self._make_sink()
             tmp.open()
-            tmp._port.send(  # type: ignore[union-attr]
+            tmp.send(
                 mido.Message("control_change", channel=channel - 1, control=123, value=0)
             )
             tmp.close()

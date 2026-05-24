@@ -257,13 +257,14 @@ def cmd_live(args) -> int:
     print(f"slackbeatz: streaming to FluidSynth on {new_port!r} — press Ctrl+C to stop")
 
     # Optional --surge: spawn one Surge XT window per pitched channel.
+    # See cmd_repl for the routing model — slackbeatz creates dedicated
+    # virtual ports per channel and Surge XT subscribes to one each.
     surge_procs: list[subprocess.Popen] = []
-    surge_muted_channels: list[int] = []
+    surge_routing_enabled = False
     if getattr(args, "surge", False):
         from slackbeatz.synthhost import (
             DEFAULT_SURGE_CHANNELS, channel_routing_summary,
-            install_hint, is_surge_installed,
-            mute_fluidsynth_channels, spawn_surge_xt,
+            install_hint, is_surge_installed, spawn_surge_xt,
         )
         if not is_surge_installed():
             print(
@@ -275,20 +276,14 @@ def cmd_live(args) -> int:
         else:
             print(f"\nslackbeatz: spawning {len(DEFAULT_SURGE_CHANNELS)} Surge XT windows.")
             print(channel_routing_summary())
-            for inst, ch_1idx in DEFAULT_SURGE_CHANNELS.items():
+            for inst, (ch_1idx, _port) in DEFAULT_SURGE_CHANNELS.items():
                 proc = spawn_surge_xt(ch_1idx)
                 if proc is not None:
                     surge_procs.append(proc)
-                    surge_muted_channels.append(ch_1idx - 1)
-            print(
-                f"\nIn each Surge XT window: Settings → MIDI Settings → "
-                f"MIDI Input = {new_port!r}, then set MIDI Channel to "
-                f"the channel number shown above.",
-            )
-            mute_fluidsynth_channels(fs_proc.stdin, surge_muted_channels)
+            surge_routing_enabled = True
 
     try:
-        sink = RealtimeSink(port_name=new_port)
+        sink = _build_live_sink(new_port, surge_routing_enabled)
         tempo_map = build_tempo_map(resolved)
         clock = InternalClock(tempo_map)
         scheduler = Scheduler(resolved, sink, clock)
@@ -345,11 +340,6 @@ def cmd_live(args) -> int:
             if clock_stop_event is not None:
                 clock_stop_event.set()
             clock_emitter.stop()
-        # Unmute the Surge-handled channels in FluidSynth so a later
-        # run doesn't inherit silent channels.
-        if surge_muted_channels:
-            from slackbeatz.synthhost import unmute_fluidsynth_channels
-            unmute_fluidsynth_channels(fs_proc.stdin, surge_muted_channels)
         # Kill Surge XT instances.
         for sp_proc in surge_procs:
             try:
@@ -471,6 +461,29 @@ def _spawn_fluidsynth(soundfont: Path, *, gain: float, reverb: float) -> tuple[s
     except subprocess.TimeoutExpired:
         proc.kill()
     return None, None, "fluidsynth started but didn't expose a MIDI port"
+
+
+def _build_live_sink(fluidsynth_port: str, surge_routing: bool):
+    """Build the sink for cmd_live playback.
+
+    Plain :class:`RealtimeSink` to FluidSynth when ``--surge`` is off;
+    a :class:`CompositeSink` that routes channels 1-4 onto dedicated
+    virtual ports for Surge XT (and keeps drums + everything else on
+    FluidSynth) when on.
+    """
+    fs_sink = RealtimeSink(port_name=fluidsynth_port)
+    if not surge_routing:
+        return fs_sink
+    from slackbeatz.sinks.composite import CompositeSink
+    from slackbeatz.sinks.multiport import MultiPortSink
+    from slackbeatz.synthhost import DEFAULT_SURGE_CHANNELS
+    ch_to_port = {
+        ch_1idx - 1: port
+        for (ch_1idx, port) in DEFAULT_SURGE_CHANNELS.values()
+    }
+    multi = MultiPortSink(ch_to_port)
+    overrides = {ch: multi for ch in ch_to_port}
+    return CompositeSink(default=fs_sink, channel_overrides=overrides)
 
 
 def _knob_list_overrides(player) -> str:
@@ -693,17 +706,18 @@ def cmd_repl(args) -> int:
         f"Type a phrase + Enter to play. /help, /quit.",
     )
 
-    # Optional --surge: spawn one Surge XT window per pitched channel
-    # and mute those channels in FluidSynth so audio comes from Surge
-    # XT (with tweakable knobs) instead of FluidSynth's GM patch.
-    # Drums (channel 10) keep playing through FluidSynth.
+    # Optional --surge: spawn one Surge XT window per pitched channel.
+    # Routing is automatic per channel via slackbeatz-owned virtual
+    # MIDI ports (one per channel role: lead/bass/pad/candy). Each
+    # Surge XT window picks its dedicated port from MIDI Settings —
+    # no channel-filter setup needed. Drums (channel 10) stay on
+    # FluidSynth.
     surge_procs: list[subprocess.Popen] = []
-    surge_muted_channels: list[int] = []
+    surge_routing_enabled = False
     if getattr(args, "surge", False):
         from slackbeatz.synthhost import (
             DEFAULT_SURGE_CHANNELS, channel_routing_summary,
-            install_hint, is_surge_installed,
-            mute_fluidsynth_channels, spawn_surge_xt,
+            install_hint, is_surge_installed, spawn_surge_xt,
         )
         if not is_surge_installed():
             print(
@@ -718,28 +732,13 @@ def cmd_repl(args) -> int:
                 f"windows alongside FluidSynth — one per pitched channel.",
             )
             print(channel_routing_summary())
-            for inst, ch_1idx in DEFAULT_SURGE_CHANNELS.items():
+            for inst, (ch_1idx, _port) in DEFAULT_SURGE_CHANNELS.items():
                 proc = spawn_surge_xt(ch_1idx)
                 if proc is not None:
                     surge_procs.append(proc)
-                    surge_muted_channels.append(ch_1idx - 1)
-            # Once Surge XT windows are up + listening on the FluidSynth
-            # port (= the user picks it in MIDI Settings), silence the
-            # corresponding FluidSynth channels so we don't double up.
-            print(
-                f"\nIn each Surge XT window: Settings → MIDI Settings → "
-                f"MIDI Input = {port_name!r}, then set MIDI Channel to "
-                f"the channel number shown above.",
-            )
-            mute_fluidsynth_channels(fs_proc.stdin, surge_muted_channels)
+            surge_routing_enabled = True
 
     def cleanup_fs() -> None:
-        # Restore FluidSynth volumes on the way out so a later run
-        # (re-using the cached FluidSynth via, say, IAC Bus) doesn't
-        # have silent channels.
-        if surge_muted_channels:
-            from slackbeatz.synthhost import unmute_fluidsynth_channels
-            unmute_fluidsynth_channels(fs_proc.stdin, surge_muted_channels)
         fs_proc.terminate()
         try:
             fs_proc.wait(timeout=2)
@@ -801,7 +800,11 @@ def cmd_repl(args) -> int:
 
         # Shared Player — REPL slash commands and GUI widgets both
         # mutate the same transport state.
-        player = Player(port_name=port_name, setup_arg=args.setup)
+        player = Player(
+            port_name=port_name,
+            setup_arg=args.setup,
+            surge_routing=surge_routing_enabled,
+        )
         player.seed_offset = args.seed
         if getattr(args, "emit_clock", False):
             player.emit_clock = True
@@ -879,7 +882,11 @@ def _repl_input_loop(
     from slackbeatz.player import KNOWN_STYLES, Player
 
     if player is None:
-        player = Player(port_name=port_name, setup_arg=args.setup)
+        player = Player(
+            port_name=port_name,
+            setup_arg=args.setup,
+            surge_routing=getattr(args, "surge", False),
+        )
         player.seed_offset = args.seed
         if getattr(args, "emit_clock", False):
             player.emit_clock = True
@@ -1302,8 +1309,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     sp.add_argument(
         "--surge", action="store_true",
-        help="spawn one Surge XT window per pitched channel for live sound design; "
-             "FluidSynth mutes those channels and continues to handle drums",
+        help="spawn one Surge XT window per pitched channel for live sound design. "
+             "Each window listens on its own dedicated virtual MIDI port "
+             "(slackbeatz-lead/bass/pad/candy); pick that port in Surge XT's "
+             "MIDI Settings — no channel filter setup needed. FluidSynth keeps "
+             "handling drums.",
     )
     sp.set_defaults(func=cmd_live)
 
@@ -1339,8 +1349,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     sp.add_argument(
         "--surge", action="store_true",
-        help="spawn one Surge XT window per pitched channel for live sound design; "
-             "FluidSynth mutes those channels and continues to handle drums",
+        help="spawn one Surge XT window per pitched channel for live sound design. "
+             "Each window listens on its own dedicated virtual MIDI port "
+             "(slackbeatz-lead/bass/pad/candy); pick that port in Surge XT's "
+             "MIDI Settings — no channel filter setup needed. FluidSynth keeps "
+             "handling drums.",
     )
     sp.set_defaults(func=cmd_repl)
 
