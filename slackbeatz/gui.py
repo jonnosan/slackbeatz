@@ -1837,6 +1837,25 @@ def _build_builder_tab(parent, *, player, _var, ttk, tk) -> None:
             ttk.Button(
                 row, text="▶", width=2,
                 command=lambda i=idx: player.jump_to_part_position(i),
+            ).pack(side="left", padx=(0, 2))
+
+            # 🔁 Loop-this-position — checkbox; only one row's loop
+            # can be active at a time. Toggling on starts playback
+            # at this position and confines it to the position's
+            # tick span. Toggling off lets playback continue past
+            # the position end without stopping.
+            loop_var = _var(
+                tk.IntVar, value=1 if player.loop_position == idx else 0,
+            )
+
+            def _on_loop(i=idx, v=loop_var):
+                if v.get():
+                    player.set_loop_position(i)
+                else:
+                    player.set_loop_position(None)
+
+            ttk.Checkbutton(
+                row, text="🔁", variable=loop_var, command=_on_loop,
             ).pack(side="left", padx=(0, 6))
 
             # Position number — disambiguates duplicate part names.

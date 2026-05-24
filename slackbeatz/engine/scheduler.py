@@ -351,6 +351,7 @@ class Scheduler:
         stop_event=None,
         *,
         resume_from_tick: int = 0,
+        stop_at_tick: int | None = None,
         muted_channels=None,
     ) -> None:
         """Render the song to MIDI events and stream them via the sink.
@@ -369,6 +370,14 @@ class Scheduler:
             also fast-forwarded so the first wait_until at or above
             this tick returns immediately. Used by the Player to
             implement "preserve current bar across parameter changes".
+        stop_at_tick:
+            Optional upper bound — when set, the loop exits the
+            instant an event's absolute tick reaches this value.
+            Used by the Player's part-loop feature to bound playback
+            to one arrangement position's span; the surrounding
+            ``_play_loop`` re-runs the scheduler with the same
+            (resume_from_tick, stop_at_tick) pair so the part
+            repeats until the user clears the loop.
         muted_channels:
             Optional ``set[int]`` (1-indexed) of muted channels. Read
             by reference on every event — the caller can mutate it
@@ -392,8 +401,12 @@ class Scheduler:
             # realtime scheduler used to skip them.
             for msg in _initial_program_changes(self.song):
                 self.sink.send(msg)
+            stopped_at_part_end = False
             for abs_tick, msg in events:
                 if stop_event is not None and stop_event.is_set():
+                    break
+                if stop_at_tick is not None and abs_tick >= stop_at_tick:
+                    stopped_at_part_end = True
                     break
                 if abs_tick < resume_from_tick:
                     # Skip pre-seek events. The notes we drop here are
@@ -412,6 +425,29 @@ class Scheduler:
                     if (msg.channel + 1) in muted_channels:
                         continue
                 self.sink.send(msg)
+            # If stop_at_tick is set and we exited the event loop
+            # before reaching it (either because we hit a "future"
+            # event we explicitly skipped, or we ran out of events
+            # mid-part), drain the wall-clock so the silent tail
+            # plays through before the caller restarts us for
+            # another loop iteration. Without this, a part that
+            # ends with a sustained note's tail would loop the
+            # instant the last event fires rather than at the
+            # part's true boundary.
+            need_drain = (
+                stop_at_tick is not None
+                and (stop_event is None or not stop_event.is_set())
+                and self.current_tick < stop_at_tick
+            )
+            if need_drain:
+                try:
+                    self.clock.wait_until(stop_at_tick)
+                except Exception:
+                    pass
+                self.current_tick = stop_at_tick
+            # stopped_at_part_end is informational — current_tick is
+            # what callers read for "where did we end".
+            _ = stopped_at_part_end
         finally:
             self.clock.close()
             self.sink.close()

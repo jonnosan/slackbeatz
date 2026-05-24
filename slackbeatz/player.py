@@ -425,6 +425,15 @@ class Player:
         # Loop on song end — re-render the same params and play again.
         self.loop: bool = False
 
+        # Per-part loop. When non-None, ``_play_loop`` confines the
+        # scheduler to that arrangement position's tick span and
+        # restarts at its start tick on every iteration — the Builder
+        # Parts panel's 🔁 toggle sets this. Mutually exclusive with
+        # the whole-song loop above (the per-part loop wins). Cleared
+        # automatically when the user picks Stop, generates a new
+        # song, or toggles the same row's 🔁 off.
+        self.loop_position: Optional[int] = None
+
     # ------------------------------------------------------------------
     # Source loading
     # ------------------------------------------------------------------
@@ -732,6 +741,28 @@ class Player:
         with self._lock:
             if self.current_phrase is None and self.current_song_path is None:
                 return "no song loaded"
+            self._stop_locked()
+            return self.play(from_tick=start_tick)
+
+    def set_loop_position(self, index: Optional[int]) -> str:
+        """Loop the given arrangement position forever. ``index=None``
+        clears the loop (playback continues to advance naturally past
+        the current position's end). Starts (or restarts) playback at
+        the position's start tick when a non-None index is set —
+        matches the Parts panel's 🔁 toggle UX."""
+        if index is None:
+            with self._lock:
+                self.loop_position = None
+            self.on_state_change()
+            return "part loop off"
+        spans = self.get_part_position_spans()
+        if not (0 <= index < len(spans)):
+            return f"position {index} out of range (have {len(spans)})"
+        start_tick, _ = spans[index]
+        with self._lock:
+            if self.current_phrase is None and self.current_song_path is None:
+                return "no song loaded"
+            self.loop_position = index
             self._stop_locked()
             return self.play(from_tick=start_tick)
 
@@ -1442,6 +1473,14 @@ class Player:
                 clock = InternalClock(tempo_map)
                 scheduler = Scheduler(resolved, sink, clock)
                 self._current_scheduler = scheduler
+                # Per-part loop bound, if active. Read each iteration
+                # so toggling the Parts-panel 🔁 takes effect on the
+                # next loop without needing to restart playback.
+                part_loop_span: Optional[tuple[int, int]] = None
+                if self.loop_position is not None:
+                    spans = self.get_part_position_spans()
+                    if 0 <= self.loop_position < len(spans):
+                        part_loop_span = spans[self.loop_position]
                 # MIDI Clock output, if enabled.
                 emitter = None
                 if self.emit_clock:
@@ -1457,6 +1496,9 @@ class Player:
                     scheduler.run(
                         stop_event=self._stop_event,
                         resume_from_tick=first_iteration_from_tick,
+                        stop_at_tick=(
+                            part_loop_span[1] if part_loop_span else None
+                        ),
                         muted_channels=self.muted_channels,
                     )
                 except Exception as exc:  # noqa: BLE001
@@ -1467,7 +1509,33 @@ class Player:
                     if emitter is not None:
                         emitter.stop()
                     self._current_scheduler = None
-                if self._stop_event.is_set() or not self.loop:
+                if self._stop_event.is_set():
+                    break
+                # Part loop wins over whole-song loop: when active,
+                # restart at the position's start tick regardless of
+                # self.loop. Re-read loop_position each cycle so the
+                # user toggling 🔁 off mid-iteration exits cleanly.
+                if self.loop_position is not None and part_loop_span is not None:
+                    first_iteration_from_tick = part_loop_span[0]
+                    try:
+                        with self._lock:
+                            resolved = self._resolve_current()
+                    except Exception as exc:  # noqa: BLE001
+                        print(f"part-loop re-resolve failed: {exc}", file=sys.stderr)
+                        break
+                    continue
+                # Part-loop was just cleared while the bounded
+                # scheduler was running — continue playback past the
+                # part end into the rest of the song instead of
+                # stopping. (Without this, toggling 🔁 off would
+                # silently exit at the part boundary.)
+                if part_loop_span is not None and self.loop_position is None:
+                    part_end = part_loop_span[1]
+                    total = int(build_tempo_map(resolved).end_tick)
+                    if part_end < total:
+                        first_iteration_from_tick = part_end
+                        continue
+                if not self.loop:
                     break
                 # Subsequent loop iterations always start from 0.
                 first_iteration_from_tick = 0
