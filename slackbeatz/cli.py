@@ -343,114 +343,99 @@ def cmd_live(args) -> int:
             f"or --port to pick a different MIDI output.",
         )
 
-    # Surge plumbing state — empty in non-osc modes.
+    # Build a Player + bring up the backend. The Player owns the
+    # CompositeSink / MultiPortSink wiring, the scheduler thread, the
+    # tempo map + MIDI-clock emitter (if --emit-clock), and gives the
+    # GUI a Transport tab via the player= kwarg on run_tweak_gui.
+    # cmd_live + cmd_repl now share the same Player-driven backbone.
+    from slackbeatz.player import Player
+    player = Player(
+        port_name=port_name,
+        setup_arg=args.setup,
+        osc_routing=osc_routing_enabled,
+    )
+    player.seed_offset = args.seed
+    if getattr(args, "emit_clock", False):
+        player.emit_clock = True
+    player.load_file(song_path)
+
     surge_procs: list[subprocess.Popen] = []
-    surge_instances: list = []  # SurgeInstance objects (headless mode)
-    sampler = None  # slackbeatz.sampler.Sampler — wired below if --surge
+    surge_instances: list = []
+    sampler = None
 
-    # Build the sink BEFORE spawning surge — this opens the virtual
-    # MIDI ports so they show up in surge-xt-cli's device list.
-    sink = _build_live_sink(port_name, osc_routing_enabled)
     if osc_routing_enabled:
-        # Pre-open the sink (its CompositeSink doesn't manage overrides
-        # but we want the MultiPortSink open NOW for device discovery).
-        # _build_live_sink with osc_routing on returns a CompositeSink
-        # whose only override is a MultiPortSink; opening that MPS now.
-        from slackbeatz.sinks.composite import CompositeSink
-        from slackbeatz.sinks.multiport import MultiPortSink
-        if isinstance(sink, CompositeSink):
-            for s in sink.channel_overrides.values():
-                if isinstance(s, MultiPortSink):
-                    s.open()
-                    break
+        # Eager MultiPortSink open so surge-xt-cli's --list-devices
+        # sees the virtual MIDI ports at spawn time.
+        player.ensure_osc_routing_ready()
 
-    if use_surge_cli:
-        from slackbeatz.surge_host import (
-            install_hint, is_surge_cli_installed, spawn_surge_instances,
-        )
-        if not is_surge_cli_installed():
-            print(
-                f"--surge requested but surge-xt-cli isn't installed. "
-                f"Install with:\n  {install_hint()}\n"
-                f"Continuing without Surge XT.",
-                file=sys.stderr,
+        if use_surge_cli:
+            from slackbeatz.surge_host import (
+                install_hint, is_surge_cli_installed, spawn_surge_instances,
             )
-        else:
-            print("\nslackbeatz: spawning headless surge-xt-cli instances:")
-            surge_instances = spawn_surge_instances(on_progress=print)
+            if not is_surge_cli_installed():
+                print(
+                    f"--surge requested but surge-xt-cli isn't installed. "
+                    f"Install with:\n  {install_hint()}\n"
+                    f"Continuing without Surge XT.",
+                    file=sys.stderr,
+                )
+            else:
+                print("\nslackbeatz: spawning headless surge-xt-cli instances:")
+                surge_instances = spawn_surge_instances(on_progress=print)
 
-    if use_surge_gui:
-        from slackbeatz.synthhost import (
-            OSC_CHANNELS, _resolve_factory_patch,
-            channel_routing_summary, install_hint, is_surge_installed,
-            spawn_surge_xt,
-        )
-        if not is_surge_installed():
-            print(
-                f"--surge-gui requested but Surge XT GUI isn't installed. "
-                f"Install with:\n  {install_hint()}",
-                file=sys.stderr,
+        if use_surge_gui:
+            from slackbeatz.synthhost import (
+                OSC_CHANNELS, _resolve_factory_patch,
+                channel_routing_summary, install_hint, is_surge_installed,
+                spawn_surge_xt,
             )
-        else:
-            # Sampler-backed roles (patch_rel=None) don't get a Surge
-            # XT window — they're played by the in-process Sampler
-            # subscribed to the same virtual MIDI port.
-            gui_roles = [
-                (inst, ch, patch_rel)
-                for inst, (ch, _port, patch_rel) in OSC_CHANNELS.items()
-                if patch_rel is not None
-            ]
-            print(f"\nslackbeatz: spawning {len(gui_roles)} Surge XT GUI windows.")
-            print(channel_routing_summary())
-            for _inst, ch_1idx, patch_rel in gui_roles:
-                patch_path = _resolve_factory_patch(patch_rel)
-                proc = spawn_surge_xt(ch_1idx, initial_patch=patch_path)
-                if proc is not None:
-                    surge_procs.append(proc)
+            if not is_surge_installed():
+                print(
+                    f"--surge-gui requested but Surge XT GUI isn't "
+                    f"installed. Install with:\n  {install_hint()}",
+                    file=sys.stderr,
+                )
+            else:
+                # Sampler-backed roles (patch_rel=None) don't get a
+                # Surge XT window — they're played by the in-process
+                # Sampler subscribed to the same virtual MIDI port.
+                gui_roles = [
+                    (inst, ch, patch_rel)
+                    for inst, (ch, _port, patch_rel) in OSC_CHANNELS.items()
+                    if patch_rel is not None
+                ]
+                print(f"\nslackbeatz: spawning {len(gui_roles)} Surge XT GUI windows.")
+                print(channel_routing_summary())
+                for _inst, ch_1idx, patch_rel in gui_roles:
+                    patch_path = _resolve_factory_patch(patch_rel)
+                    proc = spawn_surge_xt(ch_1idx, initial_patch=patch_path)
+                    if proc is not None:
+                        surge_procs.append(proc)
 
-    # With the virtual MIDI ports open + surge-xt-cli (if any) running,
-    # bring up the sampler — listens on slackbeatz-voice + slackbeatz-fx
-    # and plays WAVs in response to note_on events from those ports.
-    # Banks are populated later, when speech/sample gens resolve.
-    sampler = _start_sampler_if_enabled(osc_routing_enabled)
+        # MultiPortSink is open + surge instances (if any) are
+        # running — start the sampler listening on the voice + fx
+        # virtual ports.
+        sampler = _start_sampler_if_enabled(osc_routing_enabled)
+
+    # Kick off playback. Non-blocking — Player spawns its own daemon
+    # thread that runs the scheduler.
+    player.play()
 
     try:
-        tempo_map = build_tempo_map(resolved)
-        clock = InternalClock(tempo_map)
-        scheduler = Scheduler(resolved, sink, clock)
-        # Optional MIDI Clock emitter (driven by --emit-clock).
-        clock_emitter = None
-        clock_stop_event = None
-        if getattr(args, "emit_clock", False):
-            import threading as _threading
-            from slackbeatz.clock_emitter import ClockEmitter
-            clock_stop_event = _threading.Event()
-            clock_emitter = ClockEmitter(
-                port_name=port_name,
-                tempo_map=tempo_map,
-                stop_event=clock_stop_event,
-            )
-            clock_emitter.start()
         if args.gui:
-            # Tk needs the main thread, so run playback in a daemon
-            # thread and open the tweak window here. Closing the window
-            # triggers fluidsynth teardown via the finally block; the
-            # daemon thread is then collected by the interpreter.
+            # Tk on macOS must run on the main thread. The Player's
+            # worker thread is already producing MIDI; we just open
+            # the control window here and block on the mainloop.
             import threading
 
             from slackbeatz.gui import run_tweak_gui
 
             stop_event = threading.Event()
 
-            def _play() -> None:
-                try:
-                    scheduler.run()
-                except Exception as exc:  # noqa: BLE001 — surface via stderr
-                    if not stop_event.is_set():
-                        print(f"playback error: {exc}", file=sys.stderr)
+            def _on_close():
+                player.stop()
+                stop_event.set()
 
-            play_thread = threading.Thread(target=_play, daemon=True)
-            play_thread.start()
             # fs_proc.stdin is the FluidSynth shell-command channel
             # used by the Mixer's drums-strip Reverb/Chorus + master
             # gain. None in bare-MIDI mode — the Mixer hides the
@@ -461,22 +446,34 @@ def cmd_live(args) -> int:
                 initial_gain=args.gain,
                 initial_reverb_room=args.reverb,
                 initial_programs=_program_map(resolved),
+                player=player,
                 show_surge_gui_routing_hint=bool(surge_procs),
                 surge_instances=surge_instances or None,
-                on_close=stop_event.set,
+                on_close=_on_close,
             )
         else:
-            scheduler.run()
+            # Non-GUI: wait for the song to finish (or Ctrl+C).
+            # Polling instead of player._thread.join() keeps the
+            # main thread responsive to KeyboardInterrupt — on some
+            # Python builds .join() swallows SIGINT until the thread
+            # exits.
+            while player.is_playing:
+                time.sleep(0.1)
     except KeyboardInterrupt:
         print("\nslackbeatz: interrupted")
+        player.stop()
     except NoMidiPortError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
     finally:
-        if clock_emitter is not None:
-            if clock_stop_event is not None:
-                clock_stop_event.set()
-            clock_emitter.stop()
+        # Stop the Player first — its worker thread holds the sink +
+        # the clock emitter (when --emit-clock is on). Player.stop()
+        # is idempotent so it's safe to call again if we already
+        # stopped via _on_close.
+        try:
+            player.stop()
+        except Exception:
+            pass
         # Kill Surge XT GUI instances (legacy --surge-gui path).
         for sp_proc in surge_procs:
             try:
