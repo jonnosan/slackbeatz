@@ -878,6 +878,23 @@ class Player:
         # need it, which is the right behaviour.
         return load_setup("gm", base_path=song_path)
 
+    def ensure_surge_routing_ready(self) -> None:
+        """Eagerly create + open the shared MultiPortSink so its
+        virtual MIDI ports exist on the system. Required before
+        spawning surge-xt-cli (its ``--list-devices`` only sees ports
+        that already exist at spawn time)."""
+        if not self.surge_routing or self._shared_surge_sink is not None:
+            return
+        from slackbeatz.sinks.multiport import MultiPortSink
+        from slackbeatz.synthhost import DEFAULT_SURGE_CHANNELS
+        ch_to_port = {
+            ch_1idx - 1: port_name
+            for (ch_1idx, port_name, _patch) in DEFAULT_SURGE_CHANNELS.values()
+        }
+        multi = MultiPortSink(ch_to_port)
+        multi.open()
+        self._shared_surge_sink = multi
+
     def _make_sink(self):
         """Build the sink for one playback run.
 
@@ -898,7 +915,7 @@ class Player:
         # default sink (= FluidSynth).
         ch_to_port = {
             ch_1idx - 1: port_name
-            for (ch_1idx, port_name) in DEFAULT_SURGE_CHANNELS.values()
+            for (ch_1idx, port_name, _patch) in DEFAULT_SURGE_CHANNELS.values()
         }
         if self._shared_surge_sink is None:
             # Open once, lazily — the virtual ports stay alive across

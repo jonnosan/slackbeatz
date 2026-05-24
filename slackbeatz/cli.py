@@ -256,12 +256,50 @@ def cmd_live(args) -> int:
 
     print(f"slackbeatz: streaming to FluidSynth on {new_port!r} — press Ctrl+C to stop")
 
-    # Optional --surge: spawn one Surge XT window per pitched channel.
-    # See cmd_repl for the routing model — slackbeatz creates dedicated
-    # virtual ports per channel and Surge XT subscribes to one each.
+    # Optional --surge: spawn headless surge-xt-cli per pitched channel
+    # (default) or full Surge XT GUI windows (legacy --surge-gui).
+    # Either way the virtual MIDI ports must be open BEFORE we spawn,
+    # so surge-xt-cli's --list-devices sees them.
     surge_procs: list[subprocess.Popen] = []
+    surge_instances: list = []  # SurgeInstance objects (headless mode)
     surge_routing_enabled = False
-    if getattr(args, "surge", False):
+    use_surge_gui = getattr(args, "surge_gui", False)
+    use_surge_cli = getattr(args, "surge", False) and not use_surge_gui
+    if use_surge_cli or use_surge_gui:
+        surge_routing_enabled = True
+
+    # Build the sink BEFORE spawning surge — this opens the virtual
+    # MIDI ports so they show up in surge-xt-cli's device list.
+    sink = _build_live_sink(new_port, surge_routing_enabled)
+    if surge_routing_enabled:
+        # Pre-open the sink (its CompositeSink doesn't manage overrides
+        # but we want the MultiPortSink open NOW for device discovery).
+        # _build_live_sink with surge_routing on returns a CompositeSink
+        # whose only override is a MultiPortSink; opening that MPS now.
+        from slackbeatz.sinks.composite import CompositeSink
+        from slackbeatz.sinks.multiport import MultiPortSink
+        if isinstance(sink, CompositeSink):
+            for s in sink.channel_overrides.values():
+                if isinstance(s, MultiPortSink):
+                    s.open()
+                    break
+
+    if use_surge_cli:
+        from slackbeatz.surge_host import (
+            install_hint, is_surge_cli_installed, spawn_surge_instances,
+        )
+        if not is_surge_cli_installed():
+            print(
+                f"--surge requested but surge-xt-cli isn't installed. "
+                f"Install with:\n  {install_hint()}\n"
+                f"Continuing without Surge XT.",
+                file=sys.stderr,
+            )
+        else:
+            print("\nslackbeatz: spawning headless surge-xt-cli instances:")
+            surge_instances = spawn_surge_instances(on_progress=print)
+
+    if use_surge_gui:
         from slackbeatz.synthhost import (
             DEFAULT_SURGE_CHANNELS, _resolve_factory_patch,
             channel_routing_summary, install_hint, is_surge_installed,
@@ -269,23 +307,20 @@ def cmd_live(args) -> int:
         )
         if not is_surge_installed():
             print(
-                f"--surge requested but Surge XT isn't installed. "
-                f"Install with:\n  {install_hint()}\n"
-                f"Continuing without Surge XT.",
+                f"--surge-gui requested but Surge XT GUI isn't installed. "
+                f"Install with:\n  {install_hint()}",
                 file=sys.stderr,
             )
         else:
-            print(f"\nslackbeatz: spawning {len(DEFAULT_SURGE_CHANNELS)} Surge XT windows.")
+            print(f"\nslackbeatz: spawning {len(DEFAULT_SURGE_CHANNELS)} Surge XT GUI windows.")
             print(channel_routing_summary())
             for inst, (ch_1idx, _port, patch_rel) in DEFAULT_SURGE_CHANNELS.items():
                 patch_path = _resolve_factory_patch(patch_rel)
                 proc = spawn_surge_xt(ch_1idx, initial_patch=patch_path)
                 if proc is not None:
                     surge_procs.append(proc)
-            surge_routing_enabled = True
 
     try:
-        sink = _build_live_sink(new_port, surge_routing_enabled)
         tempo_map = build_tempo_map(resolved)
         clock = InternalClock(tempo_map)
         scheduler = Scheduler(resolved, sink, clock)
@@ -328,6 +363,7 @@ def cmd_live(args) -> int:
                 initial_reverb_room=args.reverb,
                 initial_programs=_program_map(resolved),
                 surge_port_name=new_port if surge_procs else None,
+                surge_instances=surge_instances or None,
                 on_close=stop_event.set,
             )
         else:
@@ -342,10 +378,16 @@ def cmd_live(args) -> int:
             if clock_stop_event is not None:
                 clock_stop_event.set()
             clock_emitter.stop()
-        # Kill Surge XT instances.
+        # Kill Surge XT GUI instances (legacy --surge-gui path).
         for sp_proc in surge_procs:
             try:
                 sp_proc.terminate()
+            except Exception:
+                pass
+        # Shut down headless surge-xt-cli instances + their OSC servers.
+        for inst in surge_instances:
+            try:
+                inst.shutdown()
             except Exception:
                 pass
         fs_proc.terminate()
@@ -708,39 +750,14 @@ def cmd_repl(args) -> int:
         f"Type a phrase + Enter to play. /help, /quit.",
     )
 
-    # Optional --surge: spawn one Surge XT window per pitched channel.
-    # Routing is automatic per channel via slackbeatz-owned virtual
-    # MIDI ports (one per channel role: lead/bass/pad/candy). Each
-    # Surge XT window picks its dedicated port from MIDI Settings —
-    # no channel-filter setup needed. Drums (channel 10) stay on
-    # FluidSynth.
+    # Optional --surge (default: headless surge-xt-cli quartet) or
+    # --surge-gui (legacy: GUI windows). Both need slackbeatz's
+    # virtual MIDI ports open BEFORE spawn — see _spawn_surge_for_player.
     surge_procs: list[subprocess.Popen] = []
-    surge_routing_enabled = False
-    if getattr(args, "surge", False):
-        from slackbeatz.synthhost import (
-            DEFAULT_SURGE_CHANNELS, _resolve_factory_patch,
-            channel_routing_summary, install_hint, is_surge_installed,
-            spawn_surge_xt,
-        )
-        if not is_surge_installed():
-            print(
-                f"--surge requested but Surge XT isn't installed. "
-                f"Install with:\n  {install_hint()}\n"
-                f"Continuing without Surge XT (FluidSynth still handles audio).",
-                file=sys.stderr,
-            )
-        else:
-            print(
-                f"\nslackbeatz: spawning {len(DEFAULT_SURGE_CHANNELS)} Surge XT "
-                f"windows alongside FluidSynth — one per pitched channel.",
-            )
-            print(channel_routing_summary())
-            for inst, (ch_1idx, _port, patch_rel) in DEFAULT_SURGE_CHANNELS.items():
-                patch_path = _resolve_factory_patch(patch_rel)
-                proc = spawn_surge_xt(ch_1idx, initial_patch=patch_path)
-                if proc is not None:
-                    surge_procs.append(proc)
-            surge_routing_enabled = True
+    surge_instances: list = []
+    use_surge_gui = getattr(args, "surge_gui", False)
+    use_surge_cli = getattr(args, "surge", False) and not use_surge_gui
+    surge_routing_enabled = use_surge_cli or use_surge_gui
 
     def cleanup_fs() -> None:
         fs_proc.terminate()
@@ -748,10 +765,16 @@ def cmd_repl(args) -> int:
             fs_proc.wait(timeout=2)
         except subprocess.TimeoutExpired:
             fs_proc.kill()
-        # Terminate Surge XT instances so closing slackbeatz cleans up.
+        # Terminate Surge XT GUI windows (legacy path).
         for sp_proc in surge_procs:
             try:
                 sp_proc.terminate()
+            except Exception:
+                pass
+        # Shut down headless surge-xt-cli instances + OSC servers.
+        for inst in surge_instances:
+            try:
+                inst.shutdown()
             except Exception:
                 pass
 
@@ -813,6 +836,54 @@ def cmd_repl(args) -> int:
         if getattr(args, "emit_clock", False):
             player.emit_clock = True
 
+        # If --surge is on, eagerly open the virtual MIDI ports + then
+        # spawn surge-xt-cli (or the GUI windows). Order matters:
+        # surge-xt-cli's --list-devices only sees ports that already
+        # exist at spawn time.
+        if surge_routing_enabled:
+            player.ensure_surge_routing_ready()
+
+            if use_surge_cli:
+                from slackbeatz.surge_host import (
+                    install_hint as _install_hint,
+                    is_surge_cli_installed, spawn_surge_instances,
+                )
+                if not is_surge_cli_installed():
+                    print(
+                        f"--surge requested but surge-xt-cli isn't installed. "
+                        f"Install with:\n  {_install_hint()}\n"
+                        f"Continuing without Surge XT.",
+                        file=sys.stderr,
+                    )
+                else:
+                    print("\nslackbeatz: spawning headless surge-xt-cli instances:")
+                    surge_instances.extend(spawn_surge_instances(on_progress=print))
+
+            if use_surge_gui:
+                from slackbeatz.synthhost import (
+                    DEFAULT_SURGE_CHANNELS, _resolve_factory_patch,
+                    channel_routing_summary,
+                    install_hint as _gui_install_hint,
+                    is_surge_installed, spawn_surge_xt,
+                )
+                if not is_surge_installed():
+                    print(
+                        f"--surge-gui requested but Surge XT GUI isn't installed. "
+                        f"Install with:\n  {_gui_install_hint()}",
+                        file=sys.stderr,
+                    )
+                else:
+                    print(
+                        f"\nslackbeatz: spawning {len(DEFAULT_SURGE_CHANNELS)} Surge XT "
+                        f"GUI windows.",
+                    )
+                    print(channel_routing_summary())
+                    for inst_name, (ch_1idx, _port, patch_rel) in DEFAULT_SURGE_CHANNELS.items():
+                        patch_path = _resolve_factory_patch(patch_rel)
+                        proc = spawn_surge_xt(ch_1idx, initial_patch=patch_path)
+                        if proc is not None:
+                            surge_procs.append(proc)
+
         def _stop_now() -> None:
             player.stop()
             cleanup_fs()
@@ -832,6 +903,7 @@ def cmd_repl(args) -> int:
                 initial_reverb_room=args.reverb,
                 player=player,
                 surge_port_name=port_name if surge_procs else None,
+                surge_instances=surge_instances or None,
                 on_close=_stop_now,
             )
         except RuntimeError as e:
@@ -1313,11 +1385,18 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     sp.add_argument(
         "--surge", action="store_true",
-        help="spawn one Surge XT window per pitched channel for live sound design. "
-             "Each window listens on its own dedicated virtual MIDI port "
-             "(slackbeatz-lead/bass/pad/candy); pick that port in Surge XT's "
-             "MIDI Settings — no channel filter setup needed. FluidSynth keeps "
+        help="spawn one headless surge-xt-cli per pitched channel "
+             "(lead/bass/pad/candy), each on its own slackbeatz virtual "
+             "MIDI port + OSC port. The GUI's Sound tab drives them live "
+             "via OSC for cutoff/resonance/ADSR/etc. FluidSynth keeps "
              "handling drums.",
+    )
+    sp.add_argument(
+        "--surge-gui", action="store_true",
+        help="legacy: spawn 4 Surge XT GUI windows instead of headless "
+             "surge-xt-cli. MIDI input must be manually picked per window "
+             "every launch (Surge XT GUI has a global-config bug). Useful "
+             "for one-off deep patch editing.",
     )
     sp.set_defaults(func=cmd_live)
 
@@ -1353,11 +1432,18 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     sp.add_argument(
         "--surge", action="store_true",
-        help="spawn one Surge XT window per pitched channel for live sound design. "
-             "Each window listens on its own dedicated virtual MIDI port "
-             "(slackbeatz-lead/bass/pad/candy); pick that port in Surge XT's "
-             "MIDI Settings — no channel filter setup needed. FluidSynth keeps "
+        help="spawn one headless surge-xt-cli per pitched channel "
+             "(lead/bass/pad/candy), each on its own slackbeatz virtual "
+             "MIDI port + OSC port. The GUI's Sound tab drives them live "
+             "via OSC for cutoff/resonance/ADSR/etc. FluidSynth keeps "
              "handling drums.",
+    )
+    sp.add_argument(
+        "--surge-gui", action="store_true",
+        help="legacy: spawn 4 Surge XT GUI windows instead of headless "
+             "surge-xt-cli. MIDI input must be manually picked per window "
+             "every launch (Surge XT GUI has a global-config bug). Useful "
+             "for one-off deep patch editing.",
     )
     sp.set_defaults(func=cmd_repl)
 

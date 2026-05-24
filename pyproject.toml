@@ -19,6 +19,9 @@ classifiers = [
 dependencies = [
     "mido>=1.3",
     "python-rtmidi>=1.5",
+    # Drives external synths (surge-xt-cli) over OSC for live knob tweaking
+    # from the slackbeatz Tk GUI.
+    "python-osc>=1.9",
 ]
 
 [project.optional-dependencies]

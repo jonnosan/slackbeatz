@@ -108,6 +108,176 @@ _CHANNEL_LABELS: dict[int, str] = {
 }
 
 
+# Sound tab per-instance knob layout. Each entry is
+# (label, KNOB_ADDRS key, kind). 'kind' is 'slider' (0..1 float) or
+# 'dropdown' (enum index); dropdowns get their option list from a
+# separate map (_SURGE_ENUM_OPTIONS).
+_SOUND_KNOBS: list[tuple[str, str, str]] = [
+    ("Filter cutoff",     "filter_cutoff",    "slider"),
+    ("Filter resonance",  "filter_resonance", "slider"),
+    ("Filter type",       "filter_type",      "dropdown"),
+    ("Osc 1 type",        "osc1_type",        "dropdown"),
+    ("AEG attack",        "aeg_attack",       "slider"),
+    ("AEG decay",         "aeg_decay",        "slider"),
+    ("AEG sustain",       "aeg_sustain",      "slider"),
+    ("AEG release",       "aeg_release",      "slider"),
+    ("Scene volume",      "scene_volume",     "slider"),
+]
+
+# Surge XT enum value → label. Indices match Surge XT's parameter
+# enum order (verified by querying /doc and /q during build-out).
+_SURGE_ENUM_OPTIONS: dict[str, list[str]] = {
+    # /param/a/filter/1/type — Surge XT 1.3 filter algorithm list.
+    "filter_type": [
+        "Off", "Legacy LP", "Legacy HP", "Legacy BP", "Legacy Notch",
+        "OB-Xd 12dB", "OB-Xd 24dB", "K35 LP", "K35 HP", "Diode Ladder",
+        "Cutoff Warp LP", "Cutoff Warp HP", "Cutoff Warp BP",
+        "Cutoff Warp Notch", "Resonance Warp LP", "Resonance Warp HP",
+        "Resonance Warp BP", "Resonance Warp Notch", "Tri-pole",
+        "Comb +", "Comb -", "Sample & Hold",
+    ],
+    # /param/a/osc/1/type — Surge XT oscillator algorithms.
+    "osc1_type": [
+        "Classic", "Modern", "Wavetable", "Window", "Sine",
+        "FM2", "FM3", "String", "Twist", "Alias", "S&H Noise",
+        "Audio Input",
+    ],
+}
+
+
+def _build_sound_tab(parent, surge_instances, ttk, tk) -> None:
+    """Render the per-instance Surge XT knob panels into *parent*.
+
+    Each :class:`SurgeInstance` becomes an inner notebook tab with the
+    standard knob set. Slider movements / dropdown selects fire OSC
+    parameter writes to the corresponding instance. A bottom toolbar
+    has "Load patch…" and "Open GUI editor…" buttons per instance.
+    """
+    from pathlib import Path as _Path
+    from tkinter import filedialog
+
+    from slackbeatz.surge_host import (
+        KNOB_ADDRS, _SURGE_FACTORY, resolve_factory_patch,
+        spawn_surge_gui,
+    )
+
+    ttk.Label(
+        parent,
+        text="🎚 Live sound tweaking — each tab maps to one surge-xt-cli "
+             "instance. Slider/dropdown changes send OSC to that instance.",
+        wraplength=580, justify="left", foreground="#444",
+    ).pack(padx=10, pady=(10, 6), anchor="w")
+
+    inner = ttk.Notebook(parent)
+    inner.pack(fill="both", expand=True, padx=8, pady=6)
+
+    for inst in surge_instances:
+        frame = ttk.Frame(inner)
+        inner.add(frame, text=f"{inst.config.role} (ch {inst.config.channel_1idx})")
+
+        # Header — currently-loaded patch + reload button.
+        header = ttk.Frame(frame)
+        header.pack(fill="x", padx=8, pady=(8, 4))
+
+        patch_label_var = tk.StringVar(value=inst.config.initial_patch)
+        ttk.Label(header, text="Patch:").pack(side="left")
+        ttk.Label(
+            header, textvariable=patch_label_var,
+            foreground="#225", font=("TkDefaultFont", 10, "italic"),
+        ).pack(side="left", padx=(4, 8))
+
+        def _make_load_patch(inst=inst, var=patch_label_var):
+            def _load():
+                path = filedialog.askopenfilename(
+                    initialdir=str(_SURGE_FACTORY),
+                    filetypes=[("Surge XT patch", "*.fxp")],
+                    title=f"Load patch for {inst.config.role}",
+                )
+                if path:
+                    inst.load_patch(_Path(path))
+                    # Update header label to relative-from-factory if possible.
+                    try:
+                        rel = _Path(path).relative_to(_SURGE_FACTORY)
+                        var.set(str(rel))
+                    except ValueError:
+                        var.set(_Path(path).name)
+            return _load
+
+        ttk.Button(header, text="Load patch…", command=_make_load_patch()).pack(side="left")
+
+        def _make_open_gui(inst=inst):
+            def _open():
+                # One-shot Surge XT GUI window for deep editing of the
+                # currently-loaded patch. User saves the patch, then
+                # hits "Reload" (= just re-query) to pick it up here.
+                rel = inst.config.initial_patch  # best guess
+                patch_path = resolve_factory_patch(rel)
+                spawn_surge_gui(initial_patch=patch_path)
+            return _open
+
+        ttk.Button(header, text="Open GUI editor…", command=_make_open_gui()).pack(side="left", padx=(6, 0))
+
+        # Knob grid — two columns. Sliders on the left, value readouts
+        # on the right (from the OSC reply cache).
+        grid = ttk.Frame(frame)
+        grid.pack(fill="both", expand=True, padx=8, pady=8)
+        grid.columnconfigure(1, weight=1)
+        grid.columnconfigure(2, weight=0)
+
+        for row, (label, key, kind) in enumerate(_SOUND_KNOBS):
+            addr = KNOB_ADDRS[key]
+            ttk.Label(grid, text=label).grid(row=row, column=0, sticky="w", pady=2)
+
+            if kind == "slider":
+                # Initial slider position from cached value (set by
+                # inst.spawn()'s priming query). Falls back to 0.5.
+                initial = inst.get_value(addr)
+                var = tk.DoubleVar(value=initial if initial is not None else 0.5)
+                readout_var = tk.StringVar(value=inst.get_display(addr) or "—")
+
+                def _on_slider(_=None, inst=inst, addr=addr, var=var, ro=readout_var):
+                    inst.set_param(addr, float(var.get()))
+                    # Display string updates async via OSC reply; poll
+                    # the cache after a beat. Tk timer is fine for this.
+                    def _refresh():
+                        disp = inst.get_display(addr)
+                        if disp:
+                            ro.set(disp)
+                    parent.after(80, _refresh)
+
+                ttk.Scale(
+                    grid, from_=0.0, to=1.0, orient="horizontal",
+                    variable=var, command=_on_slider,
+                ).grid(row=row, column=1, sticky="ew", padx=(6, 6), pady=2)
+                ttk.Label(
+                    grid, textvariable=readout_var, width=14,
+                    foreground="#345", font=("TkFixedFont", 10),
+                ).grid(row=row, column=2, sticky="e", pady=2)
+            else:
+                # Dropdown — enum value index sent as float.
+                options = _SURGE_ENUM_OPTIONS.get(key, [])
+                if not options:
+                    continue
+                current = inst.get_value(addr)
+                start_idx = int(current) if current is not None else 0
+                start_idx = max(0, min(start_idx, len(options) - 1))
+                combo_var = tk.StringVar(value=options[start_idx])
+                combo = ttk.Combobox(
+                    grid, values=options, textvariable=combo_var,
+                    state="readonly", width=22,
+                )
+
+                def _on_combo(_=None, inst=inst, addr=addr, var=combo_var, options=options):
+                    try:
+                        idx = options.index(var.get())
+                    except ValueError:
+                        return
+                    inst.set_param(addr, float(idx))
+
+                combo.bind("<<ComboboxSelected>>", _on_combo)
+                combo.grid(row=row, column=1, columnspan=2, sticky="ew", padx=(6, 0), pady=2)
+
+
 def run_tweak_gui(
     fs_stdin: IO[bytes],
     *,
@@ -116,6 +286,7 @@ def run_tweak_gui(
     initial_programs: dict[int, int] | None = None,
     player=None,
     surge_port_name: str | None = None,
+    surge_instances: list | None = None,
     on_close: Callable[[], None] | None = None,
 ) -> None:
     """Open the tweak window. Blocks until the user closes it.
@@ -636,6 +807,15 @@ def run_tweak_gui(
         # case (same gens → no destroy + recreate).
         _rebuild_gens_tab()
         main_thread_callbacks.append(_rebuild_gens_tab)
+
+    # ------------------------------------------------------------------
+    # Sound tab — per-Surge-XT knobs (only when --surge spawned the
+    # headless quartet). Drives surge-xt-cli over OSC for live tweaking.
+    # ------------------------------------------------------------------
+    if surge_instances:
+        sound_tab = ttk.Frame(notebook)
+        notebook.add(sound_tab, text="🎚 Sound")
+        _build_sound_tab(sound_tab, surge_instances, ttk, tk)
 
     # ------------------------------------------------------------------
     # Effects tab — gain / reverb / chorus sliders + on-off toggles.

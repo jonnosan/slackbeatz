@@ -1,0 +1,477 @@
+"""Headless surge-xt-cli instances driven via OSC.
+
+Architecture:
+
+* slackbeatz creates one virtual MIDI port per pitched channel (lead /
+  bass / pad / candy) via :class:`MultiPortSink`.
+* For each pitched channel we spawn one ``surge-xt-cli`` subprocess
+  bound to its dedicated MIDI port via ``--midi-input=<index>`` (no
+  channel filter setup needed — each port carries only one channel).
+* Each instance gets its own OSC IN port for parameter writes + an
+  OSC OUT destination back to slackbeatz so we can read current
+  values, doc metadata, and patch info.
+* The slackbeatz Tk GUI's "Sound" tab uses these handles to drive
+  cutoff / resonance / ADSR / osc-type / volume in real time.
+
+Why surge-xt-cli instead of the GUI standalone? Surge XT Standalone
+stores its MIDI input choice in a single shared settings file
+(``~/Library/Application Support/Surge XT.settings``) — multiple
+spawned GUI instances can't have independent MIDI inputs. The
+headless CLI has no settings file: every choice is per-process
+command-line state, so N instances are properly isolated.
+
+The legacy ``--surge-gui`` flag in :mod:`slackbeatz.cli` keeps the
+old GUI-spawn behaviour available for deep patch editing.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import shutil
+import socket
+import subprocess
+import sys
+import threading
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Callable, Optional
+
+# python-osc is an optional dep — caller is expected to have it
+# installed when using --surge. We import lazily inside spawn() so
+# `import slackbeatz.surge_host` works for users without it (e.g.
+# when running just `slackbeatz play`).
+
+
+# Standalone GUI binary (legacy --surge-gui path).
+_SURGE_GUI_BIN = Path("/Applications/Surge XT.app/Contents/MacOS/Surge XT")
+# Headless CLI binary (default --surge path).
+_SURGE_CLI_BIN = Path("/Applications/Surge XT.app/Contents/MacOS/surge-xt-cli")
+
+# Factory patch library root (system-wide on macOS).
+_SURGE_FACTORY = Path("/Library/Application Support/Surge XT/patches_factory")
+
+
+# --------------------------------------------------------------------------
+# Per-role config — what we spawn for each pitched slackbeatz channel.
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SurgeRoleConfig:
+    """Static config for one pitched-channel surge-xt-cli instance.
+
+    The OSC ports are pre-allocated so they don't clash with anything
+    else. Pairs of (in, out) sit two apart per role.
+    """
+
+    role: str                  # 'lead' / 'bass' / 'pad' / 'candy'
+    channel_1idx: int          # MIDI channel (1-indexed) slackbeatz emits on
+    midi_port_name: str        # the virtual port MultiPortSink creates
+    initial_patch: str         # path relative to _SURGE_FACTORY
+    osc_in_port: int           # slackbeatz → surge-xt-cli
+    osc_recv_port: int         # surge-xt-cli → slackbeatz (we listen here)
+
+
+# Default role assignments — match the ``gm`` setup's channel layout.
+SURGE_ROLES: tuple[SurgeRoleConfig, ...] = (
+    SurgeRoleConfig(
+        role="lead",
+        channel_1idx=1,
+        midi_port_name="slackbeatz-lead",
+        initial_patch="Leads/Classic Lead 1.fxp",
+        osc_in_port=53001,
+        osc_recv_port=53002,
+    ),
+    SurgeRoleConfig(
+        role="bass",
+        channel_1idx=2,
+        midi_port_name="slackbeatz-bass",
+        initial_patch="Basses/Bass 1.fxp",
+        osc_in_port=53011,
+        osc_recv_port=53012,
+    ),
+    SurgeRoleConfig(
+        role="pad",
+        channel_1idx=3,
+        midi_port_name="slackbeatz-pad",
+        initial_patch="Pads/MKS-70 Warm Pad.fxp",
+        osc_in_port=53021,
+        osc_recv_port=53022,
+    ),
+    SurgeRoleConfig(
+        role="candy",
+        channel_1idx=4,
+        midi_port_name="slackbeatz-candy",
+        initial_patch="Sequences/Bell Seq.fxp",
+        osc_in_port=53031,
+        osc_recv_port=53032,
+    ),
+)
+
+
+# --------------------------------------------------------------------------
+# Detection / introspection
+# --------------------------------------------------------------------------
+
+
+def is_surge_cli_installed() -> bool:
+    """True if the headless surge-xt-cli is available on this machine."""
+    if sys.platform == "darwin":
+        return _SURGE_CLI_BIN.is_file()
+    # Linux/Windows: assume on PATH as surge-xt-cli or surge_xt_cli.
+    return any(shutil.which(name) for name in ("surge-xt-cli", "surge_xt_cli"))
+
+
+def is_surge_gui_installed() -> bool:
+    """True if the standalone GUI Surge XT is available."""
+    if sys.platform == "darwin":
+        return _SURGE_GUI_BIN.is_file()
+    return shutil.which("surge-xt") is not None
+
+
+def install_hint() -> str:
+    """Per-platform install instruction string."""
+    if sys.platform == "darwin":
+        return "brew install --cask surge-xt"
+    if sys.platform.startswith("linux"):
+        return "Install via your distro's package manager (search 'surge-xt')"
+    return "Download from https://surge-synthesizer.github.io/"
+
+
+def resolve_factory_patch(relpath: str) -> Optional[Path]:
+    """Return the absolute path to a factory patch, or None if missing."""
+    candidate = _SURGE_FACTORY / relpath
+    return candidate if candidate.is_file() else None
+
+
+def list_midi_device_indices() -> dict[str, int]:
+    """Query surge-xt-cli for its current MIDI input list and return a
+    mapping of port name → device index.
+
+    surge-xt-cli's ``--list-devices`` output looks like:
+
+        MIDI Device: [0] : slackbeatz-lead
+        MIDI Device: [1] : slackbeatz-bass
+
+    The indices here are what ``--midi-input N`` expects. Virtual ports
+    must already exist (i.e. ``MultiPortSink.open()`` must have been
+    called) for them to show up.
+    """
+    if not is_surge_cli_installed():
+        return {}
+    try:
+        result = subprocess.run(
+            [str(_SURGE_CLI_BIN), "--list-devices"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return {}
+    out: dict[str, int] = {}
+    pattern = re.compile(r"MIDI Device:\s*\[(\d+)\]\s*:\s*(.+?)\s*$")
+    for line in (result.stdout + result.stderr).splitlines():
+        m = pattern.search(line)
+        if m:
+            out[m.group(2).strip()] = int(m.group(1))
+    return out
+
+
+# --------------------------------------------------------------------------
+# Per-instance handle — wraps the subprocess + OSC client/server.
+# --------------------------------------------------------------------------
+
+
+# Useful OSC paths for the v1 Sound panel. Only those that exist
+# universally across patches. Add more as the panel grows.
+KNOB_ADDRS: dict[str, str] = {
+    "filter_cutoff":    "/param/a/filter/1/cutoff",
+    "filter_resonance": "/param/a/filter/1/resonance",
+    "filter_type":      "/param/a/filter/1/type",
+    "osc1_type":        "/param/a/osc/1/type",
+    "aeg_attack":       "/param/a/aeg/attack",
+    "aeg_decay":        "/param/a/aeg/decay",
+    "aeg_sustain":      "/param/a/aeg/sustain",
+    "aeg_release":      "/param/a/aeg/release",
+    "scene_volume":     "/param/a/amp/volume",
+}
+
+
+@dataclass
+class SurgeInstance:
+    """One running surge-xt-cli + its OSC plumbing.
+
+    Use :func:`spawn_surge_instances` to construct + start a quartet
+    in one call. Each instance is independent; teardown closes the
+    subprocess + OSC server.
+    """
+
+    config: SurgeRoleConfig
+    midi_input_index: int
+    proc: Optional[subprocess.Popen] = None
+    _client: object = None    # pythonosc SimpleUDPClient (lazy import)
+    _server: object = None    # pythonosc ThreadingOSCUDPServer
+    _server_thread: Optional[threading.Thread] = None
+    # Cached values from /param replies. address → (value: float, display: str)
+    _values: dict[str, tuple[float, str]] = field(default_factory=dict)
+    # Cached metadata from /doc replies. address → (name, type, min, max).
+    _docs: dict[str, tuple[str, str, float, float]] = field(default_factory=dict)
+    _values_lock: threading.Lock = field(default_factory=threading.Lock)
+
+    # -- OSC reply handlers --
+
+    def _on_osc(self, addr: str, *args) -> None:
+        if addr.startswith("/doc/"):
+            # /doc/<path> name type min max
+            if len(args) >= 4 and not addr.endswith("/ext"):
+                key = addr[len("/doc"):]  # → '/param/...'
+                try:
+                    self._docs[key] = (
+                        str(args[0]), str(args[1]),
+                        float(args[2]), float(args[3]),
+                    )
+                except (ValueError, TypeError):
+                    pass
+            return
+        # Parameter values: /param/<path> <value> [<display>]
+        if addr.startswith("/param/") and args:
+            try:
+                value = float(args[0])
+            except (ValueError, TypeError):
+                return
+            display = str(args[1]) if len(args) >= 2 else ""
+            with self._values_lock:
+                self._values[addr] = (value, display)
+
+    # -- lifecycle --
+
+    def spawn(self) -> None:
+        """Start the subprocess + OSC server. Blocks until the CLI is
+        accepting OSC (~2s)."""
+        from pythonosc import dispatcher as _disp
+        from pythonosc import osc_server as _osc_server
+        from pythonosc import udp_client as _udp
+
+        if not is_surge_cli_installed():
+            raise RuntimeError("surge-xt-cli not installed")
+
+        # 1. OSC server first (so we don't miss early replies).
+        disp = _disp.Dispatcher()
+        disp.set_default_handler(self._on_osc)
+        self._server = _osc_server.ThreadingOSCUDPServer(
+            ("127.0.0.1", self.config.osc_recv_port), disp,
+        )
+        self._server_thread = threading.Thread(
+            target=self._server.serve_forever, daemon=True,
+        )
+        self._server_thread.start()
+
+        # 2. Client to send messages into surge-xt-cli.
+        self._client = _udp.SimpleUDPClient(
+            "127.0.0.1", self.config.osc_in_port,
+        )
+
+        # 3. The subprocess. surge-xt-cli's CLI11 parser only accepts
+        # the ``--flag=value`` form for these options (space-separated
+        # values get parsed as stray positional args and the process
+        # exits with "arguments were not expected").
+        args = [
+            str(_SURGE_CLI_BIN),
+            f"--midi-input={self.midi_input_index}",
+            f"--osc-in-port={self.config.osc_in_port}",
+            f"--osc-out-port={self.config.osc_recv_port}",
+            "--osc-out-ipaddr=127.0.0.1",
+            "--no-stdin",
+        ]
+        patch_path = resolve_factory_patch(self.config.initial_patch)
+        if patch_path is not None:
+            args.append(f"--init-patch={patch_path}")
+
+        self.proc = subprocess.Popen(
+            args,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+
+        # 4. Wait for boot — surge-xt-cli prints "Starting OSC input"
+        # within ~100ms but a brief grace period lets the patch load.
+        time.sleep(1.5)
+
+        # 5. Prime the value cache for the panel knobs.
+        for addr in KNOB_ADDRS.values():
+            self.query(addr)
+
+    def shutdown(self) -> None:
+        """Terminate the subprocess + OSC server. Safe to call twice."""
+        if self.proc is not None:
+            try:
+                self.proc.terminate()
+                try:
+                    self.proc.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    self.proc.kill()
+            except Exception:
+                pass
+            self.proc = None
+        if self._server is not None:
+            try:
+                self._server.shutdown()
+                self._server.server_close()
+            except Exception:
+                pass
+            self._server = None
+
+    # -- knob ops --
+
+    def set_param(self, addr: str, value: float) -> None:
+        """Send a parameter change to this instance via OSC.
+
+        Surge XT doesn't auto-push outbound on changes (only replies
+        to explicit ``/q`` queries), so we follow up with a query to
+        refresh the cached display string. Cheap (~1ms round-trip).
+        """
+        if self._client is None:
+            return
+        try:
+            self._client.send_message(addr, float(value))
+            # Optimistic local cache update so reads don't lag the
+            # send; the real display string lands ~1ms later via the
+            # /q reply.
+            with self._values_lock:
+                prev = self._values.get(addr, (0.0, ""))
+                self._values[addr] = (float(value), prev[1])
+        except OSError:
+            return
+        self.query(addr)
+
+    def query(self, addr: str) -> None:
+        """Request the current value of *addr*. The reply lands in the
+        cache asynchronously; read via :meth:`get_value`."""
+        if self._client is None:
+            return
+        from pythonosc.osc_message_builder import OscMessageBuilder
+        try:
+            msg = OscMessageBuilder(f"/q{addr}").build()
+            self._client.send(msg)
+        except OSError:
+            pass
+
+    def get_value(self, addr: str) -> Optional[float]:
+        """Most recent cached value at *addr*, or None if never seen."""
+        with self._values_lock:
+            entry = self._values.get(addr)
+        return entry[0] if entry else None
+
+    def get_display(self, addr: str) -> str:
+        """Most recent cached display string at *addr*, or ''."""
+        with self._values_lock:
+            entry = self._values.get(addr)
+        return entry[1] if entry else ""
+
+    def load_patch(self, patch_path: Path) -> None:
+        """Load *patch_path* (an .fxp file) in this instance."""
+        if self._client is None:
+            return
+        try:
+            self._client.send_message("/patch/load", str(patch_path))
+        except OSError:
+            pass
+        # After load, re-prime the value cache for our panel knobs.
+        for addr in KNOB_ADDRS.values():
+            self.query(addr)
+
+
+# --------------------------------------------------------------------------
+# Top-level spawn helper
+# --------------------------------------------------------------------------
+
+
+def spawn_surge_instances(
+    *,
+    on_progress: Optional[Callable[[str], None]] = None,
+) -> list[SurgeInstance]:
+    """Spawn the default quartet of surge-xt-cli instances bound to
+    slackbeatz's virtual MIDI ports.
+
+    The caller must have already opened the virtual ports (i.e.
+    :class:`MultiPortSink.open` has run) so the ports show up in
+    surge-xt-cli's ``--list-devices`` output.
+
+    Returns the list of running :class:`SurgeInstance`. On failure
+    (CLI not installed, port name missing) the failed instances are
+    omitted from the result and a message is sent via *on_progress*.
+    """
+    instances: list[SurgeInstance] = []
+    if not is_surge_cli_installed():
+        if on_progress:
+            on_progress(
+                f"--surge requested but surge-xt-cli not found. "
+                f"Install: {install_hint()}"
+            )
+        return instances
+
+    # Discover indices for our virtual ports.
+    device_indices = list_midi_device_indices()
+    if on_progress:
+        on_progress(
+            f"surge-xt-cli sees {len(device_indices)} MIDI input(s): "
+            f"{sorted(device_indices.keys())}"
+        )
+
+    for cfg in SURGE_ROLES:
+        idx = device_indices.get(cfg.midi_port_name)
+        if idx is None:
+            if on_progress:
+                on_progress(
+                    f"  skipping {cfg.role}: virtual port "
+                    f"{cfg.midi_port_name!r} not visible to surge-xt-cli"
+                )
+            continue
+        inst = SurgeInstance(config=cfg, midi_input_index=idx)
+        try:
+            inst.spawn()
+        except Exception as e:  # noqa: BLE001 — surface to caller
+            if on_progress:
+                on_progress(f"  failed to spawn {cfg.role}: {e}")
+            continue
+        if on_progress:
+            on_progress(
+                f"  {cfg.role}: midi-input={idx} ({cfg.midi_port_name!r}), "
+                f"osc-in={cfg.osc_in_port}, patch={cfg.initial_patch}"
+            )
+        instances.append(inst)
+    return instances
+
+
+# --------------------------------------------------------------------------
+# Legacy: GUI standalone spawn — kept for --surge-gui.
+# --------------------------------------------------------------------------
+
+
+def spawn_surge_gui(
+    *,
+    initial_patch: Optional[Path] = None,
+) -> Optional[subprocess.Popen]:
+    """Spawn one Surge XT GUI standalone window for deep patch editing.
+
+    Unlike the headless CLI quartet, only ONE GUI window makes sense
+    here (multiple share global MIDI config) — the user does sound
+    design in the window, then ``surge_instance.load_patch()`` reloads
+    the saved .fxp into the relevant CLI instance.
+    """
+    if not is_surge_gui_installed():
+        return None
+    args = [str(_SURGE_GUI_BIN)]
+    if initial_patch is not None and Path(initial_patch).is_file():
+        args.append(f"--init-patch={initial_patch}")
+    if sys.platform == "darwin":
+        return subprocess.Popen(
+            args,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    return None  # Linux/Windows GUI spawn not wired in this module
