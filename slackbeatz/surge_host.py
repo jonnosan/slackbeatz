@@ -400,11 +400,19 @@ class SurgeInstance:
 
     def _load_default_fx_slots(self) -> None:
         """Send the FX-slot type + deactivate writes for the v1 mixer
-        default chain. Idempotent + side-effect-only (no return)."""
+        default chain, plus the per-param /doc queries that populate
+        the live-discovered label cache used by the Mixer GUI."""
         self.set_param(fx_addr(1, "type"), float(_DEFAULT_FX_TYPE_SLOT1))
         self.set_param(fx_addr(1, "deactivate"), 1.0)
         self.set_param(fx_addr(2, "type"), float(_DEFAULT_FX_TYPE_SLOT2))
         self.set_param(fx_addr(2, "deactivate"), 1.0)
+        # Surge needs ~50ms to settle the new FX type's param tree
+        # before /doc replies are meaningful. Short blocking sleep
+        # here is acceptable — we're already inside spawn()'s 1.5s
+        # boot wait so the overall startup budget barely moves.
+        time.sleep(0.1)
+        self.query_fx_slot_docs(1)
+        self.query_fx_slot_docs(2)
 
     def shutdown(self) -> None:
         """Terminate the subprocess + OSC server. Safe to call twice."""
@@ -461,6 +469,34 @@ class SurgeInstance:
         except OSError:
             pass
 
+    def query_doc(self, addr: str) -> None:
+        """Request the doc metadata (name, type, min, max) for *addr*.
+
+        Surge replies asynchronously via the existing ``/doc/...``
+        handler which populates :attr:`_docs`. Read the result back
+        via :meth:`get_param_doc`. Used by the 🎛 Mixer tab to discover
+        the real per-FX param names (which Surge knows but our
+        hardcoded :data:`FX_CATALOG` only approximates)."""
+        if self._client is None:
+            return
+        from pythonosc.osc_message_builder import OscMessageBuilder
+        try:
+            msg = OscMessageBuilder(f"/doc{addr}").build()
+            self._client.send(msg)
+        except OSError:
+            pass
+
+    def query_fx_slot_docs(self, slot: int) -> None:
+        """Convenience: fire ``/doc`` queries for every param of FX
+        slot ``slot`` (1 or 2). Use after :meth:`set_param` of
+        ``/param/fx/a/<slot>/type`` — Surge swaps the FX type and the
+        params now have new meanings. Replies trickle into
+        :attr:`_docs` over the next ~50-100 ms; the Mixer GUI reads
+        whichever labels are present at render time + falls back to
+        :data:`FX_CATALOG` for ones not yet known."""
+        for i in range(1, 13):
+            self.query_doc(fx_addr(slot, "param", i))
+
     def get_value(self, addr: str) -> Optional[float]:
         """Most recent cached value at *addr*, or None if never seen."""
         with self._values_lock:
@@ -472,6 +508,12 @@ class SurgeInstance:
         with self._values_lock:
             entry = self._values.get(addr)
         return entry[1] if entry else ""
+
+    def get_param_doc(self, addr: str) -> Optional[tuple[str, str, float, float]]:
+        """Doc tuple ``(name, type, min, max)`` for *addr*, or ``None``
+        if Surge hasn't replied yet. Lock-free read — :attr:`_docs` is
+        only mutated by the OSC server thread via :meth:`_on_osc`."""
+        return self._docs.get(addr)
 
     def load_patch(self, patch_path: Path) -> None:
         """Load *patch_path* (an .fxp file) in this instance."""

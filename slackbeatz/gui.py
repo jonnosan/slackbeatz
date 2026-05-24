@@ -822,23 +822,36 @@ def _build_surge_fx_slots(parent, surge_instance, _var, ttk, tk) -> None:
         params_frame = ttk.Frame(row)
         params_frame.pack(fill="x", padx=(0, 4), pady=(2, 0))
 
+        def _label_for_param(slot_: int, p_idx: int, catalog_label: str) -> str:
+            """Prefer the live /doc label Surge reported for this
+            param; fall back to the catalog's hardcoded label."""
+            doc = surge_instance.get_param_doc(fx_addr(slot_, "param", p_idx))
+            if doc is None:
+                return catalog_label
+            name = doc[0].strip()
+            # Surge sometimes replies with the bare "param N" placeholder
+            # for unused slots inside a type — keep the friendlier
+            # catalog label in that case.
+            if not name or name.lower().startswith("param "):
+                return catalog_label
+            return name
+
         def _rebuild_params(spec_type_id: int, frame=params_frame, slot_=slot) -> None:
             for w in frame.winfo_children():
                 w.destroy()
             spec = FX_CATALOG.get(spec_type_id)
             if spec is None or not spec.params:
-                # Unknown / param-less FX type → show a hint instead
-                # of empty space.
                 ttk.Label(
                     frame, text="(no live params for this FX)",
                     foreground="#888",
                     font=("TkDefaultFont", 9, "italic"),
                 ).pack(anchor="w")
                 return
-            for label, p_idx in spec.params:
+            for catalog_label, p_idx in spec.params:
+                label = _label_for_param(slot_, p_idx, catalog_label)
                 p_row = ttk.Frame(frame)
                 p_row.pack(fill="x", pady=1)
-                ttk.Label(p_row, text=label, width=8, anchor="w").pack(side="left")
+                ttk.Label(p_row, text=label, width=10, anchor="w").pack(side="left")
                 addr = fx_addr(slot_, "param", p_idx)
                 cur = surge_instance.get_value(addr)
                 p_var = _var(
@@ -861,7 +874,13 @@ def _build_surge_fx_slots(parent, surge_instance, _var, ttk, tk) -> None:
             if new_id is None:
                 return
             surge_instance.set_param(fx_addr(slot_, "type"), float(new_id))
+            # Fire /doc queries for the new FX type's params. Replies
+            # land asynchronously — we re-render now using whatever
+            # cache we have (mostly catalog fallbacks) + schedule a
+            # second render in 150ms once the /doc replies arrive.
+            surge_instance.query_fx_slot_docs(slot_)
             _rebuild_params(new_id)
+            parent.after(150, lambda: _rebuild_params(new_id))
 
         cb.bind("<<ComboboxSelected>>", _on_type_change)
 
