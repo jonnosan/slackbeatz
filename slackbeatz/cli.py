@@ -1692,7 +1692,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="render the pitched / sub channels via Surge XT VST3 (offline, "
              "deterministic, faster-than-real-time) + sampler-bank WAVs for "
              "voice / fx + FluidSynth for drums. Needs `pip install "
-             "slackbeatz[offline-render]` (Python 3.9-3.12) and Surge XT "
+             "'slackbeatz[offline-render]'` (Python 3.9-3.12) and Surge XT "
              "installed system-wide.",
     )
     sp.set_defaults(func=cmd_audio)

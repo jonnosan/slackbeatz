@@ -378,7 +378,10 @@ class Sampler:
             print(
                 "slackbeatz sampler: pedalboard not installed — FX chain "
                 f"on {port_name!r} skipped. Install via "
-                "`pip install slackbeatz[tts]` (same dep as TTS post-FX).",
+                "`pip install 'slackbeatz[tts]'` (same dep as TTS "
+            "post-FX). The quotes matter in zsh — without them, zsh "
+            "tries to glob-match the [tts] bracket pattern + fails "
+            "with 'no matches found'.",
                 file=sys.stderr,
             )
             return False

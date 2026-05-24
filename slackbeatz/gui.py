@@ -779,10 +779,13 @@ def _build_mixer_tab(
         master = float(master_var.get())
         effective = per_strip * master
 
-        # Surge → /param/a/amp/volume (clamped to 0..1).
+        # Surge → /param/global/volume. Surge's param range is 0..1
+        # normalised so we clamp here. The slider's own 0..1 range
+        # already matches; the clamp is defensive against Master ×
+        # per_strip products that overshoot.
         surge = surge_by_channel.get(channel_1idx)
         if surge is not None:
-            surge.set_param(_SURGE_VOLUME_ADDR, min(1.0, effective))
+            surge.set_param(_SURGE_VOLUME_ADDR, max(0.0, min(1.0, effective)))
             return
         # Sampler → set_port_gain.
         for role, port in sampler_port_for_role.items():
@@ -834,20 +837,33 @@ def _build_mixer_tab(
         vol_row.pack(fill="x", padx=8, pady=(4, 2))
         ttk.Label(vol_row, text="Vol", width=8, anchor="w").pack(side="left")
 
-        # Initial value: prefer the backend's current value when we can
-        # read it (Surge), else 1.0 / the legacy default.
-        initial = 1.0
+        # Per-strip-kind range + initial position:
+        #   surge            — 0..1 (matches /param/global/volume). Initial
+        #                      from cached value or 0.8 default.
+        #   sampler-voice/fx — 0..1.5 (Sampler.set_port_gain is a linear
+        #                      multiplier; values > 1.0 boost above
+        #                      unity).
+        #   fluidsynth-drums — 0..2 (FluidSynth `gain` shell command;
+        #                      historically 0.6 default, 2.0 max).
         if kind == "surge":
             surge = surge_by_channel[ch_1idx]
             cur = surge.get_value(_SURGE_VOLUME_ADDR)
-            if cur is not None:
-                initial = float(cur)
-        elif kind == "fluidsynth-drums" and initial_gain is not None:
-            initial = float(initial_gain)
+            # /param/global/volume hasn't always replied by the time
+            # the GUI builds — Surge's `/q` round-trip is ~50 ms.
+            # 0.8 is a reasonable "loud-but-not-clipping" default for
+            # the channel's initial slider position.
+            initial = float(cur) if cur is not None else 0.8
+            slider_max = 1.0
+        elif kind == "fluidsynth-drums":
+            initial = float(initial_gain) if initial_gain is not None else 0.6
+            slider_max = 2.0
+        else:  # sampler-voice / sampler-fx
+            initial = 1.0
+            slider_max = 1.5
         var = _var(tk.DoubleVar, value=initial)
         strip_vol_vars[ch_1idx] = var
         scale = tk.Scale(
-            vol_row, from_=0.0, to=1.5,
+            vol_row, from_=0.0, to=slider_max,
             resolution=0.01,
             orient="horizontal", variable=var,
             showvalue=True, length=320,
@@ -876,7 +892,8 @@ def _build_mixer_tab(
                 ttk.Label(
                     strip,
                     text="(pedalboard not installed — `pip install "
-                         "slackbeatz[tts]` to enable per-slot FX)",
+                         "'slackbeatz[tts]'` to enable per-slot FX. "
+                         "Quote the brackets in zsh.)",
                     foreground="#888",
                     font=("TkDefaultFont", 9, "italic"),
                 ).pack(anchor="w", padx=8, pady=(0, 6))
