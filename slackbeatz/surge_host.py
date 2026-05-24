@@ -324,6 +324,21 @@ _DEFAULT_FX_TYPE_SLOT1 = 5  # Distortion
 _DEFAULT_FX_TYPE_SLOT2 = 1  # Delay
 
 
+# Process-wide cache of per-FX-type param names discovered at runtime
+# via Surge's /doc OSC queries. Key: (type_id, param_idx 1-based).
+# Populated by SurgeInstance._discover_fx_param_names which runs once
+# per slackbeatz session (gated by the flag below) on the first Surge
+# instance to finish booting. Surge's FX param naming is per-type,
+# not per-instance, so one sweep covers every instance forever.
+#
+# A missing key means "we haven't observed a real name for this slot".
+# Empty-string / "param N" placeholder replies from Surge are
+# explicitly NOT stored — that way the GUI can use a missing key as
+# the signal to hide the row rather than render an unhelpful generic.
+FX_DOC_CACHE: dict[tuple[int, int], str] = {}
+_FX_DOC_DISCOVERY_DONE = threading.Event()
+
+
 def fx_addr(slot: int, kind: str, param_idx: int | None = None) -> str:
     """Build a Surge FX-block OSC address for slot A1 / A2.
 
@@ -484,18 +499,75 @@ class SurgeInstance:
     def _load_default_fx_slots(self) -> None:
         """Send the FX-slot type + deactivate writes for the v1 mixer
         default chain, plus the per-param /doc queries that populate
-        the live-discovered label cache used by the Mixer GUI."""
-        self.set_param(fx_addr(1, "type"), float(_DEFAULT_FX_TYPE_SLOT1))
-        self.set_param(fx_addr(1, "deactivate"), 1.0)
+        the live-discovered label cache used by the Mixer GUI. The
+        first instance to reach this point ALSO sweeps every FX type
+        in :data:`FX_CATALOG` and records the per-type param names
+        into the process-wide :data:`FX_DOC_CACHE` — so the GUI has
+        real labels available the moment the user picks any FX type,
+        without waiting for an OSC round-trip."""
+        # Default chain first — the discovery sweep that follows uses
+        # slot 1 as scratch space, so getting the user-visible default
+        # chain in place beforehand isn't possible. Instead the sweep
+        # itself ends by restoring slot 1 to the default before we
+        # query its docs.
         self.set_param(fx_addr(2, "type"), float(_DEFAULT_FX_TYPE_SLOT2))
         self.set_param(fx_addr(2, "deactivate"), 1.0)
+
+        # Discovery sweep — once per process. Subsequent Surge
+        # instances skip this since the cache they'd populate is
+        # already complete.
+        already_discovered = _FX_DOC_DISCOVERY_DONE.is_set()
+        if not already_discovered:
+            self._discover_fx_param_names_into_cache()
+            _FX_DOC_DISCOVERY_DONE.set()
+
+        # Now load the real default in slot 1 + query its docs. (When
+        # we skipped discovery the slot was untouched, so the type
+        # write is still needed here.)
+        self.set_param(fx_addr(1, "type"), float(_DEFAULT_FX_TYPE_SLOT1))
+        self.set_param(fx_addr(1, "deactivate"), 1.0)
         # Surge needs ~50ms to settle the new FX type's param tree
-        # before /doc replies are meaningful. Short blocking sleep
-        # here is acceptable — we're already inside spawn()'s 1.5s
-        # boot wait so the overall startup budget barely moves.
+        # before /doc replies are meaningful.
         time.sleep(0.1)
         self.query_fx_slot_docs(1)
         self.query_fx_slot_docs(2)
+
+    def _discover_fx_param_names_into_cache(self) -> None:
+        """Sweep every FX type in :data:`FX_CATALOG`, load it into
+        slot 1 transiently, query Surge for each param's /doc reply,
+        and stash real names into :data:`FX_DOC_CACHE`. About 100ms
+        per FX type, ~1s total — runs once per slackbeatz session on
+        whichever Surge instance reaches it first."""
+        scratch_slot = 1
+        for type_id in FX_CATALOG:
+            if type_id == 0:
+                continue  # "Off" — no params to label
+            # Load type, give Surge time to settle the param tree,
+            # fire /doc queries for all 12 slots.
+            self.set_param(fx_addr(scratch_slot, "type"), float(type_id))
+            self.set_param(fx_addr(scratch_slot, "deactivate"), 1.0)
+            time.sleep(0.08)
+            self.query_fx_slot_docs(scratch_slot)
+            # Replies trickle in over the next ~50ms — wait a beat
+            # so the docs cache is populated before we read it.
+            time.sleep(0.06)
+            for p_idx in range(1, 13):
+                addr = fx_addr(scratch_slot, "param", p_idx)
+                doc = self._docs.get(addr)
+                if doc is None:
+                    continue
+                name = (doc[0] or "").strip()
+                # Skip placeholders — they mean Surge regards this
+                # param as unused inside the current FX type, which
+                # is exactly what we want the GUI to hide rather
+                # than label generically.
+                if not name or name.lower().startswith("param "):
+                    continue
+                # First real observation wins. (If two FX types
+                # share a param index but different names, the
+                # later type can't overwrite — but since the cache
+                # key includes type_id this never collides.)
+                FX_DOC_CACHE[(type_id, p_idx)] = name
 
     def shutdown(self) -> None:
         """Terminate the subprocess + OSC server. Safe to call twice."""

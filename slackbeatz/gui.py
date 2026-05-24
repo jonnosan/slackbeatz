@@ -22,7 +22,7 @@ Architecture:
 
 from __future__ import annotations
 
-from typing import IO, Callable
+from typing import IO, Callable, Optional
 
 
 # FluidSynth shell-command templates for the drums strip on the Mixer
@@ -942,7 +942,9 @@ def _build_surge_fx_slots(parent, surge_instance, _var, ttk, tk) -> None:
     sliders. Changing the dropdown re-renders the param sliders (they
     differ per FX type) and sends the new ``/param/fx/a/<slot>/type``
     OSC write so Surge swaps in the new effect."""
-    from slackbeatz.surge_host import FX_CATALOG, fx_addr
+    from slackbeatz.surge_host import (
+        FX_CATALOG, FX_DOC_CACHE, _FX_DOC_DISCOVERY_DONE, fx_addr,
+    )
 
     # Display-name → type-id, sorted to match a stable dropdown order
     # (Off first; rest by type-id so families stay clustered).
@@ -986,21 +988,62 @@ def _build_surge_fx_slots(parent, surge_instance, _var, ttk, tk) -> None:
         params_frame = ttk.Frame(row)
         params_frame.pack(fill="x", padx=(0, 4), pady=(2, 0))
 
-        def _label_for_param(slot_: int, p_idx: int, fallback: str) -> str:
-            """Prefer the live /doc label Surge reported for this
-            param; fall back to *fallback*. Used for both the catalog
-            essentials (where fallback = the curated label) and the
-            advanced params (fallback = generic "param N")."""
+        def _label_for_param(
+            slot_: int, p_idx: int, fallback: str,
+            type_id: Optional[int] = None,
+        ) -> tuple[Optional[str], str]:
+            """Resolve a label for this FX slot's param. Returns
+            ``(label, source)`` where:
+
+            * ``label`` is the string to show, or ``None`` if the
+              caller should hide this row entirely (advanced section
+              only; essentials always render).
+            * ``source`` is a debug tag — ``"live"``, ``"cache"``,
+              ``"fallback"``, or ``"hide"``.
+
+            Resolution order:
+
+            1. Live ``/doc`` reply from this instance (most authoritative,
+               but may not have arrived yet on first render after a
+               type change).
+            2. Process-wide :data:`FX_DOC_CACHE` populated during the
+               one-shot discovery sweep at spawn time.
+            3. ``fallback`` (the catalog essential label, or
+               ``"param N"`` for advanced) — but ONLY while discovery
+               is still in flight. Once discovery is done, a cache
+               miss for the current FX type means Surge really has
+               no name for this slot → hide it.
+            """
+            # 1. Live /doc reply.
             doc = surge_instance.get_param_doc(fx_addr(slot_, "param", p_idx))
-            if doc is None:
-                return fallback
-            name = doc[0].strip()
-            # Surge sometimes replies with the bare "param N" placeholder
-            # for unused slots inside a type — keep the friendlier
-            # fallback label in that case.
-            if not name or name.lower().startswith("param "):
-                return fallback
-            return name
+            if doc is not None:
+                name = doc[0].strip()
+                if name and not name.lower().startswith("param "):
+                    return name, "live"
+
+            # 2. Process-wide pre-warmed cache. Prefer the caller's
+            # known type_id (avoids racing the type-change /param echo
+            # back through the value cache).
+            cur_type: Optional[int]
+            if type_id is not None:
+                cur_type = type_id
+            else:
+                raw = surge_instance.get_value(fx_addr(slot_, "type"))
+                cur_type = int(raw) if raw is not None else None
+            if cur_type is not None:
+                cached = FX_DOC_CACHE.get((cur_type, p_idx))
+                if cached:
+                    return cached, "cache"
+
+            # 3. Fallback OR hide.
+            #    - During discovery: render with fallback so the user
+            #      gets *something*; subsequent re-polls will swap in
+            #      real labels as they arrive.
+            #    - After discovery: cache miss is authoritative
+            #      "no name in this FX type" → hide.
+            if not _FX_DOC_DISCOVERY_DONE.is_set():
+                return fallback, "fallback"
+            return None, "hide"
 
         def _make_param_slider(parent_widget, slot_: int, p_idx: int, label: str) -> None:
             p_row = ttk.Frame(parent_widget)
@@ -1032,11 +1075,17 @@ def _build_surge_fx_slots(parent, surge_instance, _var, ttk, tk) -> None:
             spec = FX_CATALOG.get(spec_type_id)
             essentials = spec.params if spec is not None else ()
 
-            # Essentials block — catalog-curated 1-3 params.
+            # Essentials block — catalog-curated 1-3 params. These
+            # always render even if Surge has no name for them (the
+            # catalog label is good enough).
             for catalog_label, p_idx in essentials:
+                label, _src = _label_for_param(
+                    slot_, p_idx, catalog_label, type_id=spec_type_id,
+                )
+                # Essentials use the catalog fallback if hide would
+                # fire — they're curated, so we trust the catalog.
                 _make_param_slider(
-                    frame, slot_, p_idx,
-                    _label_for_param(slot_, p_idx, catalog_label),
+                    frame, slot_, p_idx, label or catalog_label,
                 )
             if not essentials:
                 # Catalog says "no essential params" (e.g. Off, Vocoder).
@@ -1050,12 +1099,21 @@ def _build_surge_fx_slots(parent, surge_instance, _var, ttk, tk) -> None:
                 ).pack(anchor="w")
 
             # Advanced expander — every param 1-12 not already in
-            # essentials. Labels come from /doc where Surge has
-            # reported them, else generic "param N".
+            # essentials. Labels come from /doc + FX_DOC_CACHE; rows
+            # whose label is None (Surge has authoritatively said
+            # the slot has no name in this FX type, post-discovery)
+            # are skipped entirely.
             essential_indices = {p_idx for _l, p_idx in essentials}
-            advanced_indices = [
-                i for i in range(1, 13) if i not in essential_indices
-            ]
+            advanced_rows: list[tuple[int, str]] = []
+            for i in range(1, 13):
+                if i in essential_indices:
+                    continue
+                label, _src = _label_for_param(
+                    slot_, i, f"param {i}", type_id=spec_type_id,
+                )
+                if label is None:
+                    continue
+                advanced_rows.append((i, label))
 
             adv_header = ttk.Frame(frame)
             adv_header.pack(fill="x", pady=(4, 0))
@@ -1074,19 +1132,32 @@ def _build_surge_fx_slots(parent, surge_instance, _var, ttk, tk) -> None:
                     btn_var.set("▶ Advanced")
                     frm.pack_forget()
 
-            ttk.Button(
-                adv_header, textvariable=adv_btn_var,
-                command=_toggle_advanced,
-                width=14,
-            ).pack(side="left")
+            # Show the row count in the button so the user knows
+            # how many params hide behind it without having to expand.
+            if advanced_rows:
+                adv_btn_var.set(
+                    ("▼" if advanced_expanded[0] else "▶")
+                    + f" Advanced ({len(advanced_rows)})"
+                )
+                ttk.Button(
+                    adv_header, textvariable=adv_btn_var,
+                    command=_toggle_advanced,
+                    width=16,
+                ).pack(side="left")
+            else:
+                # All advanced slots either are essentials or are
+                # known-unused in this FX type — no point in showing
+                # an empty expander.
+                ttk.Label(
+                    adv_header, text="(no extra params for this FX)",
+                    foreground="#888",
+                    font=("TkDefaultFont", 9, "italic"),
+                ).pack(side="left")
 
             # Render the advanced sliders into the (possibly hidden)
             # frame ahead of time so toggling it on is instant.
-            for p_idx in advanced_indices:
-                _make_param_slider(
-                    adv_frame, slot_, p_idx,
-                    _label_for_param(slot_, p_idx, f"param {p_idx}"),
-                )
+            for p_idx, label in advanced_rows:
+                _make_param_slider(adv_frame, slot_, p_idx, label)
 
             if advanced_expanded[0]:
                 adv_frame.pack(fill="x", pady=(2, 0))
@@ -1101,11 +1172,13 @@ def _build_surge_fx_slots(parent, surge_instance, _var, ttk, tk) -> None:
             surge_instance.set_param(fx_addr(slot_, "type"), float(new_id))
             # Fire /doc queries for the new FX type's params. Replies
             # land asynchronously — we re-render now using whatever
-            # cache we have (mostly catalog fallbacks) + schedule a
-            # second render in 150ms once the /doc replies arrive.
+            # cache we have (FX_DOC_CACHE prefills most labels at
+            # spawn) and reschedule a few times so any slow /doc
+            # replies still get a chance to paint.
             surge_instance.query_fx_slot_docs(slot_)
             _rebuild_params(new_id)
-            parent.after(150, lambda: _rebuild_params(new_id))
+            for delay_ms in (150, 400, 1000):
+                parent.after(delay_ms, lambda nid=new_id: _rebuild_params(nid))
 
         cb.bind("<<ComboboxSelected>>", _on_type_change)
 
