@@ -151,32 +151,55 @@ _SURGE_ENUM_OPTIONS: dict[str, list[str]] = {
 }
 
 
-def _build_sound_tab(parent, surge_instances, ttk, tk, *, sampler=None) -> None:
-    """Render the per-instance Surge XT knob panels into *parent*.
+def _build_sound_tab(parent, surge_instances, ttk, tk, *, sampler=None, _var=None) -> None:
+    """Render the comprehensive per-voice sound-design surface into
+    *parent*. In ``--surge`` mode this tab consolidates everything
+    about how each voice sounds: patch picker + FX slots + engine
+    knobs per Surge instance, plus FX slots + bank management per
+    sampler port.
 
-    Each :class:`SurgeInstance` becomes an inner notebook tab with the
-    standard knob set. Slider movements / dropdown selects fire OSC
-    parameter writes to the corresponding instance. A bottom toolbar
-    has "Load patch…" and "Open GUI editor…" buttons per instance.
+    Each :class:`SurgeInstance` becomes an inner notebook sub-tab
+    with (top-to-bottom):
 
-    If *sampler* is provided, two additional sub-tabs appear: 🎙 Voice
-    (manage TTS phrases on ch 5) and 🔊 FX (manage WAV samples on
-    ch 11). Both write into the live :class:`Sampler` bank so changes
-    take effect immediately.
-    """
+    * **Patch picker** — dropdown of role-appropriate Surge factory
+      patches (Leads / Basses / Pads / Sequences). Selecting one
+      fires :meth:`SurgeInstance.load_patch`.
+    * **FX A1 + FX A2** — type-picker dropdowns + Power + dynamic
+      params, identical to the surface the Mixer tab used to render.
+    * **Engine knobs** — filter cutoff / resonance / type / osc /
+      ADSR / scene volume sliders + dropdowns from the curated
+      :data:`_SOUND_KNOBS` list.
+    * **Open GUI editor…** button for deep patch editing in a
+      separate Surge XT standalone window.
+
+    If *sampler* is provided, two additional sub-tabs appear:
+    🎙 Voice (TTS phrases on ch 5) and 🔊 FX (WAV samples on ch 11).
+    Each carries the FX-chain surface (Distortion / Delay / Reverb
+    / … slot pickers) above its bank-management UI.
+
+    *_var* is the variable-pinning helper from :func:`run_tweak_gui`
+    that keeps Tk Vars alive across Homebrew non-threaded Tcl. Falls
+    back to constructing raw Tk Vars if not supplied (used by
+    tests / callers that don't need the pinning workaround)."""
     from pathlib import Path as _Path
-    from tkinter import filedialog
 
     from slackbeatz.surge_host import (
-        KNOB_ADDRS, _SURGE_FACTORY, resolve_factory_patch,
-        spawn_surge_gui,
+        KNOB_ADDRS, _SURGE_FACTORY,
+        list_factory_patches, patch_category_for_role,
+        resolve_factory_patch, spawn_surge_gui,
     )
+
+    # Fallback no-op pin when callers don't supply _var. Same shape
+    # as run_tweak_gui's helper: cls + args/kwargs in, instance out.
+    if _var is None:
+        def _var(cls, *args, **kwargs):  # noqa: E306 — local helper
+            return cls(*args, **kwargs)
 
     ttk.Label(
         parent,
-        text="🎚 Live sound tweaking — each tab maps to one synth "
-             "instance. Slider/dropdown changes send OSC to surge-xt-cli; "
-             "Voice/FX tabs manage the sampler bank.",
+        text="🎚 Per-voice sound design — patch + FX chain + engine "
+             "knobs for every Surge channel; FX chain + bank "
+             "management for sampler voice / fx.",
         wraplength=580, justify="left", foreground="#444",
     ).pack(padx=10, pady=(10, 6), anchor="w")
 
@@ -187,47 +210,64 @@ def _build_sound_tab(parent, surge_instances, ttk, tk, *, sampler=None) -> None:
         frame = ttk.Frame(inner)
         inner.add(frame, text=f"{inst.config.role} (ch {inst.config.channel_1idx})")
 
-        # Header — currently-loaded patch + reload button.
-        header = ttk.Frame(frame)
-        header.pack(fill="x", padx=8, pady=(8, 4))
+        # ----- Patch picker --------------------------------------
+        # Role-filtered dropdown sourced from the Surge factory tree.
+        # Falls back to a static label if the role has no category
+        # map (e.g. a custom role added by the user) — they can still
+        # use the legacy Open GUI editor button to load a patch by
+        # hand.
+        patch_header = ttk.Frame(frame)
+        patch_header.pack(fill="x", padx=8, pady=(8, 4))
+        ttk.Label(patch_header, text="Patch", width=8, anchor="w").pack(side="left")
 
-        patch_label_var = tk.StringVar(value=inst.config.initial_patch)
-        ttk.Label(header, text="Patch:").pack(side="left")
-        ttk.Label(
-            header, textvariable=patch_label_var,
-            foreground="#225", font=("TkDefaultFont", 10, "italic"),
-        ).pack(side="left", padx=(4, 8))
+        category = patch_category_for_role(inst.config.role)
+        patches = list_factory_patches(category) if category else []
+        patch_display_choices = [d for d, _rel in patches]
+        rel_by_display = {d: rel for d, rel in patches}
 
-        def _make_load_patch(inst=inst, var=patch_label_var):
-            def _load():
-                path = filedialog.askopenfilename(
-                    initialdir=str(_SURGE_FACTORY),
-                    filetypes=[("Surge XT patch", "*.fxp")],
-                    title=f"Load patch for {inst.config.role}",
-                )
-                if path:
-                    inst.load_patch(_Path(path))
-                    # Update header label to relative-from-factory if possible.
-                    try:
-                        rel = _Path(path).relative_to(_SURGE_FACTORY)
-                        var.set(str(rel))
-                    except ValueError:
-                        var.set(_Path(path).name)
-            return _load
+        patch_var = _var(tk.StringVar, value="")
+        cur_rel = inst.current_patch_rel
+        cur_display = _Path(cur_rel).stem if cur_rel else ""
+        if cur_display in rel_by_display:
+            patch_var.set(cur_display)
+        elif patch_display_choices:
+            patch_var.set(patch_display_choices[0])
 
-        ttk.Button(header, text="Load patch…", command=_make_load_patch()).pack(side="left")
+        patch_cb = ttk.Combobox(
+            patch_header, values=patch_display_choices,
+            textvariable=patch_var, state="readonly", width=28,
+        )
+        patch_cb.pack(side="left", padx=(0, 8), fill="x", expand=True)
+
+        def _on_patch_select(_event=None, var=patch_var, inst_=inst, rels=rel_by_display):
+            display = var.get()
+            rel = rels.get(display)
+            if rel is None:
+                return
+            patch_path = resolve_factory_patch(rel)
+            if patch_path is not None:
+                inst_.load_patch(patch_path)
+
+        patch_cb.bind("<<ComboboxSelected>>", _on_patch_select)
 
         def _make_open_gui(inst=inst):
             def _open():
                 # One-shot Surge XT GUI window for deep editing of the
-                # currently-loaded patch. User saves the patch, then
-                # hits "Reload" (= just re-query) to pick it up here.
-                rel = inst.config.initial_patch  # best guess
+                # currently-loaded patch.
+                rel = inst.current_patch_rel or inst.config.initial_patch
                 patch_path = resolve_factory_patch(rel)
                 spawn_surge_gui(initial_patch=patch_path)
             return _open
 
-        ttk.Button(header, text="Open GUI editor…", command=_make_open_gui()).pack(side="left", padx=(6, 0))
+        ttk.Button(patch_header, text="Open GUI editor…", command=_make_open_gui()).pack(side="left")
+
+        # ----- FX slots (A1 + A2) --------------------------------
+        # Same surface the Mixer tab used to render. Lives here in
+        # --surge mode so all "how this voice sounds" controls are
+        # in one place — the Mixer tab keeps only volume.
+        fx_block = ttk.LabelFrame(frame, text="FX chain")
+        fx_block.pack(fill="x", padx=8, pady=(2, 4))
+        _build_surge_fx_slots(fx_block, inst, _var, ttk, tk)
 
         # Knob grid — two columns. Sliders on the left, value readouts
         # on the right (from the OSC reply cache).
@@ -299,25 +339,30 @@ def _build_sound_tab(parent, surge_instances, ttk, tk, *, sampler=None) -> None:
         fx_port = OSC_CHANNELS["fx"][1]
         voice_frame = ttk.Frame(inner)
         inner.add(voice_frame, text="🎙 Voice (ch 5)")
-        _build_voice_subtab(voice_frame, sampler, voice_port, ttk, tk)
+        _build_voice_subtab(voice_frame, sampler, voice_port, ttk, tk, _var=_var)
         fx_frame = ttk.Frame(inner)
         inner.add(fx_frame, text="🔊 FX (ch 11)")
-        _build_fx_subtab(fx_frame, sampler, fx_port, ttk, tk)
+        _build_fx_subtab(fx_frame, sampler, fx_port, ttk, tk, _var=_var)
 
 
 # --------------------------------------------------------------------------
 # Sampler sub-tabs (issue #29)
 # --------------------------------------------------------------------------
 
-def _build_voice_subtab(parent, sampler, port_name: str, ttk, tk) -> None:
+def _build_voice_subtab(parent, sampler, port_name: str, ttk, tk, *, _var=None) -> None:
     """🎙 Voice — manage TTS phrases on the voice channel.
 
     Top half: a Treeview listing ``midi_note → wav_path`` entries from
     the current bank, with ▶ (audition) / ✕ (remove) buttons.
 
-    Bottom half: a "synthesize new phrase" form. Text entry + voice
+    Middle: a "synthesize new phrase" form. Text entry + voice
     dropdown + note picker → calls :func:`tts.synthesize` and
-    :meth:`Sampler.set_sample`."""
+    :meth:`Sampler.set_sample`.
+
+    Bottom: the pedalboard FX-chain surface (two slot rows with
+    type-picker dropdown + Power + dynamic params) — moved here from
+    the Mixer tab so all sound-design controls live in one place per
+    voice. The Mixer tab keeps only the volume slider."""
     from pathlib import Path as _Path
 
     ttk.Label(
@@ -438,13 +483,27 @@ def _build_voice_subtab(parent, sampler, port_name: str, ttk, tk) -> None:
     )
     form.columnconfigure(1, weight=1)
 
+    # ----- FX chain (Pedalboard) -----------------------------------
+    # Slot pickers + Power + dynamic params for the voice port's
+    # pedalboard chain. Mirror of the Surge sub-tab's FX block —
+    # moved here from the Mixer so all sound-design controls for the
+    # voice live in one place.
+    if _var is not None and sampler.get_slot_state(port_name, 0) is not None:
+        fx_block = ttk.LabelFrame(parent, text="FX chain")
+        fx_block.pack(fill="x", padx=8, pady=(6, 4))
+        _build_sampler_fx_slots(fx_block, sampler, port_name, _var, ttk, tk)
 
-def _build_fx_subtab(parent, sampler, port_name: str, ttk, tk) -> None:
+
+def _build_fx_subtab(parent, sampler, port_name: str, ttk, tk, *, _var=None) -> None:
     """🔊 FX — manage arbitrary WAVs on the fx channel.
 
     Tree listing + "+ Add WAV" file picker. Drag-and-drop support
     requires the optional ``tkdnd`` pip dep; without it, the file
-    picker covers the same ground."""
+    picker covers the same ground.
+
+    Bottom: pedalboard FX-chain slot pickers (Distortion / Delay /
+    Reverb / etc.) — moved here from the Mixer tab so all
+    sound-design controls for the fx port live in one place."""
     from pathlib import Path as _Path
     from tkinter import filedialog
 
@@ -525,6 +584,12 @@ def _build_fx_subtab(parent, sampler, port_name: str, ttk, tk) -> None:
     ttk.Button(btn_row, text="+ Add WAV…", command=_on_add).pack(side="left", padx=4)
     ttk.Button(btn_row, text="▶ Audition", command=_audition_selected).pack(side="left", padx=2)
     ttk.Button(btn_row, text="✕ Remove", command=_remove_selected).pack(side="left", padx=2)
+
+    # ----- FX chain (Pedalboard) -----------------------------------
+    if _var is not None and sampler.get_slot_state(port_name, 0) is not None:
+        fx_block = ttk.LabelFrame(parent, text="FX chain")
+        fx_block.pack(fill="x", padx=8, pady=(6, 4))
+        _build_sampler_fx_slots(fx_block, sampler, port_name, _var, ttk, tk)
 
 
 def _next_free_note(sampler, port_name: str, start: int) -> int:
@@ -736,21 +801,23 @@ def _build_mixer_tab(
         )
         scale.pack(side="left", fill="x", expand=True)
 
-        # FX surface — per-strip-kind:
-        #   surge            → two FX-slot rows (A1 + A2) over OSC
-        #   fluidsynth-drums → migrated Effects-tab reverb/chorus
-        #   sampler-voice/fx → pedalboard Distortion + Delay chain
-        if kind == "surge":
-            _build_surge_fx_slots(strip, surge_by_channel[ch_1idx], _var, ttk, tk)
-        elif kind == "fluidsynth-drums":
+        # FX surface — per-strip-kind. Surge + Sampler FX now live on
+        # the 🎚 Sound tab (under the matching voice's sub-tab) so all
+        # sound-design controls per voice are in one place. The drums
+        # strip keeps its FluidSynth-global reverb/chorus inline
+        # because FluidSynth has no Sound sub-tab.
+        if kind == "fluidsynth-drums":
             _build_fluidsynth_fx(strip, send, _var, ttk, tk, initial_reverb_room)
+        elif kind == "surge":
+            ttk.Label(
+                strip,
+                text="(patch + FX on 🎚 Sound tab)",
+                foreground="#888",
+                font=("TkDefaultFont", 9, "italic"),
+            ).pack(anchor="w", padx=8, pady=(0, 6))
         elif kind in ("sampler-voice", "sampler-fx"):
             role = "voice" if kind == "sampler-voice" else "fx"
             port = sampler_port_for_role[role]
-            # Slot state is initialised by `sampler.enable_fx` from
-            # cli.py at startup. If pedalboard isn't installed the
-            # state is missing — render an install hint instead of
-            # the FX surface.
             if port is None or sampler.get_slot_state(port, 0) is None:
                 ttk.Label(
                     strip,
@@ -760,7 +827,12 @@ def _build_mixer_tab(
                     font=("TkDefaultFont", 9, "italic"),
                 ).pack(anchor="w", padx=8, pady=(0, 6))
             else:
-                _build_sampler_fx_slots(strip, sampler, port, _var, ttk, tk)
+                ttk.Label(
+                    strip,
+                    text="(FX on 🎚 Sound tab)",
+                    foreground="#888",
+                    font=("TkDefaultFont", 9, "italic"),
+                ).pack(anchor="w", padx=8, pady=(0, 6))
 
     # Master strip — slim row at the bottom that scales every per-strip
     # slider's effective value.
@@ -1776,7 +1848,7 @@ def run_tweak_gui(
         sound_tab = ttk.Frame(notebook)
         notebook.add(sound_tab, text="🎚 Sound")
         _build_sound_tab(sound_tab, surge_instances or [], ttk, tk,
-                         sampler=_sampler)
+                         sampler=_sampler, _var=_var)
 
     # ------------------------------------------------------------------
     # 🎛 Mixer tab — per-channel volume + per-channel FX. Replaces the
@@ -1803,14 +1875,11 @@ def run_tweak_gui(
     # ------------------------------------------------------------------
     # Instruments tab — adaptive per-channel patch / program picker.
     #
-    #   * Surge-backed channels (any ch with a live SurgeInstance) → a
-    #     Surge factory-patch dropdown filtered by the role's category
-    #     (Leads / Basses / Pads / Sequences). Picking a patch sends
-    #     /patch/load to that Surge instance.
+    #   * Surge-backed channels → "(patch on 🎚 Sound tab)" hint;
+    #     the actual patch picker + FX chain + engine knobs live on
+    #     the Sound tab's per-voice sub-tab.
     #   * Sampler-backed channels (voice ch 5, fx ch 11, when --surge
-    #     is on) → static "(sampler — see Mixer)" label since the
-    #     sampler doesn't have a "patch" — bank entries live on the
-    #     Mixer's sampler strips.
+    #     is on) → "(bank on 🎚 Sound tab)" hint.
     #   * Drum channel (10) when FluidSynth is running → drum-kit
     #     bank picker (bank 128 preset).
     #   * Other channels when FluidSynth is running → 128-name GM
@@ -1819,18 +1888,19 @@ def run_tweak_gui(
     #     static "(MIDI out — external)" label. The user's downstream
     #     DAW / HW synth picks its own patch.
     #
-    # All dropdowns re-sync on player state change (e.g. when a new
-    # phrase loads a different song) via _refresh_instruments.
+    # Mute / solo checkboxes always render when a Player is wired in,
+    # regardless of backend. GM dropdowns re-sync on player state
+    # change (e.g. when a new phrase loads a different song) via
+    # _refresh_instruments.
     # ------------------------------------------------------------------
     instruments = ttk.Frame(notebook)
     notebook.add(instruments, text="Instruments")
 
-    # Local Path import — the Instruments tab pokes at
-    # SurgeInstance.current_patch_rel which is a string relpath, and
-    # we use Path(...).stem to derive display labels for the dropdown.
-    from pathlib import Path  # noqa: F401 — used below in row builders + callback
-
-    # Channel index → live SurgeInstance for that channel.
+    # Channel index → live SurgeInstance for that channel. The
+    # Instruments tab itself doesn't render a Surge dropdown anymore
+    # (that lives on the Sound tab) but it does need to know which
+    # channels are Surge-backed so it can show a "(patch on Sound)"
+    # hint instead of an empty row.
     surge_by_channel: dict[int, object] = {
         getattr(inst, "config").channel_1idx: inst
         for inst in (surge_instances or [])
@@ -1852,7 +1922,7 @@ def run_tweak_gui(
     if surge_by_channel:
         banner_lines.append(
             f"Surge-backed channels ({', '.join(str(c) for c in sorted(surge_by_channel))}) "
-            f"pick a factory .fxp patch by name.",
+            "— patch + FX + engine knobs live on the 🎚 Sound tab.",
         )
     if fs_stdin is not None:
         banner_lines.append(
@@ -1860,8 +1930,8 @@ def run_tweak_gui(
         )
     if sampler_channels:
         banner_lines.append(
-            "Sampler-backed channels (voice / fx) — patch management "
-            "lives on the 🎛 Mixer tab.",
+            "Sampler-backed channels (voice / fx) — bank + FX on the "
+            "🎚 Sound tab.",
         )
     if not banner_lines:
         banner_lines.append(
@@ -1900,10 +1970,6 @@ def run_tweak_gui(
     # whole tab.
     cb_by_channel: dict[int, "ttk.Combobox"] = {}
     cb_kind_by_channel: dict[int, str] = {}
-    # Per-Surge-channel display→relpath map, captured at row-build
-    # time so the callback can look up the current patch's display
-    # label without re-enumerating factory patches.
-    surge_displays_by_channel: dict[int, dict[str, str]] = {}
 
     for ch in range(1, 17):
         row = ttk.Frame(inner)
@@ -1942,48 +2008,18 @@ def run_tweak_gui(
 
         # Patch / program picker. Pick the surface based on backend.
         if ch in surge_by_channel:
-            inst = surge_by_channel[ch]
-            from slackbeatz.surge_host import (
-                list_factory_patches, patch_category_for_role,
-                resolve_factory_patch,
-            )
-            category = patch_category_for_role(inst.config.role)
-            patches = list_factory_patches(category) if category else []
-            display_choices = [d for d, _rel in patches]
-            rel_by_display = {d: rel for d, rel in patches}
-            surge_displays_by_channel[ch] = rel_by_display
-
-            cb = ttk.Combobox(
-                row, values=display_choices, state="readonly", width=28,
-            )
-            # Initial selection: whatever the instance reports as
-            # currently-loaded (set by spawn() to config.initial_patch,
-            # updated by every subsequent load_patch() call).
-            cur_rel = inst.current_patch_rel
-            cur_display = Path(cur_rel).stem if cur_rel else ""
-            if cur_display in rel_by_display:
-                cb.set(cur_display)
-            elif display_choices:
-                cb.set(display_choices[0])
-
-            def _on_select(_event, combo=cb, inst_=inst, rels=rel_by_display):
-                display = combo.get()
-                rel = rels.get(display)
-                if rel is None:
-                    return
-                patch_path = resolve_factory_patch(rel)
-                if patch_path is not None:
-                    inst_.load_patch(patch_path)
-
-            cb.bind("<<ComboboxSelected>>", _on_select)
-            cb.pack(side="left", fill="x", expand=True)
-            cb_by_channel[ch] = cb
-            cb_kind_by_channel[ch] = "surge"
+            # Patch selection lives on the 🎚 Sound tab now (per-voice
+            # sub-tab with patch dropdown + FX chain + engine knobs).
+            # This row just shows mute/solo + a pointer hint.
+            ttk.Label(
+                row, text="(patch on 🎚 Sound tab)",
+                foreground="#888", font=("TkDefaultFont", 10, "italic"),
+            ).pack(side="left", padx=4)
             continue
 
         if ch in sampler_channels:
             ttk.Label(
-                row, text="(sampler — see 🎛 Mixer)",
+                row, text="(bank on 🎚 Sound tab)",
                 foreground="#888", font=("TkDefaultFont", 10, "italic"),
             ).pack(side="left", padx=4)
             continue
@@ -2037,12 +2073,11 @@ def run_tweak_gui(
 
     # State-change refresh — re-sync each dropdown's selection to
     # what's currently live on its backend. Fires on player state
-    # change (e.g. REPL loads a new song with different gens).
+    # change (e.g. REPL loads a new song with different gens). Only
+    # FluidSynth-backed dropdowns are tracked here; Surge patch
+    # selection lives on the Sound tab and the Surge sub-tab handles
+    # its own state.
     def _refresh_instruments() -> None:
-        # GM dropdowns need fresh program assignments from the new
-        # song. Surge dropdowns mirror SurgeInstance.current_patch_rel
-        # which already updates on every load_patch() call. Sampler /
-        # bare-MIDI rows are static labels — nothing to refresh.
         from slackbeatz.engine.midifile import program_map as _program_map_now
         live_programs: dict[int, int] = {}
         if player is not None and player.current_resolved is not None:
@@ -2052,18 +2087,7 @@ def run_tweak_gui(
                 live_programs = {}
         for ch, cb in cb_by_channel.items():
             kind = cb_kind_by_channel.get(ch)
-            if kind == "surge":
-                inst = surge_by_channel.get(ch)
-                if inst is None:
-                    continue
-                cur_rel = inst.current_patch_rel
-                if not cur_rel:
-                    continue
-                cur_display = Path(cur_rel).stem
-                if cur_display and cur_display in surge_displays_by_channel.get(ch, {}):
-                    if cb.get() != cur_display:
-                        cb.set(cur_display)
-            elif kind == "drum":
+            if kind == "drum":
                 idx = live_programs.get(10, drum_idx_by_label.get(cb.get(), 0))
                 new_label = drum_kit_label_by_idx.get(idx)
                 if new_label and cb.get() != new_label:
