@@ -143,6 +143,30 @@ def _program_for_gen(gen) -> int | None:
     return _GM_PROGRAM_DEFAULTS.get((gen.type_, gen.style))
 
 
+def program_map(song: ResolvedSong) -> dict[int, int]:
+    """Return ``{channel_1_indexed: gm_program}`` for *song*'s pitched
+    gens. Mirrors what ``scheduler._initial_program_changes`` sends —
+    used by the GUI's Instruments tab to pre-populate the per-channel
+    program dropdowns + re-sync them on player state changes.
+
+    The first gen on each channel wins (matches the scheduler's own
+    de-dup rule). Drum gens are skipped (they have no GM program;
+    FluidSynth auto-routes ch 10 to the percussion bank).
+    """
+    out: dict[int, int] = {}
+    for gen in song.gens.values():
+        if gen.instrument is None:
+            continue
+        channel = gen.instrument.channel  # already 1-indexed
+        if channel in out:
+            continue
+        prog = _program_for_gen(gen)
+        if prog is None:
+            continue
+        out[channel] = prog
+    return out
+
+
 def _track_label_for(song: ResolvedSong, channel_0idx: int) -> str:
     """Pick a descriptive track name for the given 0-indexed MIDI
     channel. Used as the SMF track_name meta event so DAW arrangement

@@ -771,29 +771,13 @@ def _knob_list_song_gens(player) -> str:
     return "\n".join(lines)
 
 
+# Thin alias kept for backward compat — the canonical helper lives in
+# engine.midifile so the GUI's Instruments-tab state-change callback
+# can call it without importing from cli (which would risk circular
+# import once the GUI hooks player.on_state_change).
 def _program_map(resolved) -> dict[int, int]:
-    """Return ``{channel_1_indexed: gm_program}`` for the song's pitched
-    gens. Mirrors what ``scheduler._initial_program_changes`` sends —
-    the GUI uses it to pre-populate the per-channel program dropdowns
-    so the displayed patches match what slackbeatz is about to send.
-
-    The first gen on each channel wins (matches the scheduler's own
-    de-dup rule). Drum gens are skipped.
-    """
-    from slackbeatz.engine.midifile import _program_for_gen
-
-    out: dict[int, int] = {}
-    for gen in resolved.gens.values():
-        if gen.instrument is None:
-            continue
-        channel = gen.instrument.channel  # already 1-indexed
-        if channel in out:
-            continue
-        prog = _program_for_gen(gen)
-        if prog is None:
-            continue
-        out[channel] = prog
-    return out
+    from slackbeatz.engine.midifile import program_map
+    return program_map(resolved)
 
 
 def _handle_tweak_command(line: str, fs_stdin) -> str | None:

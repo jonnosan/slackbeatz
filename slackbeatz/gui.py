@@ -1753,19 +1753,77 @@ def run_tweak_gui(
     )
 
     # ------------------------------------------------------------------
-    # Instruments tab — per-channel program-change dropdowns. Channel
-    # 10 gets the drum-kit picker; the other 15 channels each get a
-    # 128-name GM program dropdown.
+    # Instruments tab — adaptive per-channel patch / program picker.
+    #
+    #   * Surge-backed channels (any ch with a live SurgeInstance) → a
+    #     Surge factory-patch dropdown filtered by the role's category
+    #     (Leads / Basses / Pads / Sequences). Picking a patch sends
+    #     /patch/load to that Surge instance.
+    #   * Sampler-backed channels (voice ch 5, fx ch 11, when --surge
+    #     is on) → static "(sampler — see Mixer)" label since the
+    #     sampler doesn't have a "patch" — bank entries live on the
+    #     Mixer's sampler strips.
+    #   * Drum channel (10) when FluidSynth is running → drum-kit
+    #     bank picker (bank 128 preset).
+    #   * Other channels when FluidSynth is running → 128-name GM
+    #     program dropdown.
+    #   * Bare-MIDI mode (no FluidSynth, no Surge on this channel) →
+    #     static "(MIDI out — external)" label. The user's downstream
+    #     DAW / HW synth picks its own patch.
+    #
+    # All dropdowns re-sync on player state change (e.g. when a new
+    # phrase loads a different song) via _refresh_instruments.
     # ------------------------------------------------------------------
     instruments = ttk.Frame(notebook)
     notebook.add(instruments, text="Instruments")
 
+    # Local Path import — the Instruments tab pokes at
+    # SurgeInstance.current_patch_rel which is a string relpath, and
+    # we use Path(...).stem to derive display labels for the dropdown.
+    from pathlib import Path  # noqa: F401 — used below in row builders + callback
+
+    # Channel index → live SurgeInstance for that channel.
+    surge_by_channel: dict[int, object] = {
+        getattr(inst, "config").channel_1idx: inst
+        for inst in (surge_instances or [])
+    }
+    # 1-indexed channels backed by the in-process Sampler when it's
+    # running. Lifted from OSC_CHANNELS so the table stays in sync if
+    # the routing layout changes.
+    sampler_channels: set[int] = set()
+    if _sampler is not None:
+        from slackbeatz.synthhost import OSC_CHANNELS
+        sampler_channels = {
+            OSC_CHANNELS["voice"][0],
+            OSC_CHANNELS["fx"][0],
+        }
+
+    # Banner text adapts to the active backend mix so the user knows
+    # which dropdowns are wired live.
+    banner_lines: list[str] = []
+    if surge_by_channel:
+        banner_lines.append(
+            f"Surge-backed channels ({', '.join(str(c) for c in sorted(surge_by_channel))}) "
+            f"pick a factory .fxp patch by name.",
+        )
+    if fs_stdin is not None:
+        banner_lines.append(
+            "FluidSynth-backed channels pick a GM program (ch 10 = drum kit).",
+        )
+    if sampler_channels:
+        banner_lines.append(
+            "Sampler-backed channels (voice / fx) — patch management "
+            "lives on the 🎛 Mixer tab.",
+        )
+    if not banner_lines:
+        banner_lines.append(
+            "Bare-MIDI mode — patches are controlled by your downstream "
+            "DAW / HW synth.",
+        )
     ttk.Label(
         instruments,
-        text="Pick a GM program for each channel. Slackbeatz typically "
-             "uses ch 1 (lead), ch 2 (bass), ch 3 (pad), ch 4 (candy), "
-             "ch 10 (drums).",
-        wraplength=400, justify="left", foreground="#444",
+        text="\n".join(banner_lines),
+        wraplength=520, justify="left", foreground="#444",
     ).pack(padx=10, pady=(8, 4), anchor="w")
 
     initial_programs = initial_programs or {}
@@ -1787,6 +1845,17 @@ def run_tweak_gui(
     drum_kit_label_by_idx = {idx: f"{name} ({idx})" for idx, name in _GM_DRUM_KITS}
     drum_kit_choices = [drum_kit_label_by_idx[idx] for idx, _ in _GM_DRUM_KITS]
     drum_idx_by_label = {label: idx for idx, label in drum_kit_label_by_idx.items()}
+    gm_display_choices = [f"{i:>3}  {name}" for i, name in enumerate(_GM_PROGRAMS)]
+
+    # Per-channel dropdown handles + their kind, so the state-change
+    # callback can re-sync them on song load without re-rendering the
+    # whole tab.
+    cb_by_channel: dict[int, "ttk.Combobox"] = {}
+    cb_kind_by_channel: dict[int, str] = {}
+    # Per-Surge-channel display→relpath map, captured at row-build
+    # time so the callback can look up the current patch's display
+    # label without re-enumerating factory patches.
+    surge_displays_by_channel: dict[int, dict[str, str]] = {}
 
     for ch in range(1, 17):
         row = ttk.Frame(inner)
@@ -1823,13 +1892,68 @@ def run_tweak_gui(
                 row, text="solo", variable=solo_var, command=_on_solo,
             ).pack(side="left", padx=(0, 6))
 
+        # Patch / program picker. Pick the surface based on backend.
+        if ch in surge_by_channel:
+            inst = surge_by_channel[ch]
+            from slackbeatz.surge_host import (
+                list_factory_patches, patch_category_for_role,
+                resolve_factory_patch,
+            )
+            category = patch_category_for_role(inst.config.role)
+            patches = list_factory_patches(category) if category else []
+            display_choices = [d for d, _rel in patches]
+            rel_by_display = {d: rel for d, rel in patches}
+            surge_displays_by_channel[ch] = rel_by_display
+
+            cb = ttk.Combobox(
+                row, values=display_choices, state="readonly", width=28,
+            )
+            # Initial selection: whatever the instance reports as
+            # currently-loaded (set by spawn() to config.initial_patch,
+            # updated by every subsequent load_patch() call).
+            cur_rel = inst.current_patch_rel
+            cur_display = Path(cur_rel).stem if cur_rel else ""
+            if cur_display in rel_by_display:
+                cb.set(cur_display)
+            elif display_choices:
+                cb.set(display_choices[0])
+
+            def _on_select(_event, combo=cb, inst_=inst, rels=rel_by_display):
+                display = combo.get()
+                rel = rels.get(display)
+                if rel is None:
+                    return
+                patch_path = resolve_factory_patch(rel)
+                if patch_path is not None:
+                    inst_.load_patch(patch_path)
+
+            cb.bind("<<ComboboxSelected>>", _on_select)
+            cb.pack(side="left", fill="x", expand=True)
+            cb_by_channel[ch] = cb
+            cb_kind_by_channel[ch] = "surge"
+            continue
+
+        if ch in sampler_channels:
+            ttk.Label(
+                row, text="(sampler — see 🎛 Mixer)",
+                foreground="#888", font=("TkDefaultFont", 10, "italic"),
+            ).pack(side="left", padx=4)
+            continue
+
+        if fs_stdin is None:
+            # Bare-MIDI mode: no in-process synth on this channel.
+            ttk.Label(
+                row, text="(MIDI out — external)",
+                foreground="#888", font=("TkDefaultFont", 10, "italic"),
+            ).pack(side="left", padx=4)
+            continue
+
+        # FluidSynth-backed channel.
         if ch == 10:
-            # Drum bank picker (bank 128 preset).
             initial_kit = initial_programs.get(10, 0)
             current_label = drum_kit_label_by_idx.get(initial_kit, drum_kit_choices[0])
             cb = ttk.Combobox(
-                row, values=drum_kit_choices, state="readonly",
-                width=24,
+                row, values=drum_kit_choices, state="readonly", width=28,
             )
             cb.set(current_label)
 
@@ -1840,15 +1964,15 @@ def run_tweak_gui(
                 send(f"select 9 1 128 {idx}")
             cb.bind("<<ComboboxSelected>>", _drum_select)
             cb.pack(side="left", fill="x", expand=True)
+            cb_by_channel[ch] = cb
+            cb_kind_by_channel[ch] = "drum"
         else:
             initial_prog = initial_programs.get(ch, 0)
             initial_prog = max(0, min(127, initial_prog))
-            display_choices = [f"{i:>3}  {name}" for i, name in enumerate(_GM_PROGRAMS)]
             cb = ttk.Combobox(
-                row, values=display_choices, state="readonly",
-                width=24,
+                row, values=gm_display_choices, state="readonly", width=28,
             )
-            cb.set(display_choices[initial_prog])
+            cb.set(gm_display_choices[initial_prog])
 
             def _prog_select(_event, combo=cb, chan_zero=ch - 1):
                 label = combo.get()
@@ -1860,6 +1984,53 @@ def run_tweak_gui(
                 send(f"prog {chan_zero} {idx}")
             cb.bind("<<ComboboxSelected>>", _prog_select)
             cb.pack(side="left", fill="x", expand=True)
+            cb_by_channel[ch] = cb
+            cb_kind_by_channel[ch] = "gm"
+
+    # State-change refresh — re-sync each dropdown's selection to
+    # what's currently live on its backend. Fires on player state
+    # change (e.g. REPL loads a new song with different gens).
+    def _refresh_instruments() -> None:
+        # GM dropdowns need fresh program assignments from the new
+        # song. Surge dropdowns mirror SurgeInstance.current_patch_rel
+        # which already updates on every load_patch() call. Sampler /
+        # bare-MIDI rows are static labels — nothing to refresh.
+        from slackbeatz.engine.midifile import program_map as _program_map_now
+        live_programs: dict[int, int] = {}
+        if player is not None and player.current_resolved is not None:
+            try:
+                live_programs = _program_map_now(player.current_resolved)
+            except Exception:
+                live_programs = {}
+        for ch, cb in cb_by_channel.items():
+            kind = cb_kind_by_channel.get(ch)
+            if kind == "surge":
+                inst = surge_by_channel.get(ch)
+                if inst is None:
+                    continue
+                cur_rel = inst.current_patch_rel
+                if not cur_rel:
+                    continue
+                cur_display = Path(cur_rel).stem
+                if cur_display and cur_display in surge_displays_by_channel.get(ch, {}):
+                    if cb.get() != cur_display:
+                        cb.set(cur_display)
+            elif kind == "drum":
+                idx = live_programs.get(10, drum_idx_by_label.get(cb.get(), 0))
+                new_label = drum_kit_label_by_idx.get(idx)
+                if new_label and cb.get() != new_label:
+                    cb.set(new_label)
+            elif kind == "gm":
+                idx = live_programs.get(ch)
+                if idx is None:
+                    continue
+                idx = max(0, min(127, idx))
+                new_label = gm_display_choices[idx]
+                if cb.get() != new_label:
+                    cb.set(new_label)
+
+    if player is not None:
+        main_thread_callbacks.append(_refresh_instruments)
 
     if on_close is not None:
         root.protocol("WM_DELETE_WINDOW", lambda: (on_close(), root.destroy()))

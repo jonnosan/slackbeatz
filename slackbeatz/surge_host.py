@@ -163,6 +163,58 @@ def resolve_factory_patch(relpath: str) -> Optional[Path]:
     return candidate if candidate.is_file() else None
 
 
+# Per-role default category under _SURGE_FACTORY. Drives the
+# Instruments-tab dropdown so each Surge channel shows a role-
+# appropriate subset of factory patches (~50-130 each) rather than the
+# full ~500-patch flat list. Users who want cross-category patches
+# can always swap via the legacy --surge-gui window or
+# SurgeInstance.load_patch() directly.
+_PATCH_CATEGORY_FOR_ROLE: dict[str, str] = {
+    "lead":  "Leads",
+    "bass":  "Basses",
+    "pad":   "Pads",
+    "candy": "Sequences",
+    "sub":   "Basses",
+}
+
+
+def list_factory_patches(category: Optional[str] = None) -> list[tuple[str, str]]:
+    """Return ``[(display_name, relpath), ...]`` for the Surge XT
+    factory patches under *category* (a top-level directory like
+    ``Basses`` / ``Leads`` / ``Pads`` — see :data:`_PATCH_CATEGORY_FOR_ROLE`).
+
+    *category* of ``None`` returns every factory patch, prefixed with
+    its category directory. Sorted alphabetically by display name.
+    Returns ``[]`` if the factory dir isn't present (stripped install)."""
+    if not _SURGE_FACTORY.is_dir():
+        return []
+    out: list[tuple[str, str]] = []
+    if category is not None:
+        root = _SURGE_FACTORY / category
+        if not root.is_dir():
+            return []
+        for fxp in sorted(root.rglob("*.fxp")):
+            # Strip the .fxp suffix for the display label; keep the
+            # full relpath so resolve_factory_patch() can find it.
+            display = fxp.stem
+            rel = str(fxp.relative_to(_SURGE_FACTORY))
+            out.append((display, rel))
+        return out
+    for fxp in sorted(_SURGE_FACTORY.rglob("*.fxp")):
+        rel = str(fxp.relative_to(_SURGE_FACTORY))
+        display = rel[:-4] if rel.endswith(".fxp") else rel
+        out.append((display, rel))
+    return out
+
+
+def patch_category_for_role(role: str) -> Optional[str]:
+    """The default factory-patch subdirectory for a slackbeatz role
+    (see :data:`_PATCH_CATEGORY_FOR_ROLE`). Returns ``None`` for
+    unknown roles so callers can skip the patch dropdown rather than
+    showing every factory patch in the world."""
+    return _PATCH_CATEGORY_FOR_ROLE.get(role)
+
+
 def list_midi_device_indices() -> dict[str, int]:
     """Query surge-xt-cli for its current MIDI input list and return a
     mapping of port name → device index.
@@ -305,6 +357,11 @@ class SurgeInstance:
     # Cached metadata from /doc replies. address → (name, type, min, max).
     _docs: dict[str, tuple[str, str, float, float]] = field(default_factory=dict)
     _values_lock: threading.Lock = field(default_factory=threading.Lock)
+    # Currently-loaded factory patch (relative path under _SURGE_FACTORY).
+    # Tracked here so the GUI's Instruments tab can show the live patch
+    # name + re-sync after the user picks something different. Updated
+    # by :meth:`load_patch`; initialised to the role's default on spawn.
+    current_patch_rel: Optional[str] = None
 
     # -- OSC reply handlers --
 
@@ -374,6 +431,11 @@ class SurgeInstance:
         patch_path = resolve_factory_patch(self.config.initial_patch)
         if patch_path is not None:
             args.append(f"--init-patch={patch_path}")
+            # Record the initial patch as the "currently loaded" one so
+            # the GUI's Instruments tab knows what to show on first
+            # render. :meth:`load_patch` keeps this fresh when the user
+            # picks something else from the GUI.
+            self.current_patch_rel = self.config.initial_patch
 
         self.proc = subprocess.Popen(
             args,
@@ -516,13 +578,26 @@ class SurgeInstance:
         return self._docs.get(addr)
 
     def load_patch(self, patch_path: Path) -> None:
-        """Load *patch_path* (an .fxp file) in this instance."""
+        """Load *patch_path* (an .fxp file) in this instance.
+
+        Updates :attr:`current_patch_rel` so the GUI's Instruments tab
+        knows what's loaded right now. The stored value is the path
+        relative to :data:`_SURGE_FACTORY` when the patch comes from
+        the factory tree; absolute path otherwise (user-saved presets)."""
         if self._client is None:
             return
         try:
             self._client.send_message("/patch/load", str(patch_path))
         except OSError:
             pass
+        # Record the new patch as currently-loaded. Try to express it
+        # relative to the factory root for nicer GUI labels; fall back
+        # to the absolute path for user presets that live elsewhere.
+        try:
+            rel = str(Path(patch_path).relative_to(_SURGE_FACTORY))
+        except ValueError:
+            rel = str(patch_path)
+        self.current_patch_rel = rel
         # After load, re-prime the value cache for our panel knobs.
         for addr in KNOB_ADDRS.values():
             self.query(addr)
