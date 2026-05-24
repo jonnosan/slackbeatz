@@ -26,6 +26,7 @@ old GUI-spawn behaviour available for deep patch editing.
 
 from __future__ import annotations
 
+import atexit
 import os
 import re
 import shutil
@@ -444,6 +445,21 @@ class SurgeInstance:
             stdin=subprocess.DEVNULL,
             start_new_session=True,
         )
+
+        # Belt-and-suspenders: even if slackbeatz exits without
+        # running its normal `finally:` cleanup (macOS Cmd+Q on the
+        # Tk window, unhandled exception in a daemon thread, plain
+        # `sys.exit()` from a script, …) atexit guarantees the
+        # surge-xt-cli subprocess we just spawned doesn't orphan in
+        # its own session. ``self.shutdown`` is idempotent so it's
+        # safe to fire twice when the normal cleanup did run.
+        #
+        # Caveats — atexit does NOT fire on:
+        #   * os._exit() (used by cmd_repl's _stop_now → its own
+        #     manual cleanup already calls inst.shutdown())
+        #   * `kill -9` or segfault (no signal handler can rescue
+        #     those, would-be-orphans show up in Activity Monitor)
+        atexit.register(self.shutdown)
 
         # 4. Wait for boot — surge-xt-cli prints "Starting OSC input"
         # within ~100ms but a brief grace period lets the patch load.

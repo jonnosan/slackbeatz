@@ -31,6 +31,7 @@ spawned via :mod:`slackbeatz.surge_host`.
 
 from __future__ import annotations
 
+import atexit
 import shutil
 import subprocess
 import sys
@@ -149,8 +150,9 @@ def spawn_surge_xt(
     if initial_patch is not None and Path(initial_patch).is_file():
         extra_args.append(f"--init-patch={initial_patch}")
 
+    proc: Optional[subprocess.Popen] = None
     if sys.platform == "darwin":
-        return subprocess.Popen(
+        proc = subprocess.Popen(
             [str(_SURGE_BIN), *extra_args],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
@@ -160,15 +162,32 @@ def spawn_surge_xt(
             # our own exit.
             start_new_session=True,
         )
-    if sys.platform.startswith("linux"):
-        return subprocess.Popen(
+    elif sys.platform.startswith("linux"):
+        proc = subprocess.Popen(
             [shutil.which("surge-xt") or "surge-xt", *extra_args],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
-    return None  # Windows etc — not yet supported
+    if proc is None:
+        return None  # Windows etc — not yet supported
+
+    # Belt-and-suspenders cleanup. The legacy --surge-gui path stashes
+    # the Popen in cmd_*'s ``surge_procs`` list and terminates each on
+    # exit, but if slackbeatz dies without running its finally — Cmd+Q
+    # on the Tk window, SIGTERM from outside, unhandled exception in a
+    # daemon thread — the Surge XT GUI windows would otherwise orphan.
+    # atexit guarantees they go down with us.
+    def _terminate(p=proc) -> None:
+        try:
+            if p.poll() is None:
+                p.terminate()
+        except Exception:
+            pass
+
+    atexit.register(_terminate)
+    return proc
 
 
 def channel_routing_summary() -> str:
