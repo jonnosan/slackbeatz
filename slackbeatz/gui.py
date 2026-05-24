@@ -1265,6 +1265,182 @@ def _build_fluidsynth_fx(parent, send, _var, ttk, tk, initial_reverb_room) -> No
         scale.grid(row=row_idx, column=col_pair + 1, sticky="ew", padx=(0, 12), pady=1)
 
 
+# --------------------------------------------------------------------------
+# 🎼 Builder tab
+# --------------------------------------------------------------------------
+
+def _build_builder_tab(parent, *, player, _var, ttk, tk) -> None:
+    """Compose songs by picking a style + title (+ optional tempo).
+
+    Drives the existing Player.style_override / Player.tempo_override
+    / Player.load_phrase / Player.reroll_seed APIs. Generating a new
+    song updates the rest of the GUI (Transport now-playing label,
+    Generators tab knob list, Mixer + Sound activity, Instruments
+    GM dropdowns) via Player.on_state_change.
+
+    The title field doubles as the seed-defining phrase — typing
+    "rolling acid trax" produces a different song from "dark acid
+    trax" even at the same style + tempo. Empty title falls back to
+    "new <style> song" so Generate always works.
+    """
+    from slackbeatz.player import KNOWN_STYLES
+
+    ttk.Label(
+        parent,
+        text="🎼 Pick a style + add a title, then click Generate to "
+             "compose + play. Re-roll spins a fresh variation with "
+             "the same title + style. Save as… exports the current "
+             "song to a .sb file you can play later.",
+        wraplength=620, justify="left", foreground="#444",
+    ).pack(padx=10, pady=(8, 6), anchor="w")
+
+    form = ttk.Frame(parent)
+    form.pack(fill="x", padx=10, pady=4)
+    form.columnconfigure(1, weight=1)
+
+    # Style dropdown — Sourced from player.KNOWN_STYLES so adding a
+    # new style upstream surfaces here without a code edit.
+    ttk.Label(form, text="Style", width=10, anchor="w").grid(
+        row=0, column=0, sticky="w", pady=4,
+    )
+    style_var = _var(
+        tk.StringVar,
+        value=player.style_override if player.style_override in KNOWN_STYLES else KNOWN_STYLES[0],
+    )
+    style_cb = ttk.Combobox(
+        form, values=KNOWN_STYLES, textvariable=style_var,
+        state="readonly", width=20,
+    )
+    style_cb.grid(row=0, column=1, sticky="w", padx=(4, 0), pady=4)
+
+    # Title entry. Doubles as the compose-time seed; empty falls
+    # back to "new <style> song" so the button always does something.
+    ttk.Label(form, text="Title", width=10, anchor="w").grid(
+        row=1, column=0, sticky="w", pady=4,
+    )
+    title_var = _var(
+        tk.StringVar,
+        value=player.current_phrase or "",
+    )
+    ttk.Entry(form, textvariable=title_var, width=40).grid(
+        row=1, column=1, sticky="ew", padx=(4, 0), pady=4,
+    )
+    ttk.Label(
+        form, text="(also seeds the variation)",
+        foreground="#888", font=("TkDefaultFont", 9, "italic"),
+    ).grid(row=1, column=2, sticky="w", padx=(6, 0))
+
+    # Tempo override — checkbox + spinbox. When unchecked, the
+    # compose layer picks a style-appropriate BPM from the title's
+    # sentiment hash.
+    ttk.Label(form, text="Tempo", width=10, anchor="w").grid(
+        row=2, column=0, sticky="w", pady=4,
+    )
+    tempo_row = ttk.Frame(form)
+    tempo_row.grid(row=2, column=1, sticky="w", padx=(4, 0), pady=4)
+    tempo_override_var = _var(
+        tk.IntVar, value=1 if player.tempo_override is not None else 0,
+    )
+    tempo_value_var = _var(
+        tk.IntVar, value=player.tempo_override or 120,
+    )
+    ttk.Checkbutton(
+        tempo_row, text="override",
+        variable=tempo_override_var,
+    ).pack(side="left")
+    ttk.Spinbox(
+        tempo_row, from_=40, to=220,
+        textvariable=tempo_value_var, width=6,
+    ).pack(side="left", padx=(8, 0))
+    ttk.Label(tempo_row, text=" BPM").pack(side="left")
+
+    # Status line — shows what was last generated. Updates on every
+    # Generate + on player state changes from other tabs.
+    status_var = _var(tk.StringVar, value="(no song generated yet)")
+    ttk.Label(
+        parent, textvariable=status_var,
+        foreground="#345", padding=(10, 4),
+    ).pack(fill="x")
+
+    def _refresh_status() -> None:
+        # Called by the main_thread_callbacks poller on player state
+        # changes (Generate / Re-roll / REPL phrase load all fire it).
+        if player.current_phrase:
+            src = f'"{player.current_phrase}"'
+        elif player.current_song_path is not None:
+            src = player.current_song_path.name
+        else:
+            src = "(no song generated yet)"
+        style = player.style_override or "(style: auto from title)"
+        status_var.set(f"current: {src}  •  style: {style}")
+
+    _refresh_status()
+
+    # Buttons row.
+    actions = ttk.Frame(parent)
+    actions.pack(fill="x", padx=10, pady=(2, 8))
+
+    def _generate() -> None:
+        # Push style + tempo overrides to the Player, then load the
+        # title as the active phrase + start playback. Player handles
+        # stopping any in-flight song automatically (its play() does
+        # stop_locked() before kicking off the new worker).
+        style = style_var.get()
+        player.style_override = style if style in KNOWN_STYLES else None
+        if tempo_override_var.get():
+            player.tempo_override = int(tempo_value_var.get())
+        else:
+            player.tempo_override = None
+        title = title_var.get().strip() or f"new {style} song"
+        player.load_phrase(title)
+        player.play()
+        _refresh_status()
+
+    def _reroll() -> None:
+        # Bumps player.seed_offset + replays. Player.reroll_seed
+        # returns a status string for the REPL — we discard it and
+        # rely on _refresh_status / on_state_change to update the UI.
+        player.reroll_seed()
+        _refresh_status()
+
+    def _save_as() -> None:
+        from tkinter import filedialog
+        # Suggest a filename derived from the current title — strip
+        # punctuation, lowercase, _-separate, .sb suffix.
+        raw = title_var.get().strip() or "new_song"
+        suggested = "".join(
+            c if c.isalnum() or c in " _-" else " " for c in raw
+        ).strip().lower().replace(" ", "_")
+        initial = f"{suggested}.sb"
+        path = filedialog.asksaveasfilename(
+            title="Save composed song as…",
+            defaultextension=".sb",
+            initialfile=initial,
+            filetypes=[
+                ("Slackbeatz songs", "*.sb"),
+                ("All files", "*.*"),
+            ],
+        )
+        if not path:
+            return
+        # Player.save_state writes the current composed .sb to the
+        # given path + returns a status line. Re-emit via the status
+        # label so the user sees it.
+        try:
+            status = player.save_state(path)
+        except Exception as e:  # noqa: BLE001
+            status = f"error: {e}"
+        status_var.set(status)
+
+    ttk.Button(actions, text="▶  Generate", command=_generate).pack(side="left", padx=2)
+    ttk.Button(actions, text="↻  Re-roll", command=_reroll).pack(side="left", padx=2)
+    ttk.Button(actions, text="💾  Save as…", command=_save_as).pack(side="left", padx=2)
+
+    # The Mixer + Transport already register their own on_state_change
+    # callbacks; we just need to keep our own status fresh too.
+    return _refresh_status
+
+
 def run_tweak_gui(
     fs_stdin: Optional[IO[bytes]],
     *,
@@ -1429,6 +1605,22 @@ def run_tweak_gui(
         # 80ms feels instant for the now-playing label without
         # spinning the event loop too aggressively.
         root.after(80, _poll_state)
+
+    # ------------------------------------------------------------------
+    # 🎼 Builder tab — pick a style + title, click Generate. Renders
+    # first so it's the natural "start here" surface when the user
+    # opens the GUI without a song already loaded. Only available when
+    # a Player is wired in (it drives style_override / load_phrase /
+    # play directly on the shared Player).
+    # ------------------------------------------------------------------
+    builder_refresh = None
+    if player is not None:
+        builder_tab = ttk.Frame(notebook)
+        notebook.add(builder_tab, text="🎼 Builder")
+        builder_refresh = _build_builder_tab(
+            builder_tab, player=player, _var=_var, ttk=ttk, tk=tk,
+        )
+        main_thread_callbacks.append(builder_refresh)
 
     # ------------------------------------------------------------------
     # Transport tab — only created if a Player is provided. Drives the
