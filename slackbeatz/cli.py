@@ -262,6 +262,7 @@ def cmd_live(args) -> int:
     # so surge-xt-cli's --list-devices sees them.
     surge_procs: list[subprocess.Popen] = []
     surge_instances: list = []  # SurgeInstance objects (headless mode)
+    sampler = None  # slackbeatz.sampler.Sampler — wired below if --surge
     surge_routing_enabled = False
     use_surge_gui = getattr(args, "surge_gui", False)
     use_surge_cli = getattr(args, "surge", False) and not use_surge_gui
@@ -312,13 +313,27 @@ def cmd_live(args) -> int:
                 file=sys.stderr,
             )
         else:
-            print(f"\nslackbeatz: spawning {len(OSC_CHANNELS)} Surge XT GUI windows.")
+            # Sampler-backed roles (patch_rel=None) don't get a Surge
+            # XT window — they're played by the in-process Sampler
+            # subscribed to the same virtual MIDI port.
+            gui_roles = [
+                (inst, ch, patch_rel)
+                for inst, (ch, _port, patch_rel) in OSC_CHANNELS.items()
+                if patch_rel is not None
+            ]
+            print(f"\nslackbeatz: spawning {len(gui_roles)} Surge XT GUI windows.")
             print(channel_routing_summary())
-            for inst, (ch_1idx, _port, patch_rel) in OSC_CHANNELS.items():
+            for _inst, ch_1idx, patch_rel in gui_roles:
                 patch_path = _resolve_factory_patch(patch_rel)
                 proc = spawn_surge_xt(ch_1idx, initial_patch=patch_path)
                 if proc is not None:
                     surge_procs.append(proc)
+
+    # With the virtual MIDI ports open + surge-xt-cli (if any) running,
+    # bring up the sampler — listens on slackbeatz-voice + slackbeatz-fx
+    # and plays WAVs in response to note_on events from those ports.
+    # Banks are populated later, when speech/sample gens resolve.
+    sampler = _start_sampler_if_enabled(surge_routing_enabled)
 
     try:
         tempo_map = build_tempo_map(resolved)
@@ -388,6 +403,11 @@ def cmd_live(args) -> int:
         for inst in surge_instances:
             try:
                 inst.shutdown()
+            except Exception:
+                pass
+        if sampler is not None:
+            try:
+                sampler.stop()
             except Exception:
                 pass
         fs_proc.terminate()
@@ -505,6 +525,33 @@ def _spawn_fluidsynth(soundfont: Path, *, gain: float, reverb: float) -> tuple[s
     except subprocess.TimeoutExpired:
         proc.kill()
     return None, None, "fluidsynth started but didn't expose a MIDI port"
+
+
+def _start_sampler_if_enabled(surge_routing_enabled: bool):
+    """If MIDI routing is on (i.e. ``--surge`` / ``--surge-gui`` was
+    set, so :class:`MultiPortSink` is open and the virtual ports
+    ``slackbeatz-voice`` + ``slackbeatz-fx`` exist), construct +
+    start the in-process :class:`Sampler` listening on those ports.
+    Returns ``None`` when routing is off (= no sampler needed).
+
+    Sampler banks start empty; the speech / sample gens populate them
+    at resolve time. A missing ``sounddevice`` / ``soundfile`` package
+    is logged but doesn't abort playback — the rest of slackbeatz
+    keeps working without the sampler in that case.
+    """
+    if not surge_routing_enabled:
+        return None
+    from slackbeatz.sampler import Sampler, set_active_sampler
+    from slackbeatz.synthhost import sampler_port_banks
+    try:
+        sampler = Sampler(sampler_port_banks())
+        sampler.start()
+    except RuntimeError as e:
+        # sounddevice / soundfile / numpy not installed.
+        print(f"slackbeatz sampler disabled: {e}", file=sys.stderr)
+        return None
+    set_active_sampler(sampler)
+    return sampler
 
 
 def _build_live_sink(fluidsynth_port: str, surge_routing: bool):
@@ -755,6 +802,7 @@ def cmd_repl(args) -> int:
     # virtual MIDI ports open BEFORE spawn — see _spawn_surge_for_player.
     surge_procs: list[subprocess.Popen] = []
     surge_instances: list = []
+    sampler = None  # slackbeatz.sampler.Sampler — created after MultiPortSink opens
     use_surge_gui = getattr(args, "surge_gui", False)
     use_surge_cli = getattr(args, "surge", False) and not use_surge_gui
     surge_routing_enabled = use_surge_cli or use_surge_gui
@@ -775,6 +823,12 @@ def cmd_repl(args) -> int:
         for inst in surge_instances:
             try:
                 inst.shutdown()
+            except Exception:
+                pass
+        # Stop the sampler's audio stream + MIDI reader threads.
+        if sampler is not None:
+            try:
+                sampler.stop()
             except Exception:
                 pass
 
@@ -873,16 +927,26 @@ def cmd_repl(args) -> int:
                         file=sys.stderr,
                     )
                 else:
+                    gui_roles = [
+                        (n, ch, patch_rel)
+                        for n, (ch, _port, patch_rel) in OSC_CHANNELS.items()
+                        if patch_rel is not None
+                    ]
                     print(
-                        f"\nslackbeatz: spawning {len(OSC_CHANNELS)} Surge XT "
+                        f"\nslackbeatz: spawning {len(gui_roles)} Surge XT "
                         f"GUI windows.",
                     )
                     print(channel_routing_summary())
-                    for inst_name, (ch_1idx, _port, patch_rel) in OSC_CHANNELS.items():
+                    for _inst_name, ch_1idx, patch_rel in gui_roles:
                         patch_path = _resolve_factory_patch(patch_rel)
                         proc = spawn_surge_xt(ch_1idx, initial_patch=patch_path)
                         if proc is not None:
                             surge_procs.append(proc)
+
+            # MultiPortSink is now open (via ensure_surge_routing_ready
+            # above) — start the sampler listening on the voice + fx
+            # virtual ports.
+            sampler = _start_sampler_if_enabled(surge_routing_enabled)
 
         def _stop_now() -> None:
             player.stop()

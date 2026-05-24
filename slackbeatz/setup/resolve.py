@@ -30,7 +30,18 @@ from slackbeatz.theory.meter import COMMON_TIME, Meter
 from .model import Instrument, Kit, Setup
 
 _PITCHED_TYPES = {"bass", "melody", "chords", "candy"}
-_KNOWN_TYPES = {"rhythm", "drums"} | _PITCHED_TYPES
+# Sampler-backed gen types: emit notes on a fixed channel routed
+# (via OSC_CHANNELS in :mod:`slackbeatz.synthhost`) to the in-process
+# :class:`slackbeatz.sampler.Sampler` instead of a synth. Each MIDI
+# note maps to a distinct WAV (TTS phrase or one-shot sample),
+# populated by the generator at resolve time. See
+# ``docs/design-tts-sampler.md``.
+_SAMPLER_TYPE_CHANNELS: dict[str, int] = {
+    "speech": 5,   # the `voice` role in OSC_CHANNELS
+    "sample": 11,  # the `fx` role
+}
+_SAMPLER_TYPES = frozenset(_SAMPLER_TYPE_CHANNELS)
+_KNOWN_TYPES = {"rhythm", "drums"} | _PITCHED_TYPES | _SAMPLER_TYPES
 
 
 class ResolveError(Exception):
@@ -114,6 +125,27 @@ def _resolve_gen(gen: GenDecl, setup: Setup) -> ResolvedGen:
             gen.line,
             f"{gen.type_} gen {gen.handle!r}: kit= only applies to drums type",
         )
+
+    # Sampler-backed types (speech / sample) auto-route to the
+    # convention channel (5 / 11) without needing a setup entry. An
+    # explicit ``ch=N`` knob still wins; an explicit ``inst=X`` looks
+    # the instrument up by name like every other type.
+    if gen.type_ in _SAMPLER_TYPES and inst_override is None:
+        channel = (
+            int(raw_ch) if isinstance(raw_ch, int)
+            else _SAMPLER_TYPE_CHANNELS[gen.type_]
+        )
+        inst = Instrument(name=gen.handle, channel=channel, note=None)
+        return ResolvedGen(
+            handle=gen.handle,
+            type_=gen.type_,
+            style=gen.style,
+            knobs=knobs,
+            instrument=inst,
+            kit=None,
+            meter=gen_meter,
+        )
+
     target = str(inst_override) if inst_override is not None else gen.handle
     inst = setup.instruments.get(target)
     if inst is None:

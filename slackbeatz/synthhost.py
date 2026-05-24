@@ -59,18 +59,42 @@ _SURGE_FACTORY: Path = Path(
 # free to ignore.
 #
 # Entry shape: ``role -> (channel_1idx, virtual_port_name,
-# default_surge_patch_relpath)``.
-OSC_CHANNELS: dict[str, tuple[int, str, str]] = {
-    "lead":  (1, "slackbeatz-lead",  "Leads/Classic Lead 1.fxp"),
-    "bass":  (2, "slackbeatz-bass",  "Basses/Bass 1.fxp"),
-    "pad":   (3, "slackbeatz-pad",   "Pads/MKS-70 Warm Pad.fxp"),
-    "candy": (4, "slackbeatz-candy", "Sequences/Bell Seq.fxp"),
+# default_surge_patch_relpath_or_None)``. ``None`` in the patch
+# slot means "this role is not Surge-backed" (e.g. the ``voice`` and
+# ``fx`` roles are driven by the in-process :class:`Sampler` instead
+# of surge-xt-cli). :func:`spawn_surge_instances` skips ``None``
+# entries; :class:`MultiPortSink` still creates their virtual MIDI
+# port so the sampler can subscribe.
+OSC_CHANNELS: dict[str, tuple[int, str, str | None]] = {
+    "lead":  (1,  "slackbeatz-lead",  "Leads/Classic Lead 1.fxp"),
+    "bass":  (2,  "slackbeatz-bass",  "Basses/Bass 1.fxp"),
+    "pad":   (3,  "slackbeatz-pad",   "Pads/MKS-70 Warm Pad.fxp"),
+    "candy": (4,  "slackbeatz-candy", "Sequences/Bell Seq.fxp"),
+    # Sampler-backed (TTS phrases on ch 5, FX one-shots on ch 11).
+    # See ``docs/design-tts-sampler.md`` + slackbeatz/sampler.py.
+    "voice": (5,  "slackbeatz-voice", None),
+    "fx":    (11, "slackbeatz-fx",    None),
 }
 
 
-def _resolve_factory_patch(relpath: str) -> Optional[Path]:
+def sampler_port_banks(roles: tuple[str, ...] = ("voice", "fx")) -> dict[str, dict]:
+    """Build an empty ``{port_name: {}}`` map for the sampler-backed
+    roles. Used by :func:`cmd_repl` / :func:`cmd_live` to construct a
+    fresh :class:`Sampler` instance — generators populate the bank
+    entries at resolve time via :meth:`Sampler.set_sample`."""
+    return {
+        OSC_CHANNELS[role][1]: {}
+        for role in roles
+        if role in OSC_CHANNELS
+    }
+
+
+def _resolve_factory_patch(relpath: Optional[str]) -> Optional[Path]:
     """Return the absolute path to a factory patch, or None if it's
-    missing (e.g. user has a stripped Surge XT install)."""
+    missing (e.g. user has a stripped Surge XT install) or if
+    *relpath* is None (= role not backed by a Surge XT factory patch)."""
+    if relpath is None:
+        return None
     candidate = _SURGE_FACTORY / relpath
     return candidate if candidate.is_file() else None
 
@@ -141,12 +165,19 @@ def spawn_surge_xt(
 def channel_routing_summary() -> str:
     """Human-readable summary of which port to pick + which patch is
     pre-loaded in each Surge XT window. Used by the CLI banner and
-    the GUI tab."""
+    the GUI tab. Sampler-backed roles (patch=None) are noted but
+    skipped — they don't get a Surge XT window."""
     lines = ["Surge XT routing — pick this MIDI input in each window:"]
     for inst, (ch, port, patch_rel) in OSC_CHANNELS.items():
+        if patch_rel is None:
+            lines.append(
+                f"  ch {ch:>2} ({inst}):  {port!r}   "
+                f"[sampler — no Surge window]"
+            )
+            continue
         patch_name = Path(patch_rel).stem
         lines.append(
-            f"  window {ch} ({inst}):  MIDI Input → {port!r}   "
+            f"  ch {ch:>2} ({inst}):  MIDI Input → {port!r}   "
             f"[preloaded: {patch_name}]"
         )
     lines.append(
