@@ -596,14 +596,31 @@ class SurgeInstance:
     def load_patch(self, patch_path: Path) -> None:
         """Load *patch_path* (an .fxp file) in this instance.
 
-        Updates :attr:`current_patch_rel` so the GUI's Instruments tab
+        Updates :attr:`current_patch_rel` so the GUI's Sound tab
         knows what's loaded right now. The stored value is the path
         relative to :data:`_SURGE_FACTORY` when the patch comes from
-        the factory tree; absolute path otherwise (user-saved presets)."""
+        the factory tree; absolute path otherwise (user-saved
+        presets).
+
+        Wire-format gotcha: Surge XT's ``/patch/load`` OSC handler
+        expects the **absolute path WITHOUT the .fxp extension**
+        (see ``resources/surge-shared/oscspecification.html`` in
+        surge-synthesizer/surge, plus the reference call in
+        ``scripts/osc-tests/OSC_test_hang2.py``). Sending the path
+        with the extension is silently ignored — patch stays
+        unchanged. We strip the suffix here so callers can pass
+        plain ``Path("…/Bass 1.fxp")`` instances and have them work."""
         if self._client is None:
             return
+        # Strip the .fxp suffix before sending — Surge expects the
+        # extensionless path. Doing this on str(path) rather than
+        # Path.with_suffix("") guarantees we only ever touch the
+        # trailing ".fxp" (some patch names contain dots).
+        osc_arg = str(patch_path)
+        if osc_arg.endswith(".fxp"):
+            osc_arg = osc_arg[:-4]
         try:
-            self._client.send_message("/patch/load", str(patch_path))
+            self._client.send_message("/patch/load", osc_arg)
         except OSError:
             pass
         # Record the new patch as currently-loaded. Try to express it
