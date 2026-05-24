@@ -206,19 +206,15 @@ def _build_sound_tab(parent, surge_instances, ttk, tk, *, sampler=None, _var=Non
     inner = ttk.Notebook(parent)
     inner.pack(fill="both", expand=True, padx=8, pady=6)
 
-    # Track sub-tab indices + their base titles so the activity-flash
-    # poll below can swap the title between "<role> (ch N)" (idle) and
-    # "<role> (ch N) ●" (active in last ~150 ms). Each entry is
-    # (channel_1idx, sub_tab_index, base_title).
-    sub_tab_activity: list[tuple[int, int, str]] = []
-
+    # Sub-tab title text stays static. Toggling the title to add ● for
+    # activity caused the notebook column to grow on every flash (Tk
+    # doesn't auto-shrink). The Mixer tab carries the per-channel
+    # activity indicators instead; this tab is the sound-design
+    # surface, not the performance monitor.
     for inst in surge_instances:
         frame = ttk.Frame(inner)
         tab_title = f"{inst.config.role} (ch {inst.config.channel_1idx})"
         inner.add(frame, text=tab_title)
-        sub_tab_activity.append(
-            (inst.config.channel_1idx, len(inner.tabs()) - 1, tab_title),
-        )
 
         # ----- Patch picker --------------------------------------
         # Role-filtered dropdown sourced from the Surge factory tree.
@@ -350,36 +346,11 @@ def _build_sound_tab(parent, surge_instances, ttk, tk, *, sampler=None, _var=Non
         fx_port = OSC_CHANNELS["fx"][1]
         fx_ch = OSC_CHANNELS["fx"][0]
         voice_frame = ttk.Frame(inner)
-        voice_title = f"🎙 Voice (ch {voice_ch})"
-        inner.add(voice_frame, text=voice_title)
-        sub_tab_activity.append((voice_ch, len(inner.tabs()) - 1, voice_title))
+        inner.add(voice_frame, text=f"🎙 Voice (ch {voice_ch})")
         _build_voice_subtab(voice_frame, sampler, voice_port, ttk, tk, _var=_var)
         fx_frame = ttk.Frame(inner)
-        fx_title = f"🔊 FX (ch {fx_ch})"
-        inner.add(fx_frame, text=fx_title)
-        sub_tab_activity.append((fx_ch, len(inner.tabs()) - 1, fx_title))
+        inner.add(fx_frame, text=f"🔊 FX (ch {fx_ch})")
         _build_fx_subtab(fx_frame, sampler, fx_port, ttk, tk, _var=_var)
-
-    # Activity flash for the sub-tab titles — same shape as the Mixer
-    # tab's strip-title flash, but using Notebook.tab(idx, text=...)
-    # instead of LabelFrame.configure. Self-arming 80 ms poll.
-    if player is not None and sub_tab_activity:
-        active_now: dict[int, bool] = {ch: False for ch, _idx, _t in sub_tab_activity}
-
-        def _poll_sound_activity() -> None:
-            for ch, idx, base_title in sub_tab_activity:
-                is_active = player.is_channel_active(ch)
-                if is_active == active_now[ch]:
-                    continue
-                active_now[ch] = is_active
-                new_title = f"{base_title} ●" if is_active else base_title
-                try:
-                    inner.tab(idx, text=new_title)
-                except Exception:
-                    pass
-            parent.after(80, _poll_sound_activity)
-
-        parent.after(80, _poll_sound_activity)
 
 
 # --------------------------------------------------------------------------
@@ -803,13 +774,13 @@ def _build_mixer_tab(
         if channel_1idx == 10 and send is not None:
             send(f"gain {effective:.2f}")
 
-    # Activity indicators — channel → (strip widget, base title string).
-    # Used by the per-strip note_on flash callback to swap the
-    # LabelFrame title between "🎵 lead (ch 1)" (idle) and "🎵 lead
-    # (ch 1) ●" (active in last ~150 ms). Populated below as each
-    # strip is built; consumed by _refresh_mixer_activity registered
-    # on main_thread_callbacks.
-    strip_activity: dict[int, tuple[ttk.LabelFrame, str]] = {}
+    # Activity indicators — channel → Label widget. The strip's
+    # LabelFrame title stays static; the activity is shown on an
+    # inline Label widget at the right of the volume row with
+    # width=2 (so the slot never resizes). Toggling the title text
+    # instead caused Tk's geometry manager to grow the window every
+    # time a note fired — no shrink path, so it ratcheted wider.
+    strip_activity: dict[int, "ttk.Label"] = {}
 
     # Build one strip per known channel (skip strips whose backend isn't
     # present this run — e.g. without --surge there are no Surge handles
@@ -830,12 +801,24 @@ def _build_mixer_tab(
         strip_title = f"{emoji}  {role} (ch {ch_1idx})"
         strip = ttk.LabelFrame(body, text=strip_title)
         strip.pack(fill="x", padx=4, pady=4)
-        strip_activity[ch_1idx] = (strip, strip_title)
 
         # Volume row.
         vol_row = ttk.Frame(strip)
         vol_row.pack(fill="x", padx=8, pady=(4, 2))
         ttk.Label(vol_row, text="Vol", width=8, anchor="w").pack(side="left")
+
+        # Activity indicator — fixed-width Label that toggles its
+        # text colour when this channel fires a note_on within the
+        # last ~150 ms. width=2 keeps the slot dimensionally constant
+        # so flashing doesn't trigger Tk to re-layout the parent (the
+        # window otherwise grows rightward on every flash since Tk
+        # doesn't auto-shrink).
+        activity_label = ttk.Label(
+            vol_row, text="●", width=2, anchor="center",
+            foreground="#ccc",
+        )
+        activity_label.pack(side="right", padx=(4, 0))
+        strip_activity[ch_1idx] = activity_label
 
         # Per-strip-kind range + initial position:
         #   surge            — 0..1 (matches /param/global/volume). Initial
@@ -922,10 +905,11 @@ def _build_mixer_tab(
     )
     m_scale.pack(side="left", fill="x", expand=True)
 
-    # Activity flash — self-arming 80 ms poll loop. Flips each strip's
-    # LabelFrame title between "<title>" (idle) and "<title> ●"
-    # (active in last ~150 ms) based on whether the Player has
-    # observed a note_on on that channel recently.
+    # Activity flash — self-arming 80 ms poll loop. The dot widget
+    # stays the same width either way; only its colour changes
+    # between "#ccc" (idle, dim grey) and "#2c2" (active, bright
+    # green). No geometry-manager pumping, no window-grow side
+    # effects.
     #
     # Player.is_channel_active reads the dict the _ActivityTapSink
     # writes from the audio thread — lock-free, dict.get is atomic
@@ -937,14 +921,13 @@ def _build_mixer_tab(
         active_now: dict[int, bool] = {ch: False for ch in strip_activity}
 
         def _poll_activity() -> None:
-            for ch, (strip_widget, base_title) in strip_activity.items():
+            for ch, label in strip_activity.items():
                 is_active = player.is_channel_active(ch)
                 if is_active == active_now[ch]:
                     continue
                 active_now[ch] = is_active
-                new_title = f"{base_title} ●" if is_active else base_title
                 try:
-                    strip_widget.configure(text=new_title)
+                    label.configure(foreground="#2c2" if is_active else "#ccc")
                 except Exception:
                     pass
             parent.after(80, _poll_activity)

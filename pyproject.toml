@@ -4,7 +4,10 @@ build-backend = "hatchling.build"
 
 [project]
 name = "slackbeatz"
-version = "0.1.0"
+# 0.2.0 — added [sampler] / [tts] / [offline-render] extras + reshaped
+# the GUI; bump so pip refreshes installed metadata when users move
+# from a pre-extras install.
+version = "0.2.0"
 description = "Chance-driven MIDI song generator with a small DSL, tuned for techno on hardware synths"
 readme = "README.md"
 license = "MIT"
