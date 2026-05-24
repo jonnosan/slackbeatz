@@ -261,14 +261,25 @@ class Player:
         # MIDI subscription each time the user tweaks a param).
         self._shared_routing_sink = None
 
-        # Per-channel last-note_on timestamp (1-indexed channel →
-        # time.monotonic() of the most recent note_on). Updated from
-        # the audio-thread sink wrapper (:class:`_ActivityTapSink`);
-        # read lock-free by the GUI to drive per-channel activity
-        # flashing on the Mixer + Sound tabs. Dict-write atomicity in
-        # CPython is enough — at worst we see one stale value for one
-        # GUI poll cycle.
+        # Per-channel activity tracking — both updated from the
+        # audio-thread sink wrapper (:class:`_ActivityTapSink`);
+        # read lock-free by the GUI to drive per-channel flash
+        # indicators. Both keyed by 1-indexed channel.
+        #
+        # `last_note_on_time` catches short notes — note_on +
+        # note_off within one poll cycle (~80 ms) leaves no held
+        # note for is_channel_active to find, but the 150 ms
+        # timestamp grace window covers it.
+        #
+        # `held_notes` catches long pads — a single note_on followed
+        # by a note_off seconds later. Without this we'd flash the
+        # indicator at note_on then drop it after 150 ms even though
+        # the sustained pad is still audibly playing.
+        #
+        # Dict + set writes are atomic in CPython; the worst case
+        # is one stale read for one poll cycle. Acceptable.
         self.last_note_on_time: dict[int, float] = {}
+        self.held_notes: dict[int, set[int]] = {}
 
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
@@ -1031,13 +1042,25 @@ class Player:
         return _ActivityTapSink(composite, self)
 
     def is_channel_active(self, channel_1idx: int, window_ms: float = 150.0) -> bool:
-        """True if *channel_1idx* fired a note_on in the last
-        ``window_ms`` milliseconds. Used by the GUI to drive the
-        per-channel activity indicators on Mixer + Sound tabs.
+        """True if *channel_1idx* has notes currently sounding —
+        either a held note (note_on with no matching note_off yet)
+        or a recently-released short note (within ``window_ms`` of
+        its note_on).
 
-        Lock-free read from the dict. Worst case is one stale value
-        for one polling cycle (~80 ms) — visually imperceptible."""
-        last = self.last_note_on_time.get(int(channel_1idx))
+        Two-pronged so the GUI activity indicator lights up for
+        both **long pads** (one note_on at the start of an 8-bar
+        chord, note_off way later — held_notes catches that) AND
+        **fast 16ths** (note_on/note_off pair within one poll cycle
+        — the timestamp grace window catches those).
+
+        Lock-free read from the per-channel dict + set. Worst case
+        is one stale value for one polling cycle (~80 ms),
+        imperceptible."""
+        ch = int(channel_1idx)
+        held = self.held_notes.get(ch)
+        if held:
+            return True
+        last = self.last_note_on_time.get(ch)
         if last is None:
             return False
         import time as _time
@@ -1191,15 +1214,73 @@ class Player:
         self._stop_event.set()
         self._thread.join(timeout=2)
         self._thread = None
-        # Send all-notes-off to clear any held notes on the synth.
-        try:
-            tmp = RealtimeSink(port_name=self.port_name)
-            tmp.open()
-            tmp.close()
-        except Exception:
-            pass
+        # Hard-cut any audible sound across every routed backend
+        # (FluidSynth port + per-Surge virtual ports + sampler ports).
+        # The previous implementation only sent all-notes-off to the
+        # FluidSynth port — Surge instances + the Sampler kept
+        # ringing because they're subscribed to the MultiPortSink.
+        self._send_all_sound_off()
         # Reset the event so the next play() starts clean.
         self._stop_event.clear()
+
+    def _send_all_sound_off(self) -> None:
+        """Send CC 120 (All Sound Off — hard cut, ignore release) +
+        CC 123 (All Notes Off — release-respecting) on every channel
+        of every output port the player has open. Covers:
+
+        * the FluidSynth port at ``self.port_name`` — drums + any
+          channel routed there as a fall-through.
+        * each virtual MIDI port managed by ``self._shared_routing_sink``
+          (the MultiPortSink under ``osc_routing``) — surge-xt-cli
+          instances subscribed to those ports + the in-process
+          Sampler.
+
+        We send 120 + 123 to be belt-and-suspenders compatible: some
+        synths only honour one; the Sampler honours 120 specifically
+        as "hard kill all voices" (see :meth:`Sampler._reader_loop`).
+
+        Does NOT close any ports — the MultiPortSink stays alive
+        across stops so each Surge XT instance's MIDI input
+        subscription doesn't blink out."""
+        import mido
+
+        def _panic(send_fn, label: str) -> None:
+            try:
+                for ch in range(16):
+                    send_fn(mido.Message("control_change", channel=ch, control=120, value=0))
+                    send_fn(mido.Message("control_change", channel=ch, control=123, value=0))
+            except Exception as e:  # noqa: BLE001 — surface but don't crash stop()
+                import sys as _sys
+                print(
+                    f"slackbeatz: panic CCs on {label!r} failed ({e})",
+                    file=_sys.stderr,
+                )
+
+        # FluidSynth (and anything else listening on the default
+        # output port). Open a fresh transient mido output so we
+        # don't have to coordinate with the worker thread's sink.
+        try:
+            with mido.open_output(self.port_name) as out:
+                _panic(out.send, self.port_name)
+        except Exception:
+            pass
+
+        # Shared MultiPortSink — covers Surge instances + Sampler.
+        # MultiPortSink.send(msg) routes per-message-channel to the
+        # right virtual port; iterating 0..15 hits every routed
+        # channel without us having to know the port → channel map.
+        if self._shared_routing_sink is not None:
+            _panic(self._shared_routing_sink.send, "MultiPortSink")
+
+        # Clear the activity dicts directly — _send_all_sound_off
+        # bypasses _ActivityTapSink (the worker's sink is being torn
+        # down concurrently), so the tap's CC-120/123 handler won't
+        # fire to clear them. Without this the Mixer activity dots
+        # would stay green after Stop until the next song's events
+        # naturally cleared the held set.
+        for held in self.held_notes.values():
+            held.clear()
+        self.last_note_on_time.clear()
 
 
 # --------------------------------------------------------------------------
@@ -1234,13 +1315,32 @@ class _ActivityTapSink:
         self._inner.close()
 
     def send(self, msg) -> None:
-        # Cheap fast-path: only inspect note_on. Everything else
-        # (note_off, CC, pitchbend, program_change, meta) just
-        # forwards without touching the activity dict.
-        if msg.type == "note_on" and getattr(msg, "velocity", 0) > 0:
-            # mido channel is 0-indexed; we expose 1-indexed.
-            import time as _time
-            self._player.last_note_on_time[msg.channel + 1] = _time.monotonic()
+        # Track per-channel held notes (sustained pads) + last-on
+        # timestamps (short notes). Everything else (CC, pitchbend,
+        # program_change, meta) just forwards. CC 120 / CC 123 also
+        # clear held-notes since they release everything on the
+        # downstream synth — keeps the activity indicator honest
+        # when the Player sends a panic.
+        mtype = msg.type
+        if mtype == "note_on" or mtype == "note_off":
+            ch_1idx = msg.channel + 1  # mido 0-indexed → slackbeatz 1-indexed
+            note = msg.note
+            velocity = getattr(msg, "velocity", 0)
+            held = self._player.held_notes.setdefault(ch_1idx, set())
+            if mtype == "note_on" and velocity > 0:
+                held.add(note)
+                import time as _time
+                self._player.last_note_on_time[ch_1idx] = _time.monotonic()
+            else:
+                # note_off OR note_on with velocity 0 (release)
+                held.discard(note)
+        elif mtype == "control_change":
+            controller = getattr(msg, "control", -1)
+            if controller in (120, 123):
+                ch_1idx = msg.channel + 1
+                held = self._player.held_notes.get(ch_1idx)
+                if held is not None:
+                    held.clear()
         self._inner.send(msg)
 
     @property

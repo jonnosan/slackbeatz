@@ -581,7 +581,13 @@ class Sampler:
         listener.thread.start()
 
     def _reader_loop(self, listener: _PortListener) -> None:
-        """Block-read MIDI messages from one port + dispatch them."""
+        """Block-read MIDI messages from one port + dispatch them.
+
+        Honours CC 120 (All Sound Off — hard cut, drop every active
+        voice now) + CC 123 (All Notes Off — trigger release on
+        every active voice). The Player sends these on Stop +
+        between songs so a held pad doesn't ring on after playback
+        stops."""
         port = listener.midi_port
         if port is None:
             return
@@ -589,12 +595,27 @@ class Sampler:
             for msg in port:
                 if listener.stop_flag.is_set():
                     return
-                if msg.type == "note_on" and getattr(msg, "velocity", 0) > 0:
+                mtype = msg.type
+                if mtype == "note_on" and getattr(msg, "velocity", 0) > 0:
                     self._on_note_on(listener, msg.note, msg.velocity)
-                elif msg.type == "note_off" or (
-                    msg.type == "note_on" and getattr(msg, "velocity", 0) == 0
+                elif mtype == "note_off" or (
+                    mtype == "note_on" and getattr(msg, "velocity", 0) == 0
                 ):
                     self._on_note_off(listener, msg.note)
+                elif mtype == "control_change":
+                    controller = getattr(msg, "control", -1)
+                    if controller == 120:
+                        # All Sound Off — kill every active voice
+                        # immediately (no release envelope).
+                        with self._voice_lock:
+                            self._voices.clear()
+                    elif controller == 123:
+                        # All Notes Off — trigger release on every
+                        # active voice, let the envelope finish.
+                        with self._voice_lock:
+                            for v in self._voices.values():
+                                if v.release_left is None:
+                                    v.release_left = v.release_total
         except Exception:
             # Port closed mid-iter → we're shutting down. Quiet exit.
             return
