@@ -261,6 +261,13 @@ class Player:
         # MIDI subscription each time the user tweaks a param).
         self._shared_routing_sink = None
 
+        # True while _play_loop is dispatching events; False when
+        # the worker thread enters its `finally` cleanup. See the
+        # is_playing property for the rationale (avoids the
+        # is_alive() flicker around thread teardown + makes natural
+        # finish observable to the GUI).
+        self._is_playing: bool = False
+
         # Per-channel activity tracking — both updated from the
         # audio-thread sink wrapper (:class:`_ActivityTapSink`);
         # read lock-free by the GUI to drive per-channel flash
@@ -370,7 +377,21 @@ class Player:
 
     @property
     def is_playing(self) -> bool:
-        return self._thread is not None and self._thread.is_alive()
+        """True iff the worker thread is actively dispatching events.
+
+        Backed by an explicit ``_is_playing`` flag set inside
+        :meth:`_play_loop` rather than ``Thread.is_alive()``, so the
+        GUI sees a clean False the instant the scheduler exits — even
+        for the brief window between "_play_loop returns" and "Python
+        actually reaps the thread" where ``is_alive()`` flickers.
+
+        Crucially: a song that finishes NATURALLY (loop=off + end of
+        arrangement) now also flips this to False + fires
+        ``on_state_change``, so the Transport tab's "▶ Play / ■ Stop"
+        button label updates instead of staying stuck on "■ Stop" —
+        which previously made the next click look like Stop but
+        actually trigger a Play-from-beginning."""
+        return self._is_playing
 
     def play(self, *, from_tick: int = 0) -> str:
         """Compose/resolve the current source and start the playback
@@ -394,6 +415,13 @@ class Player:
             self._thread = threading.Thread(
                 target=self._play_loop, args=(resolved, from_tick), daemon=True,
             )
+            # Mark playing BEFORE start() so the immediate
+            # on_state_change below sees the right value. Without
+            # this, the GUI's refresh would fire while the worker
+            # hasn't yet reached its `self._is_playing = True` line,
+            # see is_playing=False, and flash the button back to
+            # "▶ Play" until the next poll tick.
+            self._is_playing = True
             self._thread.start()
             self.on_state_change()
             extra = ""
@@ -1070,6 +1098,15 @@ class Player:
         """Worker thread body. Plays *resolved* once (or repeatedly if
         loop is True), respecting :attr:`_stop_event`."""
         first_iteration_from_tick = from_tick
+        # Flip the public "is_playing" flag here, not in play() — that
+        # way the GUI sees us as "not playing" the moment the worker
+        # enters its finally block, whether we exited cleanly (song
+        # finished) or via the stop event (user clicked Stop). Without
+        # this, natural finish left the Transport button stuck on
+        # "■ Stop" + the next click triggered play-from-beginning
+        # instead of Stop.
+        self._is_playing = True
+        self.on_state_change()
         try:
             while True:
                 sink = self._make_sink()
@@ -1126,6 +1163,16 @@ class Player:
                 tmp.close()  # close() sends all-notes-off across all channels
             except Exception:
                 pass
+            # Mark playback finished + notify the GUI. Critical for
+            # the natural-finish path — the song hit end-of-arrangement
+            # with loop=off, the while loop exited cleanly, the user
+            # never pressed Stop. Without this signal the Transport
+            # button label stayed on "■ Stop" + the next click
+            # interpreted as toggle → is_playing → False → start a
+            # new playback from bar 1, which felt like "Stop sent me
+            # to the beginning".
+            self._is_playing = False
+            self.on_state_change()
 
     # ------------------------------------------------------------------
     # Helpers — bar/tick conversion + channel-silence on mute
