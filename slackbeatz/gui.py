@@ -1713,6 +1713,13 @@ def _build_builder_tab(parent, *, player, _var, ttk, tk) -> None:
     parts_body = ttk.Frame(parts_frame)
     parts_body.pack(fill="both", expand=True, padx=8, pady=4)
 
+    # Per-row name-label widgets, keyed by arrangement-position
+    # index. _highlight_playing_row() polls the Player at ~200ms and
+    # twiddles foreground/font on these so the currently-playing
+    # row stands out without rebuilding the whole panel each tick.
+    playing_row_labels: dict[int, "ttk.Label"] = {}
+    playing_row_state: dict[str, object] = {"last_idx": None}
+
     # Footer for "+ add part" — created once, rebuilt each refresh.
     parts_footer = ttk.Frame(parts_frame)
     parts_footer.pack(fill="x", padx=8, pady=(2, 6))
@@ -1744,6 +1751,8 @@ def _build_builder_tab(parent, *, player, _var, ttk, tk) -> None:
             w.destroy()
         for w in parts_footer.winfo_children():
             w.destroy()
+        playing_row_labels.clear()
+        playing_row_state["last_idx"] = None
         resolved = player.current_resolved
         if resolved is None:
             ttk.Label(
@@ -1806,6 +1815,15 @@ def _build_builder_tab(parent, *, player, _var, ttk, tk) -> None:
                 command=lambda i=idx: _delete(i),
             ).pack(side="left", padx=(2, 6))
 
+            # ▶ Jump-to-position — restarts playback at this part's
+            # start tick. Always begins playback, even if currently
+            # stopped (matches the user's "jump straight to playing
+            # that part" expectation).
+            ttk.Button(
+                row, text="▶", width=2,
+                command=lambda i=idx: player.jump_to_part_position(i),
+            ).pack(side="left", padx=(0, 6))
+
             # Position number — disambiguates duplicate part names.
             ttk.Label(
                 row, text=f"{idx + 1:2d}.", width=3, anchor="e",
@@ -1830,9 +1848,11 @@ def _build_builder_tab(parent, *, player, _var, ttk, tk) -> None:
             bars = part.bars if part is not None else 0
             use_count = name_counts.get(name, 0)
             count_hint = f" ×{use_count}" if use_count > 1 else ""
-            ttk.Label(
+            name_lbl = ttk.Label(
                 row, text=f"{name}", width=14, anchor="w",
-            ).pack(side="left")
+            )
+            name_lbl.pack(side="left")
+            playing_row_labels[idx] = name_lbl
             ttk.Label(
                 row, text=f"({bars} bars{count_hint})",
                 width=14, anchor="w", foreground="#666",
@@ -1979,6 +1999,46 @@ def _build_builder_tab(parent, *, player, _var, ttk, tk) -> None:
                    kind="float")
 
     _refresh_parts()
+
+    # --- Currently-playing row highlight ------------------------------
+    # Polls the Player's playhead at ~200ms (5 fps) and recolours the
+    # matching Parts row. Skips work when the position hasn't moved
+    # since the last tick. Self-schedules via parts_body.after so it
+    # naturally stops when the widget is destroyed.
+    _PLAYING_FONT = ("TkDefaultFont", 10, "bold")
+    _IDLE_FONT = ("TkDefaultFont", 10, "normal")
+
+    def _highlight_playing_row() -> None:
+        try:
+            idx = player.current_playing_position()
+        except Exception:
+            idx = None
+        last = playing_row_state.get("last_idx")
+        if idx != last:
+            # Clear the previous highlight.
+            if isinstance(last, int) and last in playing_row_labels:
+                try:
+                    playing_row_labels[last].configure(
+                        foreground="", font=_IDLE_FONT,
+                    )
+                except Exception:
+                    pass
+            # Apply the new highlight.
+            if isinstance(idx, int) and idx in playing_row_labels:
+                try:
+                    playing_row_labels[idx].configure(
+                        foreground="#0a8", font=_PLAYING_FONT,
+                    )
+                except Exception:
+                    pass
+            playing_row_state["last_idx"] = idx
+        try:
+            parts_body.after(200, _highlight_playing_row)
+        except Exception:
+            # Widget destroyed — loop ends naturally.
+            return
+
+    parts_body.after(200, _highlight_playing_row)
 
     # Single state-change callback that refreshes BOTH the status
     # line and the parts panel. Both share the same trigger (player

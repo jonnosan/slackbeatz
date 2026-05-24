@@ -682,6 +682,59 @@ class Player:
         except Exception:  # noqa: BLE001
             return "—"
 
+    def get_part_position_spans(self) -> list[tuple[int, int]]:
+        """``[(start_tick, end_tick_exclusive), ...]`` for each
+        arrangement position in the current resolved song.
+
+        Used by the Builder's Parts panel to map a row back to its
+        absolute tick range — drives both the "currently-playing"
+        highlight (``current_playing_position``) and the per-row
+        ``▶`` jump button (``jump_to_part_position``). Returns an
+        empty list when no song is loaded.
+        """
+        from slackbeatz.engine.clock import bars_to_ticks
+        resolved = self.current_resolved
+        if resolved is None:
+            return []
+        out: list[tuple[int, int]] = []
+        cursor = 0
+        for part_name in resolved.arrangement:
+            part = resolved.parts.get(part_name)
+            if part is None:
+                continue
+            span = bars_to_ticks(part.bars, meter=part.meter)
+            out.append((cursor, cursor + span))
+            cursor += span
+        return out
+
+    def current_playing_position(self) -> Optional[int]:
+        """Index in ``current_resolved.arrangement`` containing the
+        playhead, or ``None`` if not playing / no song / position
+        falls outside any part. Lock-free read — safe to call from
+        the Tk poll loop."""
+        if not self.is_playing:
+            return None
+        tick = self.get_current_tick()
+        for i, (start, end) in enumerate(self.get_part_position_spans()):
+            if start <= tick < end:
+                return i
+        return None
+
+    def jump_to_part_position(self, index: int) -> str:
+        """Start (or restart) playback at the beginning of arrangement
+        position *index*. Mirrors what the user gets from clicking a
+        ``▶`` button next to a Parts-panel row — always begins
+        playback, even when stopped."""
+        spans = self.get_part_position_spans()
+        if not (0 <= index < len(spans)):
+            return f"position {index} out of range (have {len(spans)})"
+        start_tick, _ = spans[index]
+        with self._lock:
+            if self.current_phrase is None and self.current_song_path is None:
+                return "no song loaded"
+            self._stop_locked()
+            return self.play(from_tick=start_tick)
+
     def seek_to_tick(self, tick: int) -> str:
         """Jump the playhead to absolute *tick*.
 

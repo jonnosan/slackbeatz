@@ -280,8 +280,21 @@ def _run_piper(
         try:
             import wave
             voice_obj = PiperVoice.load(str(model_path), config_path=str(config_path))
+            # piper-tts ≥1.x: ``synthesize`` returns an iterable of
+            # :class:`AudioChunk` instead of writing into a wave
+            # handle. Each chunk carries int16 PCM bytes plus the
+            # shared sample-rate/width/channels metadata; we stream
+            # them into the output WAV ourselves.
+            chunks = list(voice_obj.synthesize(text))
+            if not chunks:
+                raise RuntimeError("piper produced no audio chunks")
+            head = chunks[0]
             with wave.open(str(output), "wb") as wav_file:
-                voice_obj.synthesize(text, wav_file)
+                wav_file.setnchannels(head.sample_channels)
+                wav_file.setsampwidth(head.sample_width)
+                wav_file.setframerate(head.sample_rate)
+                for chunk in chunks:
+                    wav_file.writeframes(chunk.audio_int16_bytes)
             return
         except Exception as e:
             # Module exists but failed (e.g. version mismatch) — fall
@@ -355,7 +368,11 @@ def _apply_post_fx(wav_path: Path) -> None:
         Reverb(room_size=0.4, damping=0.5, wet_level=0.2, dry_level=0.8),
     ])
     fx_audio = board(audio, sample_rate=sr)
-    sf.write(str(wav_path), fx_audio, sr)
+    # Pass format= explicitly: the path may carry a ``.part`` suffix
+    # (synthesize() writes to a tempfile that's renamed only on
+    # success), and soundfile falls back to extension-based
+    # detection which trips on the non-".wav" suffix.
+    sf.write(str(wav_path), fx_audio, sr, format="WAV")
 
 
 _PEDALBOARD_WARNED = False
