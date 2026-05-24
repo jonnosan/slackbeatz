@@ -822,49 +822,110 @@ def _build_surge_fx_slots(parent, surge_instance, _var, ttk, tk) -> None:
         params_frame = ttk.Frame(row)
         params_frame.pack(fill="x", padx=(0, 4), pady=(2, 0))
 
-        def _label_for_param(slot_: int, p_idx: int, catalog_label: str) -> str:
+        def _label_for_param(slot_: int, p_idx: int, fallback: str) -> str:
             """Prefer the live /doc label Surge reported for this
-            param; fall back to the catalog's hardcoded label."""
+            param; fall back to *fallback*. Used for both the catalog
+            essentials (where fallback = the curated label) and the
+            advanced params (fallback = generic "param N")."""
             doc = surge_instance.get_param_doc(fx_addr(slot_, "param", p_idx))
             if doc is None:
-                return catalog_label
+                return fallback
             name = doc[0].strip()
             # Surge sometimes replies with the bare "param N" placeholder
             # for unused slots inside a type — keep the friendlier
-            # catalog label in that case.
+            # fallback label in that case.
             if not name or name.lower().startswith("param "):
-                return catalog_label
+                return fallback
             return name
+
+        def _make_param_slider(parent_widget, slot_: int, p_idx: int, label: str) -> None:
+            p_row = ttk.Frame(parent_widget)
+            p_row.pack(fill="x", pady=1)
+            ttk.Label(p_row, text=label, width=10, anchor="w").pack(side="left")
+            addr = fx_addr(slot_, "param", p_idx)
+            cur = surge_instance.get_value(addr)
+            p_var = _var(
+                tk.DoubleVar,
+                value=float(cur) if cur is not None else 0.5,
+            )
+            tk.Scale(
+                p_row, from_=0.0, to=1.0, resolution=0.01,
+                orient="horizontal", variable=p_var,
+                showvalue=False, length=180,
+                command=lambda _v, a=addr, v=p_var:
+                    surge_instance.set_param(a, float(v.get())),
+            ).pack(side="left", fill="x", expand=True)
+
+        # Persisted across type changes so user's "Advanced expanded"
+        # preference survives the rebuild. Closure cell so the
+        # _rebuild_params callback can read + write it.
+        advanced_expanded = [False]  # mutable wrapper
 
         def _rebuild_params(spec_type_id: int, frame=params_frame, slot_=slot) -> None:
             for w in frame.winfo_children():
                 w.destroy()
+
             spec = FX_CATALOG.get(spec_type_id)
-            if spec is None or not spec.params:
+            essentials = spec.params if spec is not None else ()
+
+            # Essentials block — catalog-curated 1-3 params.
+            for catalog_label, p_idx in essentials:
+                _make_param_slider(
+                    frame, slot_, p_idx,
+                    _label_for_param(slot_, p_idx, catalog_label),
+                )
+            if not essentials:
+                # Catalog says "no essential params" (e.g. Off, Vocoder).
+                # We still render advanced for the full param list so
+                # the slot isn't a dead end.
                 ttk.Label(
-                    frame, text="(no live params for this FX)",
+                    frame, text="(no essential params for this FX — "
+                                "see Advanced)",
                     foreground="#888",
                     font=("TkDefaultFont", 9, "italic"),
                 ).pack(anchor="w")
-                return
-            for catalog_label, p_idx in spec.params:
-                label = _label_for_param(slot_, p_idx, catalog_label)
-                p_row = ttk.Frame(frame)
-                p_row.pack(fill="x", pady=1)
-                ttk.Label(p_row, text=label, width=10, anchor="w").pack(side="left")
-                addr = fx_addr(slot_, "param", p_idx)
-                cur = surge_instance.get_value(addr)
-                p_var = _var(
-                    tk.DoubleVar,
-                    value=float(cur) if cur is not None else 0.5,
+
+            # Advanced expander — every param 1-12 not already in
+            # essentials. Labels come from /doc where Surge has
+            # reported them, else generic "param N".
+            essential_indices = {p_idx for _l, p_idx in essentials}
+            advanced_indices = [
+                i for i in range(1, 13) if i not in essential_indices
+            ]
+
+            adv_header = ttk.Frame(frame)
+            adv_header.pack(fill="x", pady=(4, 0))
+            adv_btn_var = _var(
+                tk.StringVar,
+                value=("▼ Advanced" if advanced_expanded[0] else "▶ Advanced"),
+            )
+            adv_frame = ttk.Frame(frame)
+
+            def _toggle_advanced(btn_var=adv_btn_var, frm=adv_frame) -> None:
+                advanced_expanded[0] = not advanced_expanded[0]
+                if advanced_expanded[0]:
+                    btn_var.set("▼ Advanced")
+                    frm.pack(fill="x", pady=(2, 0))
+                else:
+                    btn_var.set("▶ Advanced")
+                    frm.pack_forget()
+
+            ttk.Button(
+                adv_header, textvariable=adv_btn_var,
+                command=_toggle_advanced,
+                width=14,
+            ).pack(side="left")
+
+            # Render the advanced sliders into the (possibly hidden)
+            # frame ahead of time so toggling it on is instant.
+            for p_idx in advanced_indices:
+                _make_param_slider(
+                    adv_frame, slot_, p_idx,
+                    _label_for_param(slot_, p_idx, f"param {p_idx}"),
                 )
-                tk.Scale(
-                    p_row, from_=0.0, to=1.0, resolution=0.01,
-                    orient="horizontal", variable=p_var,
-                    showvalue=False, length=180,
-                    command=lambda _v, a=addr, v=p_var:
-                        surge_instance.set_param(a, float(v.get())),
-                ).pack(side="left", fill="x", expand=True)
+
+            if advanced_expanded[0]:
+                adv_frame.pack(fill="x", pady=(2, 0))
 
         _rebuild_params(cur_type_id)
 
