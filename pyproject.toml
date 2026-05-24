@@ -44,6 +44,11 @@ sampler = [
 tts = [
     "piper-tts",
     "pedalboard>=0.9",
+    # macOS Python from python.org ships without populated CA roots
+    # unless the user ran the post-install Install Certificates.command.
+    # certifi gives slackbeatz's voice downloader a known-good bundle
+    # regardless. See slackbeatz/tts.py::_https_context.
+    "certifi>=2024.2",
 ]
 # `slackbeatz audio --surge` offline render — hosts the Surge XT VST3
 # plugin (already installed system-wide) via dawdreamer to bake the

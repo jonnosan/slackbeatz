@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import hashlib
 import shutil
+import ssl
 import subprocess
 import sys
 import urllib.request
@@ -126,6 +127,30 @@ def available_voices() -> list[str]:
     return out
 
 
+def _https_context() -> ssl.SSLContext:
+    """Build an ``ssl.SSLContext`` that won't blow up on macOS Python
+    installs where the post-install ``Install Certificates.command``
+    was never run — python.org's installer points stdlib's default
+    verify path at ``…/etc/openssl/cert.pem`` which doesn't ship
+    populated, so plain ``urllib.urlopen`` fails CERTIFICATE_VERIFY
+    on every HTTPS URL.
+
+    Fix: prefer ``certifi``'s bundled CA roots (the [tts] extra
+    declares it as a dependency exactly so this path works), and
+    fall back to the system default if certifi happens not to be
+    installed."""
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        # No certifi — stdlib default. Works on Homebrew/system
+        # Python installs and on python.org installs where the user
+        # has run Install Certificates.command. Will fail with the
+        # original CERTIFICATE_VERIFY_FAILED otherwise; the error
+        # message in download_voice points the user at the fix.
+        return ssl.create_default_context()
+
+
 def download_voice(voice: str) -> None:
     """Fetch *voice*'s model + config from rhasspy/piper-voices into
     :func:`_voices_dir`. Idempotent — if both files already exist, no
@@ -136,19 +161,32 @@ def download_voice(voice: str) -> None:
     _ensure_dir(_voices_dir())
     model_url, config_url = _voice_url(voice)
     print(f"slackbeatz tts: downloading {voice} ({model_url})", file=sys.stderr)
+    ctx = _https_context()
     for src_url, dest in ((model_url, model_path), (config_url, config_path)):
         if dest.is_file():
             continue
         tmp = dest.with_suffix(dest.suffix + ".part")
         try:
-            with urllib.request.urlopen(src_url, timeout=60) as resp, \
+            with urllib.request.urlopen(src_url, timeout=60, context=ctx) as resp, \
                     tmp.open("wb") as out:
                 shutil.copyfileobj(resp, out)
             tmp.rename(dest)
         except Exception as e:
             tmp.unlink(missing_ok=True)
+            # Hint about the most common macOS cause so the user
+            # doesn't have to google the OpenSSL error string.
+            hint = ""
+            if "CERTIFICATE_VERIFY_FAILED" in str(e):
+                hint = (
+                    "  Hint: macOS Python from python.org needs its CA "
+                    "roots installed. Either reinstall the [tts] extra "
+                    "(brings certifi: `pip install -e '.[tts]'`), or "
+                    "run `/Applications/Python\\ 3.14/Install\\ "
+                    "Certificates.command` once."
+                )
             raise RuntimeError(
                 f"failed to download Piper voice {voice} from {src_url}: {e}"
+                f"{hint}"
             ) from e
 
 
