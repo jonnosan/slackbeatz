@@ -35,6 +35,11 @@ sampler = [
     "soundfile>=0.12",    # WAV decode
     "numpy>=1.24",        # mixing buffer
 ]
+# Local Piper TTS — speech generator synthesises phrases into the
+# sampler bank. See `slackbeatz/tts.py`.
+tts = [
+    "piper-tts",
+]
 
 [project.scripts]
 slackbeatz = "slackbeatz.cli:main"
