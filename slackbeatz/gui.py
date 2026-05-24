@@ -151,7 +151,7 @@ _SURGE_ENUM_OPTIONS: dict[str, list[str]] = {
 }
 
 
-def _build_sound_tab(parent, surge_instances, ttk, tk, *, sampler=None, _var=None) -> None:
+def _build_sound_tab(parent, surge_instances, ttk, tk, *, sampler=None, _var=None, player=None) -> None:
     """Render the comprehensive per-voice sound-design surface into
     *parent*. In ``--surge`` mode this tab consolidates everything
     about how each voice sounds: patch picker + FX slots + engine
@@ -206,9 +206,19 @@ def _build_sound_tab(parent, surge_instances, ttk, tk, *, sampler=None, _var=Non
     inner = ttk.Notebook(parent)
     inner.pack(fill="both", expand=True, padx=8, pady=6)
 
+    # Track sub-tab indices + their base titles so the activity-flash
+    # poll below can swap the title between "<role> (ch N)" (idle) and
+    # "<role> (ch N) ●" (active in last ~150 ms). Each entry is
+    # (channel_1idx, sub_tab_index, base_title).
+    sub_tab_activity: list[tuple[int, int, str]] = []
+
     for inst in surge_instances:
         frame = ttk.Frame(inner)
-        inner.add(frame, text=f"{inst.config.role} (ch {inst.config.channel_1idx})")
+        tab_title = f"{inst.config.role} (ch {inst.config.channel_1idx})"
+        inner.add(frame, text=tab_title)
+        sub_tab_activity.append(
+            (inst.config.channel_1idx, len(inner.tabs()) - 1, tab_title),
+        )
 
         # ----- Patch picker --------------------------------------
         # Role-filtered dropdown sourced from the Surge factory tree.
@@ -336,13 +346,40 @@ def _build_sound_tab(parent, surge_instances, ttk, tk, *, sampler=None, _var=Non
     if sampler is not None:
         from slackbeatz.synthhost import OSC_CHANNELS
         voice_port = OSC_CHANNELS["voice"][1]
+        voice_ch = OSC_CHANNELS["voice"][0]
         fx_port = OSC_CHANNELS["fx"][1]
+        fx_ch = OSC_CHANNELS["fx"][0]
         voice_frame = ttk.Frame(inner)
-        inner.add(voice_frame, text="🎙 Voice (ch 5)")
+        voice_title = f"🎙 Voice (ch {voice_ch})"
+        inner.add(voice_frame, text=voice_title)
+        sub_tab_activity.append((voice_ch, len(inner.tabs()) - 1, voice_title))
         _build_voice_subtab(voice_frame, sampler, voice_port, ttk, tk, _var=_var)
         fx_frame = ttk.Frame(inner)
-        inner.add(fx_frame, text="🔊 FX (ch 11)")
+        fx_title = f"🔊 FX (ch {fx_ch})"
+        inner.add(fx_frame, text=fx_title)
+        sub_tab_activity.append((fx_ch, len(inner.tabs()) - 1, fx_title))
         _build_fx_subtab(fx_frame, sampler, fx_port, ttk, tk, _var=_var)
+
+    # Activity flash for the sub-tab titles — same shape as the Mixer
+    # tab's strip-title flash, but using Notebook.tab(idx, text=...)
+    # instead of LabelFrame.configure. Self-arming 80 ms poll.
+    if player is not None and sub_tab_activity:
+        active_now: dict[int, bool] = {ch: False for ch, _idx, _t in sub_tab_activity}
+
+        def _poll_sound_activity() -> None:
+            for ch, idx, base_title in sub_tab_activity:
+                is_active = player.is_channel_active(ch)
+                if is_active == active_now[ch]:
+                    continue
+                active_now[ch] = is_active
+                new_title = f"{base_title} ●" if is_active else base_title
+                try:
+                    inner.tab(idx, text=new_title)
+                except Exception:
+                    pass
+            parent.after(80, _poll_sound_activity)
+
+        parent.after(80, _poll_sound_activity)
 
 
 # --------------------------------------------------------------------------
@@ -658,11 +695,16 @@ _MIXER_STRIPS: tuple[tuple[int, str, str, str], ...] = (
     (11, "fx",    "🔊",  "sampler-fx"),
 )
 
-# Scene-volume OSC address on each Surge instance — already in
-# KNOB_ADDRS but re-stated here so _build_mixer_tab is self-contained
-# without the gui.py reader having to chase imports for the one address
-# it really cares about.
-_SURGE_VOLUME_ADDR = "/param/a/amp/volume"
+# Master-volume OSC address on each Surge instance. Using
+# /param/global/volume (the master output of the whole instance) —
+# NOT /param/a/amp/volume which is scene-A-only and doesn't move the
+# audible level when scene B is contributing (and on some patches
+# the audible level appears not to budge for /param/a/amp/volume at
+# all — the Mixer's strip behaves as "channel fader" which is the
+# global-output semantic anyway). The Sound tab's per-knob "Scene
+# volume" still points at scene A explicitly via KNOB_ADDRS so users
+# wanting scene-A vs scene-B balance still get the control.
+_SURGE_VOLUME_ADDR = "/param/global/volume"
 
 
 def _build_mixer_tab(
@@ -676,6 +718,7 @@ def _build_mixer_tab(
     _var,
     ttk,
     tk,
+    player=None,
 ) -> None:
     """Render the 🎛 Mixer tab into *parent*.
 
@@ -687,8 +730,9 @@ def _build_mixer_tab(
 
     Per-strip controls:
 
-    * **Surge channels** — Volume drives ``/param/a/amp/volume``;
-      Phase 2 will add FX-slot dropdowns + params.
+    * **Surge channels** — Volume drives ``/param/global/volume``
+      (master output of the Surge instance). FX + patch picker live
+      on the 🎚 Sound tab instead.
     * **Sampler channels** — Volume drives ``Sampler.set_port_gain``;
       Phase 3 will add pedalboard FX.
     * **FluidSynth drums** — Volume drives the ``gain`` shell
@@ -756,6 +800,14 @@ def _build_mixer_tab(
         if channel_1idx == 10 and send is not None:
             send(f"gain {effective:.2f}")
 
+    # Activity indicators — channel → (strip widget, base title string).
+    # Used by the per-strip note_on flash callback to swap the
+    # LabelFrame title between "🎵 lead (ch 1)" (idle) and "🎵 lead
+    # (ch 1) ●" (active in last ~150 ms). Populated below as each
+    # strip is built; consumed by _refresh_mixer_activity registered
+    # on main_thread_callbacks.
+    strip_activity: dict[int, tuple[ttk.LabelFrame, str]] = {}
+
     # Build one strip per known channel (skip strips whose backend isn't
     # present this run — e.g. without --surge there are no Surge handles
     # so those strips don't render; in bare-MIDI mode FluidSynth isn't
@@ -772,8 +824,10 @@ def _build_mixer_tab(
         if not backend_present:
             continue
 
-        strip = ttk.LabelFrame(body, text=f"{emoji}  {role} (ch {ch_1idx})")
+        strip_title = f"{emoji}  {role} (ch {ch_1idx})"
+        strip = ttk.LabelFrame(body, text=strip_title)
         strip.pack(fill="x", padx=4, pady=4)
+        strip_activity[ch_1idx] = (strip, strip_title)
 
         # Volume row.
         vol_row = ttk.Frame(strip)
@@ -850,6 +904,35 @@ def _build_mixer_tab(
         ],
     )
     m_scale.pack(side="left", fill="x", expand=True)
+
+    # Activity flash — self-arming 80 ms poll loop. Flips each strip's
+    # LabelFrame title between "<title>" (idle) and "<title> ●"
+    # (active in last ~150 ms) based on whether the Player has
+    # observed a note_on on that channel recently.
+    #
+    # Player.is_channel_active reads the dict the _ActivityTapSink
+    # writes from the audio thread — lock-free, dict.get is atomic
+    # in CPython. Worst-case stale read is one poll cycle (~80 ms),
+    # imperceptible to the eye. We compare to the last-known state
+    # so configure() only fires on transitions, keeping the Tk
+    # event queue quiet when nothing is changing.
+    if player is not None:
+        active_now: dict[int, bool] = {ch: False for ch in strip_activity}
+
+        def _poll_activity() -> None:
+            for ch, (strip_widget, base_title) in strip_activity.items():
+                is_active = player.is_channel_active(ch)
+                if is_active == active_now[ch]:
+                    continue
+                active_now[ch] = is_active
+                new_title = f"{base_title} ●" if is_active else base_title
+                try:
+                    strip_widget.configure(text=new_title)
+                except Exception:
+                    pass
+            parent.after(80, _poll_activity)
+
+        parent.after(80, _poll_activity)
 
 
 def _build_surge_fx_slots(parent, surge_instance, _var, ttk, tk) -> None:
@@ -1848,7 +1931,7 @@ def run_tweak_gui(
         sound_tab = ttk.Frame(notebook)
         notebook.add(sound_tab, text="🎚 Sound")
         _build_sound_tab(sound_tab, surge_instances or [], ttk, tk,
-                         sampler=_sampler, _var=_var)
+                         sampler=_sampler, _var=_var, player=player)
 
     # ------------------------------------------------------------------
     # 🎛 Mixer tab — per-channel volume + per-channel FX. Replaces the
@@ -1870,6 +1953,9 @@ def run_tweak_gui(
         _var=_var,
         ttk=ttk,
         tk=tk,
+        # Pass player through so the strip-title activity-flash poll
+        # can read Player.is_channel_active.
+        player=player,
     )
 
     # ------------------------------------------------------------------

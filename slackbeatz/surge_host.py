@@ -264,6 +264,11 @@ KNOB_ADDRS: dict[str, str] = {
     "aeg_sustain":      "/param/a/aeg/sustain",
     "aeg_release":      "/param/a/aeg/release",
     "scene_volume":     "/param/a/amp/volume",
+    # Master output of the Surge instance — used as the "channel
+    # fader" by the slackbeatz Mixer tab. /param/a/amp/volume above
+    # is scene-A-only; the global address is the right knob for a
+    # whole-instance volume slider.
+    "global_volume":    "/param/global/volume",
 }
 
 

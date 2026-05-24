@@ -261,6 +261,15 @@ class Player:
         # MIDI subscription each time the user tweaks a param).
         self._shared_routing_sink = None
 
+        # Per-channel last-note_on timestamp (1-indexed channel →
+        # time.monotonic() of the most recent note_on). Updated from
+        # the audio-thread sink wrapper (:class:`_ActivityTapSink`);
+        # read lock-free by the GUI to drive per-channel activity
+        # flashing on the Mixer + Sound tabs. Dict-write atomicity in
+        # CPython is enough — at worst we see one stale value for one
+        # GUI poll cycle.
+        self.last_note_on_time: dict[int, float] = {}
+
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         # Re-entrancy guard for set_* operations triggered from the GUI
@@ -984,10 +993,16 @@ class Player:
         subscribe to) when on. The CompositeSink reuses a shared
         MultiPortSink across runs so the virtual ports persist
         between songs.
+
+        The returned sink is always wrapped in an :class:`_ActivityTapSink`
+        so :attr:`last_note_on_time` updates on every dispatched
+        note_on. The GUI polls that dict to drive per-channel activity
+        indicators on the Mixer + Sound tabs — negligible cost per
+        message (one dict write).
         """
         base = RealtimeSink(port_name=self.port_name)
         if not self.osc_routing:
-            return base
+            return _ActivityTapSink(base, self)
         from slackbeatz.sinks.composite import CompositeSink
         from slackbeatz.sinks.multiport import MultiPortSink
         from slackbeatz.synthhost import OSC_CHANNELS
@@ -1008,11 +1023,25 @@ class Player:
         overrides = {ch: self._shared_routing_sink for ch in ch_to_port}
         # manage_overrides=False so the per-playback open()/close()
         # cycle doesn't touch the shared MultiPortSink.
-        return CompositeSink(
+        composite = CompositeSink(
             default=base,
             channel_overrides=overrides,
             manage_overrides=False,
         )
+        return _ActivityTapSink(composite, self)
+
+    def is_channel_active(self, channel_1idx: int, window_ms: float = 150.0) -> bool:
+        """True if *channel_1idx* fired a note_on in the last
+        ``window_ms`` milliseconds. Used by the GUI to drive the
+        per-channel activity indicators on Mixer + Sound tabs.
+
+        Lock-free read from the dict. Worst case is one stale value
+        for one polling cycle (~80 ms) — visually imperceptible."""
+        last = self.last_note_on_time.get(int(channel_1idx))
+        if last is None:
+            return False
+        import time as _time
+        return (_time.monotonic() - last) * 1000.0 < window_ms
 
     def _play_loop(self, resolved, from_tick: int = 0) -> None:
         """Worker thread body. Plays *resolved* once (or repeatedly if
@@ -1171,3 +1200,53 @@ class Player:
             pass
         # Reset the event so the next play() starts clean.
         self._stop_event.clear()
+
+
+# --------------------------------------------------------------------------
+# Activity-tap sink — records per-channel note_on timestamps on the Player
+# --------------------------------------------------------------------------
+
+
+class _ActivityTapSink:
+    """Sink wrapper that updates :attr:`Player.last_note_on_time` on
+    every dispatched ``note_on`` (with velocity > 0), then forwards
+    the message to the inner sink unchanged.
+
+    Lives here rather than under :mod:`slackbeatz.sinks` because it
+    references the Player by design — this is the "scheduler thread
+    → GUI thread" handoff for per-channel activity indicators on the
+    Mixer + Sound tabs. The dict write is atomic in CPython; the GUI
+    reads lock-free.
+
+    Doesn't inherit :class:`Sink` formally to avoid an import cycle;
+    the duck-typed open / close / send trio is all the scheduler
+    needs.
+    """
+
+    def __init__(self, inner, player) -> None:
+        self._inner = inner
+        self._player = player
+
+    def open(self) -> None:
+        self._inner.open()
+
+    def close(self) -> None:
+        self._inner.close()
+
+    def send(self, msg) -> None:
+        # Cheap fast-path: only inspect note_on. Everything else
+        # (note_off, CC, pitchbend, program_change, meta) just
+        # forwards without touching the activity dict.
+        if msg.type == "note_on" and getattr(msg, "velocity", 0) > 0:
+            # mido channel is 0-indexed; we expose 1-indexed.
+            import time as _time
+            self._player.last_note_on_time[msg.channel + 1] = _time.monotonic()
+        self._inner.send(msg)
+
+    @property
+    def channel_overrides(self):
+        """Pass-through for CompositeSink introspection from cli.py
+        (used to find the MultiPortSink for eager open in --surge
+        mode). Returns the inner sink's overrides if it has them,
+        else empty dict."""
+        return getattr(self._inner, "channel_overrides", {})
