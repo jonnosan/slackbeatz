@@ -26,6 +26,15 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+# In-process WAV sampler (channels 5 + 11). Optional because the
+# headless `play` / `render` / `audio` paths don't need it — only
+# `--surge`-routed live playback does. See
+# `docs/design-tts-sampler.md`.
+sampler = [
+    "sounddevice>=0.4",   # audio output stream
+    "soundfile>=0.12",    # WAV decode
+    "numpy>=1.24",        # mixing buffer
+]
 
 [project.scripts]
 slackbeatz = "slackbeatz.cli:main"
