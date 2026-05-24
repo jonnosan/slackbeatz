@@ -59,24 +59,33 @@ _SURGE_FACTORY = Path("/Library/Application Support/Surge XT/patches_factory")
 
 
 @dataclass(frozen=True)
-class SurgeRoleConfig:
-    """Static config for one pitched-channel surge-xt-cli instance.
+class SynthRoleConfig:
+    """Static config for one pitched-channel headless-synth instance.
 
-    The OSC ports are pre-allocated so they don't clash with anything
-    else. Pairs of (in, out) sit two apart per role.
+    Today the only backend slackbeatz spawns is ``surge-xt-cli`` (see
+    :class:`SurgeInstance`); the role-config schema is kept synth-
+    agnostic so future OSC-controllable headless synths (ZynAddSubFX,
+    dexed-cli, …) can reuse the same table by carrying their own
+    initial-patch path format. The OSC ports are pre-allocated so they
+    don't clash with anything else; pairs of (in, out) sit two apart
+    per role.
     """
 
-    role: str                  # 'lead' / 'bass' / 'pad' / 'candy'
+    role: str                  # 'lead' / 'bass' / 'pad' / 'candy' / 'sub'
     channel_1idx: int          # MIDI channel (1-indexed) slackbeatz emits on
     midi_port_name: str        # the virtual port MultiPortSink creates
-    initial_patch: str         # path relative to _SURGE_FACTORY
-    osc_in_port: int           # slackbeatz → surge-xt-cli
-    osc_recv_port: int         # surge-xt-cli → slackbeatz (we listen here)
+    initial_patch: str         # path relative to _SURGE_FACTORY for now
+    osc_in_port: int           # slackbeatz → headless synth
+    osc_recv_port: int         # headless synth → slackbeatz (we listen here)
 
 
 # Default role assignments — match the ``gm`` setup's channel layout.
-SURGE_ROLES: tuple[SurgeRoleConfig, ...] = (
-    SurgeRoleConfig(
+# Each entry becomes one spawned surge-xt-cli process today; the name
+# is kept synth-agnostic (``SYNTH_ROLES`` rather than ``SURGE_ROLES``)
+# because the *concept* — "list of pitched roles that get a dedicated
+# headless synth instance" — outlives the specific backend.
+SYNTH_ROLES: tuple[SynthRoleConfig, ...] = (
+    SynthRoleConfig(
         role="lead",
         channel_1idx=1,
         midi_port_name="slackbeatz-lead",
@@ -84,7 +93,7 @@ SURGE_ROLES: tuple[SurgeRoleConfig, ...] = (
         osc_in_port=53001,
         osc_recv_port=53002,
     ),
-    SurgeRoleConfig(
+    SynthRoleConfig(
         role="bass",
         channel_1idx=2,
         midi_port_name="slackbeatz-bass",
@@ -92,7 +101,7 @@ SURGE_ROLES: tuple[SurgeRoleConfig, ...] = (
         osc_in_port=53011,
         osc_recv_port=53012,
     ),
-    SurgeRoleConfig(
+    SynthRoleConfig(
         role="pad",
         channel_1idx=3,
         midi_port_name="slackbeatz-pad",
@@ -100,7 +109,7 @@ SURGE_ROLES: tuple[SurgeRoleConfig, ...] = (
         osc_in_port=53021,
         osc_recv_port=53022,
     ),
-    SurgeRoleConfig(
+    SynthRoleConfig(
         role="candy",
         channel_1idx=4,
         midi_port_name="slackbeatz-candy",
@@ -108,7 +117,7 @@ SURGE_ROLES: tuple[SurgeRoleConfig, ...] = (
         osc_in_port=53031,
         osc_recv_port=53032,
     ),
-    SurgeRoleConfig(
+    SynthRoleConfig(
         role="sub",
         channel_1idx=6,
         midi_port_name="slackbeatz-sub",
@@ -214,7 +223,7 @@ class SurgeInstance:
     subprocess + OSC server.
     """
 
-    config: SurgeRoleConfig
+    config: SynthRoleConfig
     midi_input_index: int
     proc: Optional[subprocess.Popen] = None
     _client: object = None    # pythonosc SimpleUDPClient (lazy import)
@@ -428,7 +437,7 @@ def spawn_surge_instances(
             f"{sorted(device_indices.keys())}"
         )
 
-    for cfg in SURGE_ROLES:
+    for cfg in SYNTH_ROLES:
         idx = device_indices.get(cfg.midi_port_name)
         if idx is None:
             if on_progress:

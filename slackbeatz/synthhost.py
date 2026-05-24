@@ -1,28 +1,32 @@
-"""Spawn external softsynths (Surge XT) alongside the slackbeatz GUI
-so the user can tweak instrument sounds live while slackbeatz keeps
-generating MIDI.
+"""Per-channel synth-host wiring — OSC_CHANNELS table + legacy
+Surge XT GUI spawn helpers.
 
-Architecture (with automatic MIDI routing — no channel-filter setup
-inside Surge XT):
+This module owns :data:`OSC_CHANNELS`, the canonical "role → channel
++ virtual port + (optional) default patch" map every other module
+reads to learn the routing layout. The map is synth-agnostic: each
+entry just declares a slackbeatz role and the virtual MIDI port that
+carries it. Today the pitched roles are wired to surge-xt-cli
+instances (see :mod:`slackbeatz.surge_host`), the voice + fx roles
+to the in-process :class:`slackbeatz.sampler.Sampler`, and drums to
+FluidSynth — but adding a different backend doesn't require changing
+this table.
 
-* slackbeatz spawns FluidSynth as the drum audio sink (existing
-  behaviour). FluidSynth creates its own virtual MIDI port.
-* When ``--surge`` is enabled, slackbeatz ADDITIONALLY creates one
-  *dedicated virtual MIDI port per pitched channel*
-  (``slackbeatz-lead``, ``slackbeatz-bass``, ``slackbeatz-pad``,
-  ``slackbeatz-candy``) and routes channels 1-4 to those ports
-  instead of to FluidSynth.
-* For each pitched channel, slackbeatz spawns one Surge XT window.
-  The user picks the dedicated virtual port in each window's MIDI
-  Settings — Surge XT's normal MIDI input list will show
-  ``slackbeatz-lead`` etc. as available inputs. One click per window.
-* No channel filter needed in Surge XT: each port carries only one
-  channel's traffic by construction.
-* Drums (channel 10) still go to FluidSynth, so the kit keeps playing.
+Routing model (with ``--surge`` on):
 
-The user does ONE click per Surge XT (pick the named input port);
-Surge XT saves that as the default for next launch, so subsequent
-runs are zero-click.
+* FluidSynth runs as the default audio sink (its own virtual MIDI
+  port hosts drums + any role not in OSC_CHANNELS).
+* A :class:`MultiPortSink` opens one dedicated virtual MIDI port per
+  OSC_CHANNELS entry (``slackbeatz-lead``, ``slackbeatz-bass``, …).
+* Each headless synth (currently surge-xt-cli) subscribes to its
+  role's port via ``--midi-input``. No channel filter needed — each
+  port carries one role's traffic.
+* The sampler subscribes to the voice + fx ports in-process.
+
+This module also keeps the legacy ``--surge-gui`` GUI-spawn helpers
+(:func:`spawn_surge_xt`, :func:`channel_routing_summary`) so the
+"one Surge XT window per channel" flow still works for deep patch
+editing. New code should prefer the headless surge-xt-cli flow
+spawned via :mod:`slackbeatz.surge_host`.
 """
 
 from __future__ import annotations

@@ -578,7 +578,7 @@ def run_tweak_gui(
     initial_reverb_room: float | None = None,
     initial_programs: dict[int, int] | None = None,
     player=None,
-    surge_port_name: str | None = None,
+    show_surge_gui_routing_hint: bool = False,
     surge_instances: list | None = None,
     on_close: Callable[[], None] | None = None,
 ) -> None:
@@ -977,7 +977,7 @@ def run_tweak_gui(
         # configure each Surge XT window without leaving Tk to consult
         # the terminal. Each window listens on its own dedicated
         # slackbeatz virtual port (no channel filter needed).
-        if surge_port_name is not None:
+        if show_surge_gui_routing_hint:
             ttk.Separator(transport, orient="horizontal").pack(fill="x", padx=10, pady=8)
             ttk.Label(
                 transport,

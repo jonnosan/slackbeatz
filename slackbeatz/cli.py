@@ -263,19 +263,19 @@ def cmd_live(args) -> int:
     surge_procs: list[subprocess.Popen] = []
     surge_instances: list = []  # SurgeInstance objects (headless mode)
     sampler = None  # slackbeatz.sampler.Sampler — wired below if --surge
-    surge_routing_enabled = False
+    osc_routing_enabled = False
     use_surge_gui = getattr(args, "surge_gui", False)
     use_surge_cli = getattr(args, "surge", False) and not use_surge_gui
     if use_surge_cli or use_surge_gui:
-        surge_routing_enabled = True
+        osc_routing_enabled = True
 
     # Build the sink BEFORE spawning surge — this opens the virtual
     # MIDI ports so they show up in surge-xt-cli's device list.
-    sink = _build_live_sink(new_port, surge_routing_enabled)
-    if surge_routing_enabled:
+    sink = _build_live_sink(new_port, osc_routing_enabled)
+    if osc_routing_enabled:
         # Pre-open the sink (its CompositeSink doesn't manage overrides
         # but we want the MultiPortSink open NOW for device discovery).
-        # _build_live_sink with surge_routing on returns a CompositeSink
+        # _build_live_sink with osc_routing on returns a CompositeSink
         # whose only override is a MultiPortSink; opening that MPS now.
         from slackbeatz.sinks.composite import CompositeSink
         from slackbeatz.sinks.multiport import MultiPortSink
@@ -333,7 +333,7 @@ def cmd_live(args) -> int:
     # bring up the sampler — listens on slackbeatz-voice + slackbeatz-fx
     # and plays WAVs in response to note_on events from those ports.
     # Banks are populated later, when speech/sample gens resolve.
-    sampler = _start_sampler_if_enabled(surge_routing_enabled)
+    sampler = _start_sampler_if_enabled(osc_routing_enabled)
 
     try:
         tempo_map = build_tempo_map(resolved)
@@ -377,7 +377,7 @@ def cmd_live(args) -> int:
                 initial_gain=args.gain,
                 initial_reverb_room=args.reverb,
                 initial_programs=_program_map(resolved),
-                surge_port_name=new_port if surge_procs else None,
+                show_surge_gui_routing_hint=bool(surge_procs),
                 surge_instances=surge_instances or None,
                 on_close=stop_event.set,
             )
@@ -527,9 +527,9 @@ def _spawn_fluidsynth(soundfont: Path, *, gain: float, reverb: float) -> tuple[s
     return None, None, "fluidsynth started but didn't expose a MIDI port"
 
 
-def _start_sampler_if_enabled(surge_routing_enabled: bool):
-    """If MIDI routing is on (i.e. ``--surge`` / ``--surge-gui`` was
-    set, so :class:`MultiPortSink` is open and the virtual ports
+def _start_sampler_if_enabled(osc_routing_enabled: bool):
+    """If per-channel routing is on (i.e. ``--surge`` / ``--surge-gui``
+    was set, so :class:`MultiPortSink` is open and the virtual ports
     ``slackbeatz-voice`` + ``slackbeatz-fx`` exist), construct +
     start the in-process :class:`Sampler` listening on those ports.
     Returns ``None`` when routing is off (= no sampler needed).
@@ -539,7 +539,7 @@ def _start_sampler_if_enabled(surge_routing_enabled: bool):
     is logged but doesn't abort playback — the rest of slackbeatz
     keeps working without the sampler in that case.
     """
-    if not surge_routing_enabled:
+    if not osc_routing_enabled:
         return None
     from slackbeatz.sampler import Sampler, set_active_sampler
     from slackbeatz.synthhost import sampler_port_banks
@@ -554,7 +554,7 @@ def _start_sampler_if_enabled(surge_routing_enabled: bool):
     return sampler
 
 
-def _build_live_sink(fluidsynth_port: str, surge_routing: bool):
+def _build_live_sink(fluidsynth_port: str, osc_routing: bool):
     """Build the sink for cmd_live playback.
 
     Plain :class:`RealtimeSink` to FluidSynth when ``--surge`` is off;
@@ -563,7 +563,7 @@ def _build_live_sink(fluidsynth_port: str, surge_routing: bool):
     FluidSynth) when on.
     """
     fs_sink = RealtimeSink(port_name=fluidsynth_port)
-    if not surge_routing:
+    if not osc_routing:
         return fs_sink
     from slackbeatz.sinks.composite import CompositeSink
     from slackbeatz.sinks.multiport import MultiPortSink
@@ -799,13 +799,13 @@ def cmd_repl(args) -> int:
 
     # Optional --surge (default: headless surge-xt-cli quartet) or
     # --surge-gui (legacy: GUI windows). Both need slackbeatz's
-    # virtual MIDI ports open BEFORE spawn — see _spawn_surge_for_player.
+    # virtual MIDI ports open BEFORE spawn — see how cmd_live wires this.
     surge_procs: list[subprocess.Popen] = []
     surge_instances: list = []
     sampler = None  # slackbeatz.sampler.Sampler — created after MultiPortSink opens
     use_surge_gui = getattr(args, "surge_gui", False)
     use_surge_cli = getattr(args, "surge", False) and not use_surge_gui
-    surge_routing_enabled = use_surge_cli or use_surge_gui
+    osc_routing_enabled = use_surge_cli or use_surge_gui
 
     def cleanup_fs() -> None:
         fs_proc.terminate()
@@ -884,7 +884,7 @@ def cmd_repl(args) -> int:
         player = Player(
             port_name=port_name,
             setup_arg=args.setup,
-            surge_routing=surge_routing_enabled,
+            osc_routing=osc_routing_enabled,
         )
         player.seed_offset = args.seed
         if getattr(args, "emit_clock", False):
@@ -894,8 +894,8 @@ def cmd_repl(args) -> int:
         # spawn surge-xt-cli (or the GUI windows). Order matters:
         # surge-xt-cli's --list-devices only sees ports that already
         # exist at spawn time.
-        if surge_routing_enabled:
-            player.ensure_surge_routing_ready()
+        if osc_routing_enabled:
+            player.ensure_osc_routing_ready()
 
             if use_surge_cli:
                 from slackbeatz.surge_host import (
@@ -943,10 +943,10 @@ def cmd_repl(args) -> int:
                         if proc is not None:
                             surge_procs.append(proc)
 
-            # MultiPortSink is now open (via ensure_surge_routing_ready
+            # MultiPortSink is now open (via ensure_osc_routing_ready
             # above) — start the sampler listening on the voice + fx
             # virtual ports.
-            sampler = _start_sampler_if_enabled(surge_routing_enabled)
+            sampler = _start_sampler_if_enabled(osc_routing_enabled)
 
         def _stop_now() -> None:
             player.stop()
@@ -966,7 +966,7 @@ def cmd_repl(args) -> int:
                 initial_gain=args.gain,
                 initial_reverb_room=args.reverb,
                 player=player,
-                surge_port_name=port_name if surge_procs else None,
+                show_surge_gui_routing_hint=bool(surge_procs),
                 surge_instances=surge_instances or None,
                 on_close=_stop_now,
             )
@@ -1025,7 +1025,7 @@ def _repl_input_loop(
         player = Player(
             port_name=port_name,
             setup_arg=args.setup,
-            surge_routing=getattr(args, "surge", False),
+            osc_routing=getattr(args, "surge", False),
         )
         player.seed_offset = args.seed
         if getattr(args, "emit_clock", False):
