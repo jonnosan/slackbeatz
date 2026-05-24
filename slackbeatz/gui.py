@@ -25,18 +25,21 @@ from __future__ import annotations
 from typing import IO, Callable
 
 
-# Slider definitions — (label, fluidsynth shell command template, low, high, default).
-# Values placed at sensible centre points so the GUI is immediately useful
-# without having to twiddle every slider to a starting position.
-_SLIDERS: list[tuple[str, str, float, float, float]] = [
-    ("Master gain",       "gain {v:.2f}",                          0.0,   2.0,  0.6),
-    ("Reverb room size",  "set synth.reverb.room-size {v:.2f}",    0.0,   1.0,  0.4),
-    ("Reverb damp",       "set synth.reverb.damp {v:.2f}",         0.0,   1.0,  0.3),
-    ("Reverb level",      "set synth.reverb.level {v:.2f}",        0.0,   1.0,  0.7),
-    ("Reverb width",      "set synth.reverb.width {v:.0f}",        0.0, 100.0, 80.0),
-    ("Chorus depth",      "set synth.chorus.depth {v:.1f}",        0.0,  50.0,  8.0),
-    ("Chorus level",      "set synth.chorus.level {v:.2f}",        0.0,  10.0,  2.0),
-    ("Chorus speed",      "set synth.chorus.speed {v:.2f}",        0.29,  5.0,  0.3),
+# FluidSynth shell-command templates for the drums strip on the Mixer
+# tab. Each entry is (display label, command template, low, high,
+# default). What used to be the standalone "Effects" tab — these now
+# live inline on the drums (ch 10) strip because in --surge mode
+# FluidSynth only ever renders drums; without --surge they're
+# effectively global but still belong to the only FluidSynth-backed
+# strip we have.
+_FLUIDSYNTH_DRUM_SLIDERS: list[tuple[str, str, float, float, float]] = [
+    ("Reverb room",   "set synth.reverb.room-size {v:.2f}",    0.0,   1.0,  0.4),
+    ("Reverb damp",   "set synth.reverb.damp {v:.2f}",         0.0,   1.0,  0.3),
+    ("Reverb level",  "set synth.reverb.level {v:.2f}",        0.0,   1.0,  0.7),
+    ("Reverb width",  "set synth.reverb.width {v:.0f}",        0.0, 100.0, 80.0),
+    ("Chorus depth",  "set synth.chorus.depth {v:.1f}",        0.0,  50.0,  8.0),
+    ("Chorus level",  "set synth.chorus.level {v:.2f}",        0.0,  10.0,  2.0),
+    ("Chorus speed",  "set synth.chorus.speed {v:.2f}",        0.29,  5.0,  0.3),
 ]
 
 
@@ -569,6 +572,432 @@ def _midi_note_name(note: int) -> str:
     pitch = _MIDI_NOTE_NAMES[note % 12]
     octave = note // 12 - 1  # MIDI 60 = C4
     return f"{pitch}{octave}"
+
+
+# --------------------------------------------------------------------------
+# 🎛 Mixer tab
+# --------------------------------------------------------------------------
+
+# Per-strip metadata used by _build_mixer_tab. Order = mixer row order
+# (top to bottom). Each entry is (channel_1idx, label, emoji, kind);
+# kind picks the FX surface — "surge" / "sampler-voice" /
+# "sampler-fx" / "fluidsynth-drums".
+_MIXER_STRIPS: tuple[tuple[int, str, str, str], ...] = (
+    (1,  "lead",  "🎵",  "surge"),
+    (2,  "bass",  "🎸",  "surge"),
+    (3,  "pad",   "🌊",  "surge"),
+    (4,  "candy", "🍬",  "surge"),
+    (5,  "voice", "🎙",  "sampler-voice"),
+    (6,  "sub",   "🎵",  "surge"),
+    (10, "drums", "🥁",  "fluidsynth-drums"),
+    (11, "fx",    "🔊",  "sampler-fx"),
+)
+
+# Scene-volume OSC address on each Surge instance — already in
+# KNOB_ADDRS but re-stated here so _build_mixer_tab is self-contained
+# without the gui.py reader having to chase imports for the one address
+# it really cares about.
+_SURGE_VOLUME_ADDR = "/param/a/amp/volume"
+
+
+def _build_mixer_tab(
+    parent,
+    *,
+    surge_instances,
+    sampler,
+    send,
+    initial_gain,
+    initial_reverb_room,
+    _var,
+    ttk,
+    tk,
+) -> None:
+    """Render the 🎛 Mixer tab into *parent*.
+
+    Layout: one strip per channel from :data:`_MIXER_STRIPS` that
+    actually has a backend live (Surge instance running / sampler
+    subscribed to the port / FluidSynth available via *send*), then a
+    Master strip at the bottom whose slider scales every other strip
+    proportionally.
+
+    Per-strip controls:
+
+    * **Surge channels** — Volume drives ``/param/a/amp/volume``;
+      Phase 2 will add FX-slot dropdowns + params.
+    * **Sampler channels** — Volume drives ``Sampler.set_port_gain``;
+      Phase 3 will add pedalboard FX.
+    * **FluidSynth drums** — Volume drives the ``gain`` shell
+      command; Reverb/Chorus sliders + toggles drive
+      ``set synth.reverb.* / chorus.*`` (the old Effects-tab surface,
+      relocated).
+    """
+    from slackbeatz.synthhost import OSC_CHANNELS
+
+    # Map channel_1idx → live backend handle so we know which strips
+    # actually have something to control on this run.
+    surge_by_channel: dict[int, object] = {
+        getattr(inst, "config").channel_1idx: inst
+        for inst in surge_instances
+    }
+    sampler_port_for_role: dict[str, str | None] = {
+        "voice": OSC_CHANNELS["voice"][1] if sampler is not None else None,
+        "fx":    OSC_CHANNELS["fx"][1] if sampler is not None else None,
+    }
+
+    # Header.
+    ttk.Label(
+        parent,
+        text="🎛 Per-channel volume + FX. Sliders apply live — no need to "
+             "restart playback. Drums FX inherit from the old Effects tab.",
+        wraplength=620, justify="left", foreground="#444",
+    ).pack(padx=10, pady=(8, 4), anchor="w")
+
+    body = ttk.Frame(parent)
+    body.pack(fill="both", expand=True, padx=10, pady=4)
+
+    # Per-strip volume state. Each strip's slider stores 0..1.5 where
+    # 1.0 = unity for the channel's native unit (Surge scene volume
+    # nominally 0..1, sampler gain 0..N, FluidSynth gain ~0..2). We
+    # multiply by the master scalar before sending to the backend.
+    strip_vol_vars: dict[int, "tk.DoubleVar"] = {}
+    master_var = _var(tk.DoubleVar, value=1.0)
+
+    def _apply_strip(channel_1idx: int) -> None:
+        """Recompute backend value for one strip + send it. Called on
+        per-strip slider drag AND on master-slider drag (which loops
+        over every strip)."""
+        per_strip = float(strip_vol_vars[channel_1idx].get())
+        master = float(master_var.get())
+        effective = per_strip * master
+
+        # Surge → /param/a/amp/volume (clamped to 0..1).
+        surge = surge_by_channel.get(channel_1idx)
+        if surge is not None:
+            surge.set_param(_SURGE_VOLUME_ADDR, min(1.0, effective))
+            return
+        # Sampler → set_port_gain.
+        for role, port in sampler_port_for_role.items():
+            if port is None:
+                continue
+            if OSC_CHANNELS[role][0] == channel_1idx:
+                sampler.set_port_gain(port, effective)
+                return
+        # FluidSynth drums → gain shell command. The historical
+        # default is 0.6; we treat the user's slider as a 0..2 range
+        # to match the old Effects-tab "Master gain" surface.
+        if channel_1idx == 10:
+            send(f"gain {effective:.2f}")
+
+    # Build one strip per known channel (skip strips whose backend isn't
+    # present this run — e.g. without --surge there are no Surge handles
+    # so those strips don't render).
+    for ch_1idx, role, emoji, kind in _MIXER_STRIPS:
+        backend_present = (
+            (kind == "surge" and ch_1idx in surge_by_channel)
+            or (kind == "sampler-voice" and sampler_port_for_role["voice"] is not None)
+            or (kind == "sampler-fx" and sampler_port_for_role["fx"] is not None)
+            or kind == "fluidsynth-drums"
+        )
+        if not backend_present:
+            continue
+
+        strip = ttk.LabelFrame(body, text=f"{emoji}  {role} (ch {ch_1idx})")
+        strip.pack(fill="x", padx=4, pady=4)
+
+        # Volume row.
+        vol_row = ttk.Frame(strip)
+        vol_row.pack(fill="x", padx=8, pady=(4, 2))
+        ttk.Label(vol_row, text="Vol", width=8, anchor="w").pack(side="left")
+
+        # Initial value: prefer the backend's current value when we can
+        # read it (Surge), else 1.0 / the legacy default.
+        initial = 1.0
+        if kind == "surge":
+            surge = surge_by_channel[ch_1idx]
+            cur = surge.get_value(_SURGE_VOLUME_ADDR)
+            if cur is not None:
+                initial = float(cur)
+        elif kind == "fluidsynth-drums" and initial_gain is not None:
+            initial = float(initial_gain)
+        var = _var(tk.DoubleVar, value=initial)
+        strip_vol_vars[ch_1idx] = var
+        scale = tk.Scale(
+            vol_row, from_=0.0, to=1.5,
+            resolution=0.01,
+            orient="horizontal", variable=var,
+            showvalue=True, length=320,
+            command=lambda _v, c=ch_1idx: _apply_strip(c),
+        )
+        scale.pack(side="left", fill="x", expand=True)
+
+        # FX surface — per-strip-kind:
+        #   surge            → two FX-slot rows (A1 + A2) over OSC
+        #   fluidsynth-drums → migrated Effects-tab reverb/chorus
+        #   sampler-voice/fx → pedalboard Distortion + Delay chain
+        if kind == "surge":
+            _build_surge_fx_slots(strip, surge_by_channel[ch_1idx], _var, ttk, tk)
+        elif kind == "fluidsynth-drums":
+            _build_fluidsynth_fx(strip, send, _var, ttk, tk, initial_reverb_room)
+        elif kind in ("sampler-voice", "sampler-fx"):
+            role = "voice" if kind == "sampler-voice" else "fx"
+            port = sampler_port_for_role[role]
+            chain = sampler.get_fx_chain(port) if port else None
+            if chain is None:
+                ttk.Label(
+                    strip,
+                    text="(pedalboard not installed — `pip install "
+                         "slackbeatz[tts]` to enable distortion + delay)",
+                    foreground="#888",
+                    font=("TkDefaultFont", 9, "italic"),
+                ).pack(anchor="w", padx=8, pady=(0, 6))
+            else:
+                _build_sampler_fx(strip, chain, _var, ttk, tk)
+
+    # Master strip — slim row at the bottom that scales every per-strip
+    # slider's effective value.
+    master_strip = ttk.LabelFrame(body, text="🎚  Master")
+    master_strip.pack(fill="x", padx=4, pady=(12, 4))
+    m_row = ttk.Frame(master_strip)
+    m_row.pack(fill="x", padx=8, pady=4)
+    ttk.Label(m_row, text="Vol", width=8, anchor="w").pack(side="left")
+    m_scale = tk.Scale(
+        m_row, from_=0.0, to=1.5, resolution=0.01,
+        orient="horizontal", variable=master_var,
+        showvalue=True, length=320,
+        command=lambda _v: [
+            _apply_strip(c) for c in strip_vol_vars
+        ],
+    )
+    m_scale.pack(side="left", fill="x", expand=True)
+
+
+def _build_surge_fx_slots(parent, surge_instance, _var, ttk, tk) -> None:
+    """Render two FX-slot rows (FX-A1 + FX-A2) for one Surge strip.
+
+    Each row has a type-picker dropdown + Power toggle + up to N param
+    sliders. Changing the dropdown re-renders the param sliders (they
+    differ per FX type) and sends the new ``/param/fx/a/<slot>/type``
+    OSC write so Surge swaps in the new effect."""
+    from slackbeatz.surge_host import FX_CATALOG, fx_addr
+
+    # Display-name → type-id, sorted to match a stable dropdown order
+    # (Off first; rest by type-id so families stay clustered).
+    dropdown_items = sorted(FX_CATALOG.items(), key=lambda kv: (kv[0] != 0, kv[0]))
+    dropdown_labels = [spec.name for _tid, spec in dropdown_items]
+    label_to_typeid = {spec.name: tid for tid, spec in dropdown_items}
+
+    for slot in (1, 2):
+        row = ttk.Frame(parent)
+        row.pack(fill="x", padx=8, pady=(0, 4))
+
+        # Slot label + dropdown + power toggle on one line.
+        header = ttk.Frame(row)
+        header.pack(fill="x")
+        ttk.Label(header, text=f"FX-A{slot}", width=8, anchor="w").pack(side="left")
+
+        # Read the live type-id from Surge's cached values. Falls back
+        # to the catalog's first entry if Surge hasn't replied yet.
+        cur_type = surge_instance.get_value(fx_addr(slot, "type"))
+        cur_type_id = int(cur_type) if cur_type is not None else dropdown_items[0][0]
+        cur_label = FX_CATALOG.get(cur_type_id, FX_CATALOG[0]).name
+        type_var = _var(tk.StringVar, value=cur_label)
+        cb = ttk.Combobox(
+            header, values=dropdown_labels, textvariable=type_var,
+            state="readonly", width=12,
+        )
+        cb.pack(side="left", padx=(0, 8))
+
+        # Power toggle — OSC ``deactivate`` is inverse: 1 = off,
+        # 0 = on. Tk IntVar holds the *power* state (1 = on) so the
+        # checkbox label reads naturally.
+        power_var = _var(tk.IntVar, value=0)  # default Off (matches spawn-time setup)
+        ttk.Checkbutton(
+            header, text="Power", variable=power_var,
+            command=lambda s=slot, v=power_var: surge_instance.set_param(
+                fx_addr(s, "deactivate"), 0.0 if v.get() else 1.0,
+            ),
+        ).pack(side="left")
+
+        # Params row — gets rebuilt every time the dropdown changes.
+        params_frame = ttk.Frame(row)
+        params_frame.pack(fill="x", padx=(0, 4), pady=(2, 0))
+
+        def _rebuild_params(spec_type_id: int, frame=params_frame, slot_=slot) -> None:
+            for w in frame.winfo_children():
+                w.destroy()
+            spec = FX_CATALOG.get(spec_type_id)
+            if spec is None or not spec.params:
+                # Unknown / param-less FX type → show a hint instead
+                # of empty space.
+                ttk.Label(
+                    frame, text="(no live params for this FX)",
+                    foreground="#888",
+                    font=("TkDefaultFont", 9, "italic"),
+                ).pack(anchor="w")
+                return
+            for label, p_idx in spec.params:
+                p_row = ttk.Frame(frame)
+                p_row.pack(fill="x", pady=1)
+                ttk.Label(p_row, text=label, width=8, anchor="w").pack(side="left")
+                addr = fx_addr(slot_, "param", p_idx)
+                cur = surge_instance.get_value(addr)
+                p_var = _var(
+                    tk.DoubleVar,
+                    value=float(cur) if cur is not None else 0.5,
+                )
+                tk.Scale(
+                    p_row, from_=0.0, to=1.0, resolution=0.01,
+                    orient="horizontal", variable=p_var,
+                    showvalue=False, length=180,
+                    command=lambda _v, a=addr, v=p_var:
+                        surge_instance.set_param(a, float(v.get())),
+                ).pack(side="left", fill="x", expand=True)
+
+        _rebuild_params(cur_type_id)
+
+        def _on_type_change(_event=None, var=type_var, slot_=slot) -> None:
+            new_label = var.get()
+            new_id = label_to_typeid.get(new_label)
+            if new_id is None:
+                return
+            surge_instance.set_param(fx_addr(slot_, "type"), float(new_id))
+            _rebuild_params(new_id)
+
+        cb.bind("<<ComboboxSelected>>", _on_type_change)
+
+
+def _build_sampler_fx(parent, chain, _var, ttk, tk) -> None:
+    """Render Distortion + Delay controls for one sampler strip.
+
+    *chain* is a live :class:`pedalboard.Pedalboard` constructed by
+    :meth:`Sampler.enable_fx` — index 0 is Distortion, index 1 is
+    Delay. Sliders mutate the plugin attributes in place (pedalboard
+    supports live parameter updates on a running chain). Power
+    toggles flip the plugin's ``bypass`` attribute when supported,
+    otherwise zero the wet mix as a fallback."""
+    dist = chain[0]
+    delay = chain[1]
+
+    # Distortion row.
+    d_row = ttk.Frame(parent)
+    d_row.pack(fill="x", padx=8, pady=(0, 2))
+    ttk.Label(d_row, text="Dist", width=8, anchor="w").pack(side="left")
+    dist_power = _var(tk.IntVar, value=0)  # default Off — drive=0 anyway
+
+    def _set_drive(val: str, dv=dist_power, plugin=dist):
+        plugin.drive_db = float(val) if dv.get() else 0.0
+
+    drive_var = _var(tk.DoubleVar, value=0.0)
+    ttk.Checkbutton(
+        d_row, text="Power", variable=dist_power,
+        command=lambda: _set_drive(drive_var.get()),
+    ).pack(side="left", padx=(0, 6))
+    ttk.Label(d_row, text="drive", width=6, anchor="w").pack(side="left")
+    tk.Scale(
+        d_row, from_=0.0, to=30.0, resolution=0.1,
+        orient="horizontal", variable=drive_var,
+        showvalue=False, length=200,
+        command=_set_drive,
+    ).pack(side="left", fill="x", expand=True)
+
+    # Delay row.
+    de_row = ttk.Frame(parent)
+    de_row.pack(fill="x", padx=8, pady=(0, 6))
+    ttk.Label(de_row, text="Delay", width=8, anchor="w").pack(side="left")
+    delay_power = _var(tk.IntVar, value=0)
+
+    # Pre-create vars so the power-toggle can read all three.
+    time_var = _var(tk.DoubleVar, value=delay.delay_seconds)
+    fb_var = _var(tk.DoubleVar, value=delay.feedback)
+    mix_var = _var(tk.DoubleVar, value=0.0)
+
+    def _push_delay(*_args):
+        if delay_power.get():
+            delay.delay_seconds = float(time_var.get())
+            delay.feedback = float(fb_var.get())
+            delay.mix = float(mix_var.get())
+        else:
+            # Off → zero mix (lets the dry signal through unchanged
+            # without removing the plugin from the chain).
+            delay.mix = 0.0
+
+    ttk.Checkbutton(
+        de_row, text="Power", variable=delay_power,
+        command=_push_delay,
+    ).pack(side="left", padx=(0, 6))
+
+    grid = ttk.Frame(de_row)
+    grid.pack(side="left", fill="x", expand=True)
+    grid.columnconfigure(1, weight=1)
+    grid.columnconfigure(3, weight=1)
+    grid.columnconfigure(5, weight=1)
+    for col, (label, var, lo, hi) in enumerate(
+        [
+            ("time", time_var, 0.0, 2.0),
+            ("fb",   fb_var,   0.0, 0.95),
+            ("mix",  mix_var,  0.0, 1.0),
+        ],
+    ):
+        ttk.Label(grid, text=label, anchor="w").grid(
+            row=0, column=col * 2, sticky="w", padx=(0, 2),
+        )
+        tk.Scale(
+            grid, from_=lo, to=hi, resolution=0.01,
+            orient="horizontal", variable=var,
+            showvalue=False, length=110,
+            command=lambda _v: _push_delay(),
+        ).grid(row=0, column=col * 2 + 1, sticky="ew", padx=(0, 6))
+
+
+def _build_fluidsynth_fx(parent, send, _var, ttk, tk, initial_reverb_room) -> None:
+    """Render the FluidSynth reverb + chorus surface inside the drums
+    strip. This is the entire pre-mixer Effects tab, relocated."""
+    fx_row = ttk.Frame(parent)
+    fx_row.pack(fill="x", padx=8, pady=(0, 6))
+
+    # Power toggles up top.
+    toggles = ttk.Frame(fx_row)
+    toggles.pack(fill="x", pady=(0, 2))
+    rev_var = _var(tk.IntVar, value=1)
+    cho_var = _var(tk.IntVar, value=1)
+    ttk.Checkbutton(
+        toggles, text="Reverb on", variable=rev_var,
+        command=lambda: send(f"set synth.reverb.active {rev_var.get()}"),
+    ).pack(side="left", padx=4)
+    ttk.Checkbutton(
+        toggles, text="Chorus on", variable=cho_var,
+        command=lambda: send(f"set synth.chorus.active {cho_var.get()}"),
+    ).pack(side="left", padx=4)
+
+    # Sliders grid — two columns to keep the strip compact.
+    grid = ttk.Frame(fx_row)
+    grid.pack(fill="x")
+    grid.columnconfigure(1, weight=1)
+    grid.columnconfigure(3, weight=1)
+
+    overrides: dict[str, float] = {}
+    if initial_reverb_room is not None:
+        overrides["Reverb room"] = float(initial_reverb_room)
+
+    for i, (label, cmd_tmpl, low, high, default) in enumerate(
+        _FLUIDSYNTH_DRUM_SLIDERS,
+    ):
+        value = overrides.get(label, default)
+        col_pair = (i % 2) * 2  # 0 or 2
+        row_idx = i // 2
+        ttk.Label(grid, text=label, anchor="w").grid(
+            row=row_idx, column=col_pair, sticky="w", padx=(0, 4), pady=1,
+        )
+        var = _var(tk.DoubleVar, value=value)
+        resolution = (high - low) / 200 if (high - low) > 0 else 0.01
+        scale = tk.Scale(
+            grid, from_=low, to=high,
+            resolution=resolution,
+            orient="horizontal", variable=var,
+            showvalue=False, length=140,
+            command=lambda v, c=cmd_tmpl: send(c.format(v=float(v))),
+        )
+        scale.grid(row=row_idx, column=col_pair + 1, sticky="ew", padx=(0, 12), pady=1)
 
 
 def run_tweak_gui(
@@ -1183,52 +1612,23 @@ def run_tweak_gui(
                          sampler=_sampler)
 
     # ------------------------------------------------------------------
-    # Effects tab — gain / reverb / chorus sliders + on-off toggles.
+    # 🎛 Mixer tab — per-channel volume + per-channel FX. Replaces the
+    # old standalone Effects tab; FluidSynth's reverb/chorus controls
+    # now live on the drums strip inside this tab.
     # ------------------------------------------------------------------
-    effects = ttk.Frame(notebook)
-    notebook.add(effects, text="Effects")
-
-    overrides: dict[str, float] = {}
-    if initial_gain is not None:
-        overrides["Master gain"] = initial_gain
-    if initial_reverb_room is not None:
-        overrides["Reverb room size"] = initial_reverb_room
-
-    for label, cmd_tmpl, low, high, default in _SLIDERS:
-        value = overrides.get(label, default)
-        row = ttk.Frame(effects)
-        row.pack(fill="x", padx=10, pady=2)
-        ttk.Label(row, text=label, width=18, anchor="w").pack(side="left")
-        var = _var(tk.DoubleVar, value=value)
-        resolution = (high - low) / 200 if (high - low) > 0 else 0.01
-        scale = tk.Scale(
-            row, from_=low, to=high,
-            resolution=resolution,
-            orient="horizontal", variable=var,
-            showvalue=True, length=240,
-            command=lambda v, c=cmd_tmpl: send(c.format(v=float(v))),
-        )
-        scale.pack(side="left", fill="x", expand=True)
-
-    toggles = ttk.Frame(effects)
-    toggles.pack(fill="x", padx=10, pady=(8, 4))
-    rev_var = _var(tk.IntVar, value=1)
-    cho_var = _var(tk.IntVar, value=1)
-    ttk.Checkbutton(
-        toggles, text="Reverb on", variable=rev_var,
-        command=lambda: send(f"set synth.reverb.active {rev_var.get()}"),
-    ).pack(side="left", padx=6)
-    ttk.Checkbutton(
-        toggles, text="Chorus on", variable=cho_var,
-        command=lambda: send(f"set synth.chorus.active {cho_var.get()}"),
-    ).pack(side="left", padx=6)
-
-    ttk.Label(
-        effects,
-        text="Move a slider to tweak the synth live. Close window or "
-             "hit Ctrl+C in the terminal to stop.",
-        wraplength=400, justify="center", foreground="#666",
-    ).pack(padx=10, pady=(8, 4))
+    mixer_tab = ttk.Frame(notebook)
+    notebook.add(mixer_tab, text="🎛 Mixer")
+    _build_mixer_tab(
+        mixer_tab,
+        surge_instances=surge_instances or [],
+        sampler=_sampler,
+        send=send,
+        initial_gain=initial_gain,
+        initial_reverb_room=initial_reverb_room,
+        _var=_var,
+        ttk=ttk,
+        tk=tk,
+    )
 
     # ------------------------------------------------------------------
     # Instruments tab — per-channel program-change dropdowns. Channel

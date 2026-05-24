@@ -214,6 +214,77 @@ KNOB_ADDRS: dict[str, str] = {
 }
 
 
+# --------------------------------------------------------------------------
+# FX catalog — used by the 🎛 Mixer tab's per-Surge FX-slot dropdowns
+# --------------------------------------------------------------------------
+#
+# Surge XT ships ~29 factory FX types. We surface a curated subset on
+# the mixer (the ones a casual user would reach for during a live mix).
+# Each entry maps the Surge ``fx_type`` enum value → ``FXSpec`` with
+# the display label + the essential param indices to render as
+# sliders. Param indices match Surge's ``/param/fx/<s>/<n>/paramX`` OSC
+# tree where ``X`` is the 1-based ctrl index inside the FX type's
+# parameter list.
+#
+# Type-ids + the "essentials" subset are pinned here so the mixer
+# doesn't need to query Surge at runtime. If Surge bumps the enum
+# values upstream, the catalog stays consistent until we update it.
+# Issue #35 tracks replacing this with runtime /doc discovery.
+
+
+@dataclass(frozen=True)
+class FXSpec:
+    """One FX-type catalog entry: display name + the ``param1..N``
+    indices we surface as sliders, with friendly labels for each."""
+
+    name: str
+    params: tuple[tuple[str, int], ...]  # (label, 1-based param index)
+
+
+# Surge XT factory FX type enum (from ``src/common/SurgeStorage.h``
+# in surge-synthesizer/surge). The full enum has ~29 entries; we
+# expose ~10 of the most-useful in the mixer dropdown.
+FX_CATALOG: dict[int, FXSpec] = {
+    0:  FXSpec("Off",        ()),  # disables the slot — slider area is empty
+    1:  FXSpec("Delay",      (("time", 1), ("feedback", 2), ("mix", 3))),
+    2:  FXSpec("Reverb 1",   (("size", 1), ("decay", 2), ("mix", 3))),
+    3:  FXSpec("Phaser",     (("rate", 1), ("depth", 2), ("mix", 3))),
+    4:  FXSpec("Rotary",     (("speed", 1), ("drive", 2), ("mix", 3))),
+    5:  FXSpec("Distortion", (("drive", 1), ("tone", 2), ("mix", 3))),
+    9:  FXSpec("Chorus",     (("rate", 1), ("depth", 2), ("mix", 3))),
+    10: FXSpec("Vocoder",    ()),  # complex — power-only in v1
+    11: FXSpec("Reverb 2",   (("size", 1), ("decay", 2), ("mix", 3))),
+    12: FXSpec("Flanger",    (("rate", 1), ("depth", 2), ("mix", 3))),
+    13: FXSpec("Ring Mod",   (("freq", 1), ("mix", 2))),
+}
+
+# Default load-out for FX slots A1 + A2 on every Surge instance.
+# Distortion + Delay matches the "mixer with distortion + delay"
+# expectation; both start powered OFF so the patch sounds dry by
+# default — the user opts in via the mixer's Power toggle.
+_DEFAULT_FX_TYPE_SLOT1 = 5  # Distortion
+_DEFAULT_FX_TYPE_SLOT2 = 1  # Delay
+
+
+def fx_addr(slot: int, kind: str, param_idx: int | None = None) -> str:
+    """Build a Surge FX-block OSC address for slot A1 / A2.
+
+    *kind* ∈ ``"type"`` / ``"deactivate"`` / ``"param"`` (in which
+    case *param_idx* is required, 1-based). slot is 1 or 2 — the
+    scene-A FX slots that Surge processes in order.
+    """
+    base = f"/param/fx/a/{slot}"
+    if kind == "type":
+        return f"{base}/type"
+    if kind == "deactivate":
+        return f"{base}/deactivate"
+    if kind == "param":
+        if param_idx is None:
+            raise ValueError("kind='param' requires param_idx")
+        return f"{base}/param{param_idx}"
+    raise ValueError(f"unknown fx kind {kind!r}")
+
+
 @dataclass
 class SurgeInstance:
     """One running surge-xt-cli + its OSC plumbing.
@@ -319,6 +390,21 @@ class SurgeInstance:
         # 5. Prime the value cache for the panel knobs.
         for addr in KNOB_ADDRS.values():
             self.query(addr)
+
+        # 6. Load the default FX chain (Distortion in A1, Delay in
+        # A2, both deactivated) so the Mixer tab has a consistent
+        # starting state on every Surge instance. ``deactivate=1``
+        # keeps the patch sounding dry until the user opts in via the
+        # Mixer's Power toggle.
+        self._load_default_fx_slots()
+
+    def _load_default_fx_slots(self) -> None:
+        """Send the FX-slot type + deactivate writes for the v1 mixer
+        default chain. Idempotent + side-effect-only (no return)."""
+        self.set_param(fx_addr(1, "type"), float(_DEFAULT_FX_TYPE_SLOT1))
+        self.set_param(fx_addr(1, "deactivate"), 1.0)
+        self.set_param(fx_addr(2, "type"), float(_DEFAULT_FX_TYPE_SLOT2))
+        self.set_param(fx_addr(2, "deactivate"), 1.0)
 
     def shutdown(self) -> None:
         """Terminate the subprocess + OSC server. Safe to call twice."""

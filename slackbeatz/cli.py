@@ -577,7 +577,7 @@ def _start_sampler_if_enabled(osc_routing_enabled: bool):
     if not osc_routing_enabled:
         return None
     from slackbeatz.sampler import Sampler, set_active_sampler
-    from slackbeatz.synthhost import sampler_port_banks
+    from slackbeatz.synthhost import OSC_CHANNELS, sampler_port_banks
     try:
         sampler = Sampler(sampler_port_banks())
         sampler.start()
@@ -586,6 +586,12 @@ def _start_sampler_if_enabled(osc_routing_enabled: bool):
         print(f"slackbeatz sampler disabled: {e}", file=sys.stderr)
         return None
     set_active_sampler(sampler)
+    # Pre-arm the per-port FX chains so the Mixer-tab voice + fx strips
+    # have a live Pedalboard to mutate. Silent no-op if pedalboard
+    # isn't installed (TTS extra not selected); the strips then render
+    # without FX controls and emit a one-line stderr hint.
+    for role in ("voice", "fx"):
+        sampler.enable_fx(OSC_CHANNELS[role][1])
     return sampler
 
 

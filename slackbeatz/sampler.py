@@ -37,7 +37,10 @@ class _Voice:
     """One currently-playing sample. ``cursor`` is the next-sample
     index into ``audio``. After ``note_off``, ``release_left`` counts
     down to a soft fade (set to the release-envelope length in frames)
-    so short notes don't end abruptly."""
+    so short notes don't end abruptly. ``port_name`` identifies which
+    sampler bank the voice came from, so the audio callback can route
+    voices into per-port mix buses (per-port gain + per-port FX chain
+    in :meth:`set_port_gain` / :meth:`enable_fx`)."""
 
     audio: object  # numpy.ndarray, shape (frames, channels)
     cursor: int = 0
@@ -45,6 +48,7 @@ class _Voice:
     # None = note still held; int = remaining release-envelope frames.
     release_left: Optional[int] = None
     release_total: int = 1
+    port_name: str = ""
 
 
 @dataclass
@@ -114,6 +118,13 @@ class Sampler:
         self._stream = None
         self._started = False
 
+        # Per-port mix-bus gain (post-mix, pre-output). Defaults to 1.0
+        # (unity). Driven from the slackbeatz Mixer GUI tab via
+        # :meth:`set_port_gain`. Phase 3 will also stash per-port
+        # pedalboard FX chains here keyed by port name.
+        self._port_gains: dict[str, float] = {}
+        self._fx_chains: dict[str, object] = {}  # port_name → pedalboard.Pedalboard
+
     # ------------------------------------------------------------------
     # Bank management
     # ------------------------------------------------------------------
@@ -143,6 +154,56 @@ class Sampler:
         :meth:`remove_sample`."""
         listener = self._ports.get(port_name)
         return dict(listener.bank) if listener is not None else {}
+
+    # ------------------------------------------------------------------
+    # Per-port mix-bus controls — drive the slackbeatz Mixer tab
+    # ------------------------------------------------------------------
+
+    def set_port_gain(self, port_name: str, gain: float) -> None:
+        """Multiplier (0.0–N) applied to *port_name*'s mix before it
+        sums into the master output buffer. 1.0 = unity. Lock-free —
+        the audio callback reads via dict.get(name, 1.0), so a torn
+        read just gives the old value for one block."""
+        self._port_gains[port_name] = max(0.0, float(gain))
+
+    def get_port_gain(self, port_name: str) -> float:
+        """Current per-port gain (default 1.0 if never set)."""
+        return float(self._port_gains.get(port_name, 1.0))
+
+    def enable_fx(self, port_name: str) -> bool:
+        """Install a default ``Pedalboard([Distortion(), Delay()])``
+        chain on *port_name*. Returns True if the chain is now live,
+        False if pedalboard isn't available (caller's mixer GUI then
+        renders the strip without FX controls).
+
+        Both effects start with neutral params — Distortion at 0 dB
+        drive, Delay with a small default time + low feedback — so the
+        chain is audibly transparent until the user moves a slider. The
+        chain stays installed across notes; lock-free reads from the
+        audio thread are fine because dict.get is atomic in CPython."""
+        try:
+            from pedalboard import Pedalboard, Distortion, Delay
+        except ImportError:
+            import sys
+            print(
+                "slackbeatz sampler: pedalboard not installed — FX chain "
+                f"on {port_name!r} skipped. Install via "
+                "`pip install slackbeatz[tts]` (same dep as TTS post-FX).",
+                file=sys.stderr,
+            )
+            return False
+        self._fx_chains[port_name] = Pedalboard([
+            Distortion(drive_db=0.0),
+            Delay(delay_seconds=0.25, feedback=0.0, mix=0.0),
+        ])
+        return True
+
+    def get_fx_chain(self, port_name: str):
+        """Return the live :class:`pedalboard.Pedalboard` chain for
+        *port_name*, or ``None`` if FX aren't enabled. The mixer GUI
+        mutates plugin attributes (``chain[0].drive_db = 12.0``) in
+        place — pedalboard supports that on a running chain."""
+        return self._fx_chains.get(port_name)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -288,6 +349,7 @@ class Sampler:
             cursor=0,
             velocity_gain=max(0.0, min(1.0, velocity / 127.0)),
             release_total=max(1, int(self._RELEASE_S * self.sample_rate)),
+            port_name=listener.port_name,
         )
         with self._voice_lock:
             vid = self._next_voice_id
@@ -378,13 +440,23 @@ class Sampler:
         """sounddevice OutputStream callback. Mixes active voices into
         *outdata* (shape: ``(frames, 2)``). Runs on the portaudio
         thread — keep it cheap, no I/O, no Python locks beyond the
-        single voice-list snapshot."""
+        single voice-list snapshot.
+
+        Pipeline: per-voice render → per-port mix buffer → optional
+        per-port pedalboard FX chain (Phase 3) → per-port gain →
+        sum into output → soft-clip. The per-port stage exists so the
+        mixer GUI can fade / FX each subscribed port independently."""
         import numpy as np
 
         outdata.fill(0.0)
         # Snapshot voice ids so we don't hold the lock during mixing.
         with self._voice_lock:
             voice_items = list(self._voices.items())
+
+        # Per-port mix buffers, allocated lazily as we encounter voices
+        # from a port. Skipping zero-allocs for ports with no active
+        # voices keeps the no-sampler-traffic path almost free.
+        port_bufs: dict[str, "np.ndarray"] = {}
 
         finished: list[int] = []
         for vid, v in voice_items:
@@ -396,8 +468,13 @@ class Sampler:
             chunk = v.audio[v.cursor:v.cursor + n]
             gain = v.velocity_gain
 
+            buf = port_bufs.get(v.port_name)
+            if buf is None:
+                buf = np.zeros_like(outdata)
+                port_bufs[v.port_name] = buf
+
             if v.release_left is None:
-                outdata[:n] += chunk * gain
+                buf[:n] += chunk * gain
             else:
                 # Apply a linear-fade envelope over up to release_total
                 # frames, then stop.
@@ -409,7 +486,7 @@ class Sampler:
                     n,
                     dtype=np.float32,
                 )[:, None]
-                outdata[:n] += chunk * gain * env
+                buf[:n] += chunk * gain * env
                 v.release_left = env_end
                 if env_end <= 0:
                     finished.append(vid)
@@ -423,6 +500,28 @@ class Sampler:
             with self._voice_lock:
                 for vid in finished:
                     self._voices.pop(vid, None)
+
+        # Per-port FX chain (Phase 3) + per-port gain, then sum into
+        # the master output buffer.
+        for port_name, buf in port_bufs.items():
+            chain = self._fx_chains.get(port_name)
+            if chain is not None:
+                try:
+                    # pedalboard.process expects (channels, samples) or
+                    # (samples, channels); our buf is (samples, 2). The
+                    # reset=False keeps state (delay lines etc.) across
+                    # callback invocations.
+                    buf[:] = chain.process(
+                        buf, self.sample_rate, reset=False,
+                    )
+                except Exception:
+                    # Don't kill the audio thread if a chain throws —
+                    # just skip FX for this block.
+                    pass
+            port_gain = self._port_gains.get(port_name, 1.0)
+            if port_gain != 1.0:
+                buf *= port_gain
+            outdata += buf
 
         # Soft clip to [-1, 1] to defend against accidental mix overflow
         # from many simultaneous voices.
