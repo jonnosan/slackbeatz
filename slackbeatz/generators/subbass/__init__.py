@@ -7,18 +7,19 @@ for spectral space. The pattern varies per style — sparse drone in
 ambient styles, quarter-note pulses in psytrance, octave-jump
 punctuation in garage, etc.
 
-Importing this module registers every style by side-effect."""
+The 9 per-style files this used to ship were collapsed in #49 to
+two parameterised algorithms:
+
+* :mod:`.drone` — long sustained notes every N bars; covers
+  acid / deep_techno / drum_and_bass / dub_techno / lofi /
+  vaporwave (each picking ``bars_per_note=`` + optional
+  ``alternate_fifth=`` to suit).
+* :mod:`.pulse` — short hits at named step positions
+  (``pattern=quarter|kick_beats|euclid_3_16``); covers euclid /
+  garage / psytrance.
+
+Importing this module registers both algorithms by side-effect."""
 
 from __future__ import annotations
 
-from . import (  # noqa: F401
-    acid,
-    deep_techno,
-    drum_and_bass,
-    dub_techno,
-    euclid,
-    garage,
-    lofi,
-    psytrance,
-    vaporwave,
-)
+from . import drone, pulse  # noqa: F401

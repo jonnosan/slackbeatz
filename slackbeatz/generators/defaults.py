@@ -39,16 +39,12 @@ STYLE_BASE_VEL: dict[tuple[str, str], int] = {
     ("bass", "lofi"):          78,   # warm walking bass, fingered upright feel
 
     # subbass — sits below the main bass voice on its own channel.
-    # Slightly softer than the bass so it reinforces rather than masks.
-    ("subbass", "euclid"):       85,
-    ("subbass", "deep_techno"):  75,
-    ("subbass", "psytrance"):    95,   # quarter-note pulse must be felt
-    ("subbass", "vaporwave"):    70,
-    ("subbass", "acid"):         85,
-    ("subbass", "dub_techno"):   65,   # sub drone, gentle
-    ("subbass", "drum_and_bass"): 100,  # the sub IS the bass in DnB
-    ("subbass", "garage"):        95,
-    ("subbass", "lofi"):          70,
+    # Slightly softer than the bass so it reinforces rather than
+    # masks. Consolidated to per-algorithm defaults in #49; style
+    # profiles override via GenSpec.knob_defaults to recover the
+    # finer per-style nuance.
+    ("subbass", "drone"): 75,   # sustained drone — gentle, sub-perceptual
+    ("subbass", "pulse"): 95,   # pulsing hits — felt as a kick reinforcement
 
     # melody
     ("melody", "euclid"):       90,
@@ -87,15 +83,11 @@ STYLE_BASE_OCTAVE: dict[tuple[str, str], int] = {
     # subbass sits an octave below the bass register — A0 / A1
     # territory. Below ~30 Hz human ears stop hearing pitch and only
     # feel pressure; that's the whole point of the layer.
-    ("subbass", "euclid"):       -2,
-    ("subbass", "deep_techno"):  -2,
-    ("subbass", "psytrance"):    -1,   # psy sub at A1 — kick covers below
-    ("subbass", "vaporwave"):    -2,
-    ("subbass", "acid"):         -1,   # acid bass already sits high; sub fills A1
-    ("subbass", "dub_techno"):   -2,
-    ("subbass", "drum_and_bass"): -2,   # classic 30 Hz sub
-    ("subbass", "garage"):       -2,
-    ("subbass", "lofi"):         -2,
+    # Consolidated per-algorithm in #49; style profiles override via
+    # GenSpec.knob_defaults when they need to nudge a sub up to A1
+    # (e.g. when the main bass already covers A0).
+    ("subbass", "drone"): -2,
+    ("subbass", "pulse"): -1,   # pulse styles sit slightly higher so the kick room stays clear
 
     ("melody", "euclid"):       0,
     ("melody", "deep_techno"):  0,
@@ -130,17 +122,11 @@ STYLE_GATE: dict[tuple[str, str], float] = {
     ("bass", "drum_and_bass"): 0.95,
     ("bass", "garage"):       0.55,
     ("bass", "lofi"):         0.85,   # sustained walking bass
-    # subbass — mostly long sustained notes; short only for psy / garage
-    # where the rhythm demands punctuation.
-    ("subbass", "euclid"):       0.95,
-    ("subbass", "deep_techno"):  0.98,   # whole-note drone
-    ("subbass", "psytrance"):    0.45,   # quarter-note pulses, room to breathe
-    ("subbass", "vaporwave"):    0.98,
-    ("subbass", "acid"):         0.95,
-    ("subbass", "dub_techno"):   0.99,   # nearly tied — 8-bar drone
-    ("subbass", "drum_and_bass"): 0.92,   # Reese sustains across the bar
-    ("subbass", "garage"):       0.55,    # snappier — punch on the 2 & 4
-    ("subbass", "lofi"):         0.95,
+    # subbass — drones run nearly tied (gate ≈ 1); pulse hits sit
+    # mid-short so adjacent pulses read as distinct. Consolidated
+    # per-algorithm in #49.
+    ("subbass", "drone"): 0.95,
+    ("subbass", "pulse"): 0.50,
     ("melody", "euclid"):       0.60,
     ("melody", "deep_techno"):  0.95,
     ("melody", "psytrance"):    0.50,
@@ -207,15 +193,12 @@ STYLE_SCALE: dict[tuple[str, str], str] = {
     # land on the same notes as the main bass voice. Sub-bass that
     # plays only the root rarely needs the scale, but octave-jump /
     # fifth_prob knobs do reach for it.
-    ("subbass", "euclid"):       "minor",
-    ("subbass", "deep_techno"):  "dorian",
-    ("subbass", "psytrance"):    "phrygian",
-    ("subbass", "vaporwave"):    "minor",
-    ("subbass", "acid"):         "minor",
-    ("subbass", "dub_techno"):   "dorian",
-    ("subbass", "drum_and_bass"): "dorian",
-    ("subbass", "garage"):       "minor",
-    ("subbass", "lofi"):         "dorian",
+    # subbass — root-note layer; scale matters only when a
+    # progression= knob is set. Consolidated to minor as a neutral
+    # default; per-style flavour (dorian / phrygian) flows through
+    # the style profile's GenSpec.knob_defaults.
+    ("subbass", "drone"): "minor",
+    ("subbass", "pulse"): "minor",
     ("melody", "euclid"):       "minor",
     ("melody", "deep_techno"):  "dorian",
     ("melody", "psytrance"):    "phrygian",
