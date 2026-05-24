@@ -682,15 +682,26 @@ def _knob_list_all_specs() -> str:
     from slackbeatz.player import KNOB_CHOICES, KNOB_SPECS
 
     lines = ["knobs by gen type (range shown for /knob HANDLE NAME VALUE):"]
+    listed_enums: set[tuple[str, str]] = set()
     for gen_type in ("rhythm", "drums", "bass", "melody", "chords", "candy"):
         lines.append(f"\n  {gen_type}:")
         for name, lo, hi, default, kind in KNOB_SPECS.get(gen_type, []):
+            if kind == "enum":
+                choices = KNOB_CHOICES.get(gen_type, {}).get(name, [])
+                range_str = "|".join(choices)
+                lines.append(f"    {name:14s}  {range_str}")
+                listed_enums.add((gen_type, name))
+                continue
             range_str = (
                 f"{int(lo)}..{int(hi)}" if kind == "int" else f"{lo}..{hi}"
             )
             lines.append(f"    {name:14s}  {range_str:>14s}  default {default}")
-        # String-valued knobs for this gen type, if any.
+        # String-valued knobs declared only in KNOB_CHOICES (not in
+        # KNOB_SPECS) — keep them visible for /knobs even though the
+        # GUI won't render them as enum rows.
         for name, choices in KNOB_CHOICES.get(gen_type, {}).items():
+            if (gen_type, name) in listed_enums:
+                continue
             lines.append(f"    {name:14s}  {'|'.join(choices)}")
     lines.append(
         "\n  Type `/knobs gens` to see your current song's gens, "
@@ -718,7 +729,25 @@ def _knob_show_gen(player, handle: str) -> str:
     if not specs and not choices:
         lines.append("  (no tweakable knobs for this gen type)")
         return "\n".join(lines)
+    listed_enums: set[str] = set()
     for name, lo, hi, default, kind in specs:
+        if kind == "enum":
+            valid_values = choices.get(name, [])
+            if name in overrides:
+                current = overrides[name]
+                tag = "(override)"
+            elif name in gen.knobs:
+                current = gen.knobs[name]
+                tag = "(from .sb)"
+            else:
+                current = "(style default)"
+                tag = ""
+            lines.append(
+                f"  {name:14s}  {'|'.join(valid_values)}\n"
+                f"  {'':14s}  current = {current} {tag}"
+            )
+            listed_enums.add(name)
+            continue
         range_str = (
             f"{int(lo)}..{int(hi)}" if kind == "int" else f"{lo}..{hi}"
         )
@@ -735,8 +764,10 @@ def _knob_show_gen(player, handle: str) -> str:
         lines.append(
             f"  {name:14s}  {range_str:>14s}  = {current!s:<8s} {tag}"
         )
-    # String-valued knobs (progression / voicing).
+    # String-valued knobs declared only in KNOB_CHOICES (no enum spec).
     for name, valid_values in choices.items():
+        if name in listed_enums:
+            continue
         if name in overrides:
             current = overrides[name]
             tag = "(override)"

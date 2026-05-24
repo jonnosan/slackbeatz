@@ -50,12 +50,13 @@ KNOWN_STYLES = _known_styles()
 
 
 # Per-type list of knobs the live tweaker exposes. Each knob spec is
-# ``(name, low, high, default, kind)`` — kind is "int" or "float" and
-# drives slider quantisation. These are the *most-useful* knobs per
-# type, picked from defaults.py + per-style algorithm code. Knobs not
-# listed for a type can still be set via /knob; the GUI just won't
-# show them.
-KNOB_SPECS: dict[str, list[tuple[str, float, float, float, str]]] = {
+# ``(name, low, high, default, kind)`` — kind is "int", "float", or
+# "enum". For numeric kinds, ``default`` is the scalar default; for
+# enum, ``default`` is the sentinel "(default)" and the legal choices
+# live in :data:`KNOB_CHOICES`. The GUI renders sliders for int/float
+# and a Combobox for enum. Knobs not listed for a type can still be
+# set via /knob; the GUI just won't show them.
+KNOB_SPECS: dict[str, list[tuple[str, float, float, object, str]]] = {
     "rhythm": [
         ("humanize",      0,    10,    2,    "int"),
         ("accent",        0,    16,    0,    "int"),
@@ -71,6 +72,9 @@ KNOB_SPECS: dict[str, list[tuple[str, float, float, float, str]]] = {
         ("phrase_lift",   0,    16,    0,    "int"),
         ("mistakes",      0.0,  0.1,   0.0,  "float"),
         ("stutter",       0.0,  1.0,   0.0,  "float"),
+        ("polyrhythm",    0,    16,    0,    "int"),
+        ("groove",        0,    0,     "(default)", "enum"),
+        ("fill_style",    0,    0,     "(default)", "enum"),
     ],
     "drums": [
         ("humanize",      0,    10,    2,    "int"),
@@ -93,6 +97,7 @@ KNOB_SPECS: dict[str, list[tuple[str, float, float, float, str]]] = {
         ("walking",       0.0,  1.0,   0.0,  "float"),
         ("pickup",        0.0,  1.0,   0.0,  "float"),
         ("bars_per_chord", 1,   32,    4,    "int"),
+        ("progression",   0,    0,     "(default)", "enum"),
     ],
     "melody": [
         ("intensity",     0.0,  1.5,   1.0,  "float"),
@@ -108,19 +113,30 @@ KNOB_SPECS: dict[str, list[tuple[str, float, float, float, str]]] = {
         ("mute_prob",     0.0,  0.5,   0.0,  "float"),
         ("arp_prob",      0.0,  0.5,   0.0,  "float"),
         ("evolution",     0.0,  1.0,   0.0,  "float"),
-        # Progression / voicing knobs — numeric sliders, but kept here
-        # so /knob HANDLE shows them. String-valued knobs (progression
-        # name, voicing name) are listed separately in KNOB_CHOICES so
-        # the user can see the legal values.
         ("bars_per_chord", 1,    32,    4,    "int"),
         ("inversion",     0,    3,     0,    "int"),
         ("tension_dyn",   0.0,  1.0,   0.0,  "float"),
         ("drop_intensity", 0.0,  1.0,   0.0,  "float"),
         ("phrase_lift",   0,    16,    0,    "int"),
+        ("voice_lead",    0,    1,     0,    "int"),
+        ("progression",   0,    0,     "(default)", "enum"),
+        ("voicing",       0,    0,     "(default)", "enum"),
     ],
     "candy": [
         ("intensity",     0.0,  1.5,   1.0,  "float"),
         ("density",       0.0,  1.0,   0.5,  "float"),
+    ],
+    "speech": [
+        ("note_base",       0,    127,   60,   "int"),
+        ("phrase_interval", 1,    32,    8,    "int"),
+        ("velocity",        1,    127,   80,   "int"),
+    ],
+    "sample": [
+        ("note_base", 0,   127,  36,    "int"),
+        ("velocity",  1,   127,  90,    "int"),
+        ("pulses",    0,   32,   4,     "int"),
+        ("steps",     1,   32,   16,    "int"),
+        ("pattern",   0,   0,    "(default)", "enum"),
     ],
 }
 
@@ -155,7 +171,17 @@ KNOB_CHOICES: dict[str, dict[str, list[str]]] = {
             "(off)", "snare_roll", "tom_roll", "kick_double", "silence",
         ],
     },
+    "sample": {
+        "pattern": ["euclid", "every_bar"],
+    },
 }
+
+
+# Extend the string-knobs set in :meth:`Player.set_knob` so the new
+# enum entries above are stored verbatim rather than coerced via
+# :func:`knob_kind`. ``pattern`` joins the existing
+# ``progression`` / ``voicing`` / ``groove`` / ``fill_style`` group.
+_STRING_KNOBS_EXTRA = ("pattern",)
 
 
 def knob_kind(knob_name: str) -> str:
@@ -329,6 +355,10 @@ class Player:
         # plus one per GUI refresh kept the Tk thread saturated and
         # produced beachballs during slider drags.
         self.current_resolved = None
+        # Cached most-recently-loaded :class:`Setup` — surfaced by the
+        # 🎛 Setup tab for inst / kit visibility. Populated alongside
+        # ``current_resolved`` on each _resolve_current.
+        self.current_setup = None
 
         # MIDI Clock output. When True, the playback worker spawns a
         # ClockEmitter sibling thread that broadcasts 0xF8 pulses at
@@ -365,6 +395,22 @@ class Player:
         # the same part.
         self.skip_parts: set[str] = set()
         self.gen_meter_overrides: dict[str, str] = {}
+
+        # Arrangement override — when non-None, replaces
+        # ``resolved.arrangement`` after resolution. Used by the 🎬
+        # Arrangement tab so the user can reorder / add / remove
+        # parts without editing the .sb. List of part names already
+        # expanded (group repeats flattened); applied after
+        # ``skip_parts`` so a user-set arrangement wins.
+        self.arrangement_override: Optional[list[str]] = None
+
+        # Per-part attribute overrides, set from the Builder's Parts
+        # panel — schema {part_name: {attr_name: value}}. Applied in
+        # _resolve_current via object.__setattr__ on the frozen
+        # ResolvedPart (same escape hatch as tempo_override on
+        # file-loaded songs). Recognised attrs: tempo, key, role,
+        # tension, transpose_prob, scale_override.
+        self._part_overrides: dict[str, dict[str, object]] = {}
 
         # Loop on song end — re-render the same params and play again.
         self.loop: bool = False
@@ -668,7 +714,9 @@ class Player:
             # string verbatim. Defaults helpers will validate against
             # their option list and silently fall back if a typo
             # creeps in, so we don't reject unknown values here.
-            string_knobs = {"progression", "voicing"}
+            string_knobs = {
+                "progression", "voicing", "groove", "fill_style", "pattern",
+            }
             if knob in string_knobs:
                 value = str(value)
             elif isinstance(value, str):
@@ -835,6 +883,49 @@ class Player:
                 self.skip_parts.discard(part_name)
             verb = "muted" if skip else "live"
             return self._restart_after_change(f"part {part_name!r} {verb}")
+
+    def set_part_attr(self, part_name: str, attr: str, value) -> str:
+        """Override one attribute on one part (tempo / key / role /
+        tension / transpose_prob / scale_override). ``value=None``
+        clears the override for that attribute. Applied in
+        :meth:`_resolve_current` via :func:`object.__setattr__` on
+        the frozen :class:`ResolvedPart`."""
+        allowed = {"tempo", "key", "role", "tension",
+                   "transpose_prob", "scale_override"}
+        if attr not in allowed:
+            return f"error: unknown part attr {attr!r} (try {sorted(allowed)})"
+        with self._lock:
+            attrs = self._part_overrides.setdefault(part_name, {})
+            if value is None:
+                attrs.pop(attr, None)
+                if not attrs:
+                    self._part_overrides.pop(part_name, None)
+                return self._restart_after_change(
+                    f"cleared {part_name}.{attr}",
+                )
+            attrs[attr] = value
+            return self._restart_after_change(
+                f"{part_name}.{attr} → {value}",
+            )
+
+    def get_part_overrides(self) -> dict[str, dict[str, object]]:
+        with self._lock:
+            return {p: dict(a) for p, a in self._part_overrides.items()}
+
+    def set_arrangement(self, atoms: Optional[list[str]]) -> str:
+        """Override the song's arrangement with *atoms* (a flat list of
+        part names). ``atoms=None`` clears the override and the
+        arrangement reverts to whatever the .sb's ``play`` line
+        produced. Unknown part names are dropped silently at resolve
+        time (the same way ``skip_parts`` no-ops on missing parts)."""
+        with self._lock:
+            if atoms is None:
+                self.arrangement_override = None
+                return self._restart_after_change("arrangement → default")
+            self.arrangement_override = list(atoms)
+            return self._restart_after_change(
+                f"arrangement → {' '.join(self.arrangement_override) or '(empty)'}",
+            )
 
     def set_gen_meter(self, gen_handle: str, meter: Optional[str]) -> str:
         """Override the meter (time signature) of one named gen
@@ -1038,6 +1129,24 @@ class Player:
                 for part in resolved.parts.values():
                     object.__setattr__(part, "tempo", int(self.tempo_override))
 
+        # Per-part attribute overrides (from the Builder's Parts panel).
+        # ResolvedPart is frozen at the class level but its fields are
+        # settable through :func:`object.__setattr__` — same escape
+        # hatch the tempo_override branch above uses.
+        if self._part_overrides:
+            for pname, attrs in self._part_overrides.items():
+                part = resolved.parts.get(pname)
+                if part is None:
+                    continue
+                for attr, val in attrs.items():
+                    try:
+                        object.__setattr__(part, attr, val)
+                    except Exception:
+                        # Stale override against a freshly-loaded song
+                        # whose Part doesn't have this attr — skip
+                        # rather than crash playback.
+                        continue
+
         # Apply per-gen knob overrides (last so they win against
         # everything baked into the composed / loaded .sb).
         self._apply_knob_overrides(resolved)
@@ -1075,7 +1184,17 @@ class Player:
                 p for p in resolved.arrangement if p not in self.skip_parts
             ]
 
+        # Arrangement override (set by the 🎬 Arrangement tab). Replaces
+        # the resolved arrangement wholesale. Unknown part names are
+        # filtered out here so a stale override against a freshly loaded
+        # song degrades gracefully instead of crashing the scheduler.
+        if self.arrangement_override is not None:
+            resolved.arrangement[:] = [
+                p for p in self.arrangement_override if p in resolved.parts
+            ]
+
         self.current_resolved = resolved
+        self.current_setup = setup
         return resolved
 
     def _apply_knob_overrides(self, resolved) -> None:

@@ -491,6 +491,48 @@ def _build_voice_subtab(parent, sampler, port_name: str, ttk, tk, *, _var=None) 
     )
     form.columnconfigure(1, weight=1)
 
+    # ----- Download voice ------------------------------------------
+    # The Voice combobox only lists already-downloaded Piper voices.
+    # Type a Piper voice name (e.g. en_US-hfc_female-medium) and hit
+    # Download to pull the model + config from HuggingFace; on success
+    # the combobox repopulates and the new voice is selectable.
+    dl_row = ttk.Frame(parent)
+    dl_row.pack(fill="x", padx=8, pady=(0, 6))
+    ttk.Label(dl_row, text="Add voice:").pack(side="left")
+    new_voice_var = tk.StringVar(value="en_US-hfc_female-medium")
+    ttk.Entry(dl_row, textvariable=new_voice_var, width=28).pack(
+        side="left", padx=(4, 4),
+    )
+    dl_status_var = tk.StringVar(value="")
+    ttk.Label(dl_row, textvariable=dl_status_var, foreground="#345").pack(
+        side="right",
+    )
+
+    def _on_download() -> None:
+        import threading
+        name = new_voice_var.get().strip()
+        if not name:
+            dl_status_var.set("(type a voice name)")
+            return
+        dl_status_var.set(f"downloading {name}…")
+
+        def _worker():
+            try:
+                from slackbeatz.tts import available_voices, download_voice
+                download_voice(name)
+                vlist = available_voices()
+                parent.after(0, lambda: (
+                    voice_combo.configure(values=vlist),
+                    voice_var.set(name) if name in vlist else None,
+                    dl_status_var.set(f"added {name}"),
+                ))
+            except Exception as e:  # noqa: BLE001 — surface to user
+                parent.after(0, lambda exc=e: dl_status_var.set(f"failed: {exc}"))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    ttk.Button(dl_row, text="Download", command=_on_download).pack(side="left")
+
     # ----- FX chain (Pedalboard) -----------------------------------
     # Slot pickers + Power + dynamic params for the voice port's
     # pedalboard chain. Mirror of the Surge sub-tab's FX block —
@@ -1594,9 +1636,12 @@ def _build_builder_tab(parent, *, player, _var, ttk, tk) -> None:
                 foreground="#888", font=("TkDefaultFont", 10, "italic"),
             ).pack(anchor="w")
             return
+        part_overrides_snapshot = player.get_part_overrides()
         for name in seen:
-            row = ttk.Frame(parts_body)
-            row.pack(fill="x", pady=1)
+            wrapper = ttk.Frame(parts_body)
+            wrapper.pack(fill="x", pady=1)
+            row = ttk.Frame(wrapper)
+            row.pack(fill="x")
             include_var = _var(
                 tk.IntVar, value=0 if name in player.skip_parts else 1,
             )
@@ -1631,6 +1676,96 @@ def _build_builder_tab(parent, *, player, _var, ttk, tk) -> None:
                     foreground="#888",
                 ).pack(side="left", padx=(0, 4))
 
+            # Expand-to-edit toggle — reveals tempo / key / scale /
+            # role / tension / transpose_prob editors for this part.
+            # Hidden by default to keep the Parts list compact.
+            attrs_row = ttk.Frame(wrapper)
+            expanded = {"on": False}
+            this_overrides = part_overrides_snapshot.get(name, {})
+
+            def _on_toggle(p=part, r=attrs_row, e=expanded,
+                           n=name, ov=this_overrides):
+                if e["on"]:
+                    r.pack_forget()
+                    e["on"] = False
+                    return
+                e["on"] = True
+                _populate_attrs(r, p, n, ov)
+                r.pack(fill="x", padx=(24, 0), pady=(0, 4))
+
+            ttk.Button(
+                row, text="▾", width=2, command=_on_toggle,
+            ).pack(side="left", padx=(4, 0))
+
+        def _populate_attrs(container, part, part_name, overrides):
+            # Re-bind callback closures each rebuild so they see the
+            # current part/name pair rather than the loop's last
+            # iteration. Called at most once per part (when first
+            # expanded), so the cost is fine.
+            for child in container.winfo_children():
+                child.destroy()
+            if part is None:
+                ttk.Label(container, text="(part not in current resolve)",
+                          foreground="#888").pack(anchor="w")
+                return
+
+            def _entry(label, attr, current, kind="str", choices=None):
+                line = ttk.Frame(container)
+                line.pack(fill="x", pady=1)
+                ttk.Label(line, text=label, width=14, anchor="w",
+                          foreground="#666").pack(side="left")
+                if kind == "enum":
+                    var = tk.StringVar(value=str(current))
+                    cb = ttk.Combobox(line, textvariable=var,
+                                      values=choices or [], state="readonly",
+                                      width=14)
+                    cb.pack(side="left")
+                    def _commit(_event, a=attr, v=var):
+                        player.set_part_attr(part_name, a, v.get())
+                    cb.bind("<<ComboboxSelected>>", _commit)
+                else:
+                    var = tk.StringVar(value="" if current is None else str(current))
+                    ent = ttk.Entry(line, textvariable=var, width=14)
+                    ent.pack(side="left")
+                    def _commit(_event=None, a=attr, v=var, k=kind):
+                        raw = v.get().strip()
+                        if not raw:
+                            player.set_part_attr(part_name, a, None)
+                            return
+                        try:
+                            if k == "int":
+                                player.set_part_attr(part_name, a, int(raw))
+                            elif k == "float":
+                                player.set_part_attr(part_name, a, float(raw))
+                            else:
+                                player.set_part_attr(part_name, a, raw)
+                        except ValueError:
+                            pass
+                    ent.bind("<Return>", _commit)
+                    ent.bind("<FocusOut>", _commit)
+                def _clear(a=attr, v=var, k=kind):
+                    player.set_part_attr(part_name, a, None)
+                    v.set("")
+                ttk.Button(line, text="↺", width=2, command=_clear).pack(
+                    side="left", padx=(4, 0),
+                )
+
+            _entry("tempo", "tempo",
+                   overrides.get("tempo", part.tempo), kind="int")
+            _entry("key", "key",
+                   overrides.get("key", part.key), kind="str")
+            _entry("scale", "scale_override",
+                   overrides.get("scale_override", part.scale_override or ""),
+                   kind="str")
+            _entry("role", "role",
+                   overrides.get("role", part.role), kind="str")
+            tn = overrides.get("tension", part.tension)
+            _entry("tension", "tension",
+                   "" if tn is None else f"{tn:g}", kind="float")
+            _entry("transpose_prob", "transpose_prob",
+                   overrides.get("transpose_prob", part.transpose_prob),
+                   kind="float")
+
     _refresh_parts()
 
     # Single state-change callback that refreshes BOTH the status
@@ -1641,6 +1776,745 @@ def _build_builder_tab(parent, *, player, _var, ttk, tk) -> None:
         _refresh_parts()
 
     return _refresh_all
+
+
+# --------------------------------------------------------------------------
+# 🎵 Render menubar — offline MIDI / audio / stems
+# --------------------------------------------------------------------------
+
+def _reveal_in_finder(path) -> None:
+    """Open a file in the platform file browser (macOS / Linux / Windows)."""
+    import subprocess
+    import sys
+    from pathlib import Path
+    p = Path(path).resolve()
+    try:
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", "-R", str(p)])
+        elif sys.platform.startswith("linux"):
+            subprocess.Popen(["xdg-open", str(p.parent)])
+        elif sys.platform.startswith("win"):
+            subprocess.Popen(["explorer", "/select,", str(p)])
+    except Exception:
+        # Best-effort — reveal failure shouldn't tear down the GUI.
+        pass
+
+
+def _open_render_dialog(root, player, mode: str) -> None:
+    """Open a modal render dialog for *mode* ∈ {"midi", "audio", "stems"}.
+
+    Picks an output path, then spawns a worker thread to do the actual
+    render. A progress Toplevel shows an indeterminate progress bar
+    while the worker runs; on completion it swaps to a "Reveal in
+    Finder" + "Close" pair.
+    """
+    import tkinter as tk
+    from tkinter import filedialog, ttk
+    from pathlib import Path
+    import threading
+
+    resolved = player.current_resolved
+    if resolved is None:
+        # Nothing loaded — show a brief notice instead of opening the
+        # picker. Cheaper than wiring a full message-box.
+        win = tk.Toplevel(root)
+        win.title("Render")
+        ttk.Label(
+            win,
+            text="No song loaded — generate or load one first.",
+        ).pack(padx=20, pady=20)
+        ttk.Button(win, text="OK", command=win.destroy).pack(pady=(0, 12))
+        return
+
+    # Default output dir + filename based on the song title (if any).
+    title = (player.title or "slackbeatz_song").replace(" ", "_")
+    default_dir = str(Path.home() / "Music" / "slackbeatz")
+
+    if mode == "midi":
+        out_path = filedialog.asksaveasfilename(
+            parent=root,
+            title="Render MIDI",
+            initialdir=default_dir,
+            initialfile=f"{title}.mid",
+            defaultextension=".mid",
+            filetypes=[("MIDI file", "*.mid"), ("All", "*.*")],
+        )
+        if not out_path:
+            return
+        _start_render_worker(root, player, mode, Path(out_path), use_surge=False)
+        return
+
+    if mode == "audio":
+        # Small chooser for format + Surge toggle BEFORE the file dialog.
+        win = tk.Toplevel(root)
+        win.title("Render audio")
+        win.transient(root)
+        ttk.Label(win, text="Format:").grid(row=0, column=0, sticky="e", padx=6, pady=6)
+        fmt_var = tk.StringVar(value="mp3")
+        for col, fmt in enumerate(["mp3", "wav"]):
+            ttk.Radiobutton(win, text=f".{fmt}", value=fmt, variable=fmt_var).grid(
+                row=0, column=1 + col, padx=4, pady=6, sticky="w",
+            )
+        surge_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            win, text="Use Surge XT (slower; matches --surge live mode)",
+            variable=surge_var,
+        ).grid(row=1, column=0, columnspan=3, padx=6, pady=(0, 6), sticky="w")
+
+        def _on_ok():
+            fmt = fmt_var.get()
+            use_surge = surge_var.get()
+            win.destroy()
+            out_path = filedialog.asksaveasfilename(
+                parent=root,
+                title="Render audio",
+                initialdir=default_dir,
+                initialfile=f"{title}.{fmt}",
+                defaultextension=f".{fmt}",
+                filetypes=[(fmt.upper(), f"*.{fmt}"), ("All", "*.*")],
+            )
+            if not out_path:
+                return
+            _start_render_worker(root, player, "audio", Path(out_path), use_surge=use_surge)
+
+        ttk.Button(win, text="Render", command=_on_ok).grid(
+            row=2, column=1, pady=(4, 10), padx=4,
+        )
+        ttk.Button(win, text="Cancel", command=win.destroy).grid(
+            row=2, column=2, pady=(4, 10), padx=4,
+        )
+        return
+
+    if mode == "stems":
+        out_dir = filedialog.askdirectory(
+            parent=root,
+            title="Export stems to folder",
+            initialdir=default_dir,
+        )
+        if not out_dir:
+            return
+        # Append the song title so multiple exports don't collide.
+        out_path = Path(out_dir) / f"{title}_stems"
+        _start_render_worker(root, player, "stems", out_path, use_surge=False)
+        return
+
+
+def _start_render_worker(root, player, mode: str, out_path, *, use_surge: bool) -> None:
+    """Spawn the render thread + show the progress popup."""
+    import tkinter as tk
+    from tkinter import ttk
+    import threading
+    from pathlib import Path
+
+    win = tk.Toplevel(root)
+    win.title(f"Rendering {mode}…")
+    win.transient(root)
+    ttk.Label(win, text=f"Rendering {mode} to:").pack(padx=14, pady=(12, 2))
+    ttk.Label(win, text=str(out_path), foreground="#444").pack(padx=14)
+    bar = ttk.Progressbar(win, mode="indeterminate", length=320)
+    bar.pack(padx=14, pady=10)
+    bar.start(40)
+    status_var = tk.StringVar(value="working…")
+    ttk.Label(win, textvariable=status_var, foreground="#666").pack(padx=14, pady=(0, 6))
+    btn_row = ttk.Frame(win)
+    btn_row.pack(padx=14, pady=(0, 12))
+
+    state = {"done": False, "error": None}
+
+    def _worker():
+        try:
+            _do_render(player, mode, out_path, use_surge=use_surge)
+        except Exception as exc:  # noqa: BLE001 — surfaced in the dialog
+            state["error"] = exc
+        finally:
+            state["done"] = True
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+
+    def _poll():
+        if not state["done"]:
+            root.after(200, _poll)
+            return
+        bar.stop()
+        bar["mode"] = "determinate"
+        bar["value"] = 100
+        if state["error"]:
+            status_var.set(f"failed: {state['error']}")
+        else:
+            status_var.set("done.")
+            ttk.Button(
+                btn_row, text="Reveal in Finder",
+                command=lambda: _reveal_in_finder(out_path),
+            ).pack(side="left", padx=4)
+        ttk.Button(btn_row, text="Close", command=win.destroy).pack(side="left", padx=4)
+
+    root.after(200, _poll)
+
+
+def _do_render(player, mode: str, out_path, *, use_surge: bool) -> None:
+    """Run the actual render. Called from a worker thread."""
+    from pathlib import Path
+    from slackbeatz.engine.midifile import write_midifile
+
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Re-resolve so the render captures the latest overrides (knob,
+    # arrangement, skip_parts, etc). _resolve_current re-uses the
+    # currently-loaded phrase / file under the Player's lock so it's
+    # safe to call from this worker thread.
+    resolved = player._resolve_current()
+
+    if mode == "midi":
+        write_midifile(resolved, out_path)
+        return
+
+    if mode == "audio":
+        if use_surge:
+            from slackbeatz.audio_offline import render_song_with_surge
+            from slackbeatz.audio import find_soundfont
+            soundfont = find_soundfont(None)
+            render_song_with_surge(
+                resolved, out_path, soundfont=soundfont,
+                sample_rate=44100, bitrate="192k",
+            )
+        else:
+            import tempfile
+            from slackbeatz.audio import find_soundfont, render_audio
+            soundfont = find_soundfont(None)
+            with tempfile.NamedTemporaryFile(suffix=".mid", delete=False) as tmp:
+                tmp_mid = Path(tmp.name)
+            try:
+                write_midifile(resolved, tmp_mid)
+                render_audio(tmp_mid, out_path, soundfont)
+            finally:
+                tmp_mid.unlink(missing_ok=True)
+        return
+
+    if mode == "stems":
+        from slackbeatz.export import export_bundle
+        from slackbeatz.audio import find_soundfont
+        soundfont = find_soundfont(None)
+        export_bundle(resolved, out_path, soundfont=soundfont, sample_rate=44100)
+        return
+
+    raise ValueError(f"unknown render mode: {mode}")
+
+
+# --------------------------------------------------------------------------
+# 🔍 Inspect menu — text-window dumps of overrides / status / lists
+# --------------------------------------------------------------------------
+
+def _open_inspect_dialog(root, player, mode: str) -> None:
+    """Pop up a read-only text view for *mode*.
+
+    Modes mirror the corresponding REPL / CLI commands:
+
+    * ``overrides``  — Player._knob_overrides + arrangement / skip /
+                       part overrides (same content as ``/knob`` with
+                       no args).
+    * ``status``     — current song name, tempo, key, arrangement,
+                       gen layout (same as REPL ``/status``).
+    * ``generators`` — every registered (type, style) pair.
+    * ``setups``     — bundled setup names.
+    * ``ports``      — available MIDI output ports.
+    * ``validate``   — re-resolve current song; show errors or
+                       "ok — N gens, N parts, …".
+    """
+    import tkinter as tk
+    from tkinter import ttk
+
+    title_map = {
+        "overrides": "Active overrides",
+        "status": "Song status",
+        "generators": "Registered generators",
+        "setups": "Bundled setups",
+        "ports": "Available MIDI ports",
+        "validate": "Validate current song",
+    }
+    win = tk.Toplevel(root)
+    win.title(title_map.get(mode, "Inspect"))
+    win.transient(root)
+    win.geometry("640x460")
+
+    body = tk.Text(win, wrap="word", font=("Menlo", 11),
+                   borderwidth=1, relief="solid")
+    body.pack(fill="both", expand=True, padx=10, pady=(10, 4))
+    sb = ttk.Scrollbar(win, orient="vertical", command=body.yview)
+    body.configure(yscrollcommand=sb.set)
+
+    btn_row = ttk.Frame(win)
+    btn_row.pack(fill="x", padx=10, pady=(0, 10))
+    ttk.Button(btn_row, text="Close", command=win.destroy).pack(side="right")
+
+    try:
+        text = _inspect_body(player, mode)
+    except Exception as exc:  # noqa: BLE001 — surface to user
+        text = f"error: {exc}"
+
+    body.insert("end", text)
+    body.configure(state="disabled")
+
+
+def _inspect_body(player, mode: str) -> str:
+    """Compose the body text for an inspect popup."""
+    if mode == "generators":
+        from slackbeatz.generators.registry import list_generators
+        out = ["# Registered generators (type / style)"]
+        for type_, style in list_generators():
+            out.append(f"  {type_:10s}  {style}")
+        return "\n".join(out)
+
+    if mode == "setups":
+        from slackbeatz.setup.loader import list_bundled_setups
+        out = ["# Bundled setups"]
+        for name in list_bundled_setups():
+            out.append(f"  {name}")
+        return "\n".join(out)
+
+    if mode == "ports":
+        from slackbeatz.sinks.realtime import available_ports
+        ports = available_ports() or []
+        if not ports:
+            return ("No MIDI output ports.\n\n"
+                    "On macOS: open Audio MIDI Setup → MIDI Studio → "
+                    "enable the IAC Driver to create a virtual port.")
+        out = ["# Available MIDI output ports"]
+        for p in ports:
+            marker = "  ← active" if p == player.port_name else ""
+            out.append(f"  {p}{marker}")
+        return "\n".join(out)
+
+    if mode == "status":
+        resolved = player.current_resolved
+        if resolved is None:
+            return ("(no song loaded — generate via the Builder tab "
+                    "or load a .sb from the REPL)")
+        lines = [
+            f"name:        {resolved.name}",
+            f"tempo:       {resolved.tempo}",
+            f"key:         {resolved.key}",
+            f"meter:       {resolved.meter}",
+            f"seed:        {resolved.seed}",
+            f"setup:       {resolved.setup.name}",
+            f"parts:       {len(resolved.parts)}",
+            f"gens:        {len(resolved.gens)}",
+            f"arrangement: {' → '.join(resolved.arrangement)}",
+        ]
+        lines.append("")
+        lines.append("# Parts")
+        for name, part in resolved.parts.items():
+            tn = "auto" if part.tension is None else f"{part.tension:g}"
+            lines.append(
+                f"  {name:12s}  bars={part.bars:3d}  tempo={part.tempo:3d}  "
+                f"key={part.key:6s}  role={part.role:8s}  tension={tn}"
+            )
+        lines.append("")
+        lines.append("# Gens")
+        for handle, gen in resolved.gens.items():
+            meter = str(gen.meter) if gen.meter is not None else "(inherit)"
+            lines.append(
+                f"  {handle:12s}  {gen.type_:8s}  {gen.style:14s}  "
+                f"meter={meter}"
+            )
+        return "\n".join(lines)
+
+    if mode == "overrides":
+        lines = ["# Active overrides"]
+        # Knob overrides.
+        ko = player.get_knob_overrides()
+        if ko:
+            lines.append("\n## Knob overrides")
+            for handle, knobs in ko.items():
+                for n, v in knobs.items():
+                    lines.append(f"  {handle}.{n} = {v}")
+        else:
+            lines.append("\n## Knob overrides — (none)")
+
+        # Part attribute overrides.
+        po = player.get_part_overrides()
+        if po:
+            lines.append("\n## Part attribute overrides")
+            for pname, attrs in po.items():
+                for a, v in attrs.items():
+                    lines.append(f"  {pname}.{a} = {v}")
+        else:
+            lines.append("\n## Part attribute overrides — (none)")
+
+        # Skip-parts.
+        if player.skip_parts:
+            lines.append("\n## Skipped parts")
+            for n in sorted(player.skip_parts):
+                lines.append(f"  {n}")
+        else:
+            lines.append("\n## Skipped parts — (none)")
+
+        # Arrangement override.
+        if player.arrangement_override is not None:
+            lines.append("\n## Arrangement override")
+            lines.append("  " + " → ".join(player.arrangement_override))
+        else:
+            lines.append("\n## Arrangement override — (using .sb default)")
+
+        # Gen meter overrides.
+        if player.gen_meter_overrides:
+            lines.append("\n## Per-gen meter overrides")
+            for h, m in player.gen_meter_overrides.items():
+                lines.append(f"  {h} → {m}")
+        else:
+            lines.append("\n## Per-gen meter overrides — (none)")
+
+        # Top-level transport overrides.
+        lines.append("\n## Transport overrides")
+        lines.append(f"  tempo override : {player.tempo_override or '(auto)'}")
+        lines.append(f"  style override : {player.style_override or '(auto)'}")
+        lines.append(f"  seed offset    : {player.seed_offset}")
+        lines.append(f"  emit clock     : {player.emit_clock}")
+        return "\n".join(lines)
+
+    if mode == "validate":
+        try:
+            resolved = player._resolve_current()
+        except Exception as e:  # noqa: BLE001 — surface to user
+            return f"validation failed:\n  {e}"
+        n_bars = sum(
+            resolved.parts[p].bars for p in resolved.arrangement
+            if p in resolved.parts
+        )
+        return (
+            f"ok — {len(resolved.gens)} gens, "
+            f"{len(resolved.parts)} parts, "
+            f"{len(resolved.arrangement)} arrangement slots, "
+            f"{n_bars} bars total"
+        )
+
+    return f"(unknown inspect mode {mode!r})"
+
+
+# --------------------------------------------------------------------------
+# 🔌 I/O tab — MIDI port + soundfont + clock view
+# --------------------------------------------------------------------------
+
+def _build_io_tab(parent, *, player, _var, ttk, tk):
+    """Display MIDI port + soundfont + MIDI clock state.
+
+    Port + soundfont are baked in at launch (changing them needs a
+    restart) — we surface the values so the user can confirm what
+    they're hearing. MIDI clock + external-clock are runtime-settable
+    and get live toggles here.
+    """
+    ttk.Label(
+        parent,
+        text="🔌 Audio + MIDI routing for this session. Most values "
+             "lock in at launch — pass --port / --soundfont / "
+             "--clock when starting slackbeatz to change them.",
+        wraplength=520, justify="left", foreground="#444",
+    ).pack(padx=10, pady=(8, 4), anchor="w")
+
+    grid = ttk.Frame(parent)
+    grid.pack(fill="x", padx=10, pady=4)
+    grid.columnconfigure(1, weight=1)
+
+    row = 0
+    ttk.Label(grid, text="MIDI port:", foreground="#666").grid(
+        row=row, column=0, sticky="e", padx=(0, 6), pady=2,
+    )
+    ttk.Label(grid, text=str(player.port_name or "(none)"),
+              font=("TkDefaultFont", 10, "bold")).grid(
+        row=row, column=1, sticky="w", pady=2,
+    )
+
+    row += 1
+    ttk.Label(grid, text="Available ports:", foreground="#666").grid(
+        row=row, column=0, sticky="ne", padx=(0, 6), pady=2,
+    )
+    ports_text = tk.Text(grid, height=4, width=44, wrap="none",
+                         borderwidth=1, relief="solid")
+    ports_text.grid(row=row, column=1, sticky="w", pady=2)
+    try:
+        from slackbeatz.sinks.realtime import available_ports
+        ports = available_ports() or []
+    except Exception:
+        ports = []
+    ports_text.insert("end", "\n".join(ports) if ports else "(none)")
+    ports_text.configure(state="disabled")
+
+    row += 1
+    ttk.Label(grid, text="Soundfont:", foreground="#666").grid(
+        row=row, column=0, sticky="e", padx=(0, 6), pady=2,
+    )
+    sf_path = "(not loaded)"
+    try:
+        from slackbeatz.audio import find_soundfont
+        sf_path = str(find_soundfont(None))
+    except Exception as e:  # noqa: BLE001
+        sf_path = f"(unset: {e})"
+    ttk.Label(grid, text=sf_path, wraplength=420,
+              foreground="#222", justify="left").grid(
+        row=row, column=1, sticky="w", pady=2,
+    )
+
+    row += 1
+    ttk.Separator(grid, orient="horizontal").grid(
+        row=row, column=0, columnspan=2, sticky="ew", pady=8,
+    )
+
+    row += 1
+    ttk.Label(grid, text="MIDI Clock:", foreground="#666").grid(
+        row=row, column=0, sticky="e", padx=(0, 6), pady=2,
+    )
+    clock_var = _var(tk.IntVar, value=1 if player.emit_clock else 0)
+    ttk.Checkbutton(
+        grid, text="Send MIDI Clock (sync external gear)",
+        variable=clock_var,
+        command=lambda: player.set_emit_clock(bool(clock_var.get())),
+    ).grid(row=row, column=1, sticky="w", pady=2)
+
+    row += 1
+    ttk.Label(
+        parent,
+        text="Tip: `slackbeatz list-ports` shows the same ports your "
+             "OS exposes. To stream to an external DAW, start "
+             "slackbeatz with --port \"My DAW Port\".",
+        wraplength=520, justify="left", foreground="#888",
+    ).pack(padx=10, pady=(8, 4), anchor="w")
+
+
+# --------------------------------------------------------------------------
+# 🎛 Setup tab — read-only inst / kit visibility
+# --------------------------------------------------------------------------
+
+def _build_setup_tab(parent, *, player, _var, ttk, tk):
+    """Display the loaded ``Setup``'s inst + kit declarations.
+
+    Two stacked tables: Instruments (name, channel, fixed note if any)
+    and Kits (name, channel, then nested rows for each drum→note).
+    Read-only for now — edit support follows once
+    ``Setup.to_dsl()`` lands.
+    """
+    ttk.Label(
+        parent,
+        text="🎛 Active setup — channel + note routing the song uses. "
+             "Read-only for now; edit support coming. Switch the .sb's "
+             "setup= line to pick a different rig.",
+        wraplength=520, justify="left", foreground="#444",
+    ).pack(padx=10, pady=(8, 4), anchor="w")
+
+    name_lbl = ttk.Label(parent, text="(no setup loaded)",
+                         font=("TkDefaultFont", 11, "bold"))
+    name_lbl.pack(padx=10, anchor="w")
+
+    body = ttk.Frame(parent)
+    body.pack(fill="both", expand=True, padx=10, pady=(4, 8))
+
+    def _refresh() -> None:
+        for child in body.winfo_children():
+            child.destroy()
+        setup = getattr(player, "current_setup", None)
+        if setup is None:
+            name_lbl["text"] = "(no setup loaded — load a song first)"
+            return
+        name_lbl["text"] = f"setup: {setup.name}"
+
+        inst_frame = ttk.LabelFrame(body, text="Instruments")
+        inst_frame.pack(fill="x", pady=(0, 8))
+        if not setup.instruments:
+            ttk.Label(inst_frame, text="(none)", foreground="#888").pack(
+                anchor="w", padx=8, pady=4,
+            )
+        else:
+            header = ttk.Frame(inst_frame)
+            header.pack(fill="x", padx=6, pady=(4, 2))
+            ttk.Label(header, text="name", width=20, anchor="w",
+                      foreground="#666").pack(side="left")
+            ttk.Label(header, text="ch", width=6, anchor="w",
+                      foreground="#666").pack(side="left")
+            ttk.Label(header, text="note", width=8, anchor="w",
+                      foreground="#666").pack(side="left")
+            for inst in setup.instruments.values():
+                row = ttk.Frame(inst_frame)
+                row.pack(fill="x", padx=6, pady=1)
+                ttk.Label(row, text=inst.name, width=20, anchor="w",
+                          font=("TkDefaultFont", 10, "bold")).pack(side="left")
+                ttk.Label(row, text=str(inst.channel), width=6,
+                          anchor="w").pack(side="left")
+                note_text = str(inst.note) if inst.note is not None else "(pitched)"
+                ttk.Label(row, text=note_text, width=10,
+                          anchor="w", foreground="#666").pack(side="left")
+
+        kit_frame = ttk.LabelFrame(body, text="Kits")
+        kit_frame.pack(fill="both", expand=True)
+        if not setup.kits:
+            ttk.Label(kit_frame, text="(none)", foreground="#888").pack(
+                anchor="w", padx=8, pady=4,
+            )
+        else:
+            for kit in setup.kits.values():
+                kit_row = ttk.Frame(kit_frame)
+                kit_row.pack(fill="x", padx=6, pady=(6, 0))
+                ttk.Label(kit_row,
+                          text=f"{kit.name}  (ch {kit.channel})",
+                          font=("TkDefaultFont", 10, "bold")).pack(side="left")
+                drum_grid = ttk.Frame(kit_frame)
+                drum_grid.pack(fill="x", padx=20, pady=(0, 4))
+                # 4-column grid of drum→note pairs.
+                items = list(kit.drum_notes.items())
+                for i, (drum, note) in enumerate(items):
+                    r, c = divmod(i, 4)
+                    ttk.Label(drum_grid,
+                              text=f"{drum}={note}",
+                              foreground="#444").grid(
+                        row=r, column=c, padx=(0, 12), sticky="w",
+                    )
+
+    _refresh()
+    return _refresh
+
+
+# --------------------------------------------------------------------------
+# 🎬 Arrangement tab
+# --------------------------------------------------------------------------
+
+def _build_arrangement_tab(parent, *, player, _var, ttk, tk, root):
+    """Editable list of part positions in the song's arrangement.
+
+    Each row corresponds to one position in the linear arrangement
+    (groups + ``*N`` repeats are flattened — a repeat is just multiple
+    rows of the same part). ⇡ / ⇣ reorder, ✕ deletes, the "Add part"
+    dropdown at the bottom appends. "Reset" clears
+    ``player.arrangement_override`` so the .sb's original ``play``
+    line takes effect again.
+    """
+    _persistent: list = []
+
+    ttk.Label(
+        parent,
+        text="🎬 Arrangement order. Reorder with ⇡ ⇣, delete with ✕, "
+             "or append via the dropdown below. Changes apply on the "
+             "next play / restart. Reset reverts to the song's "
+             "original play line.",
+        wraplength=520, justify="left", foreground="#444",
+    ).pack(padx=10, pady=(8, 4), anchor="w")
+
+    rows_frame = ttk.Frame(parent)
+    rows_frame.pack(fill="both", expand=True, padx=10, pady=4)
+
+    footer = ttk.Frame(parent)
+    footer.pack(fill="x", padx=10, pady=(4, 8))
+
+    add_var = _var(tk.StringVar, value="")
+    add_cb = ttk.Combobox(footer, textvariable=add_var, state="readonly", width=18)
+    add_cb.pack(side="left")
+
+    def _current_seq() -> list[str]:
+        if player.arrangement_override is not None:
+            return list(player.arrangement_override)
+        resolved = player.current_resolved
+        if resolved is not None:
+            return list(resolved.arrangement)
+        return []
+
+    def _available_parts() -> list[str]:
+        resolved = player.current_resolved
+        if resolved is None:
+            return []
+        return list(resolved.parts.keys())
+
+    def _apply(seq: list[str]) -> None:
+        # Apply the new sequence as an override. Empty list still
+        # qualifies as an override (it just means "skip everything") —
+        # callers wanting to revert call _reset() instead.
+        player.set_arrangement(seq)
+        _refresh()
+
+    def _move(i: int, delta: int) -> None:
+        seq = _current_seq()
+        j = i + delta
+        if not (0 <= j < len(seq)):
+            return
+        seq[i], seq[j] = seq[j], seq[i]
+        _apply(seq)
+
+    def _delete(i: int) -> None:
+        seq = _current_seq()
+        if 0 <= i < len(seq):
+            del seq[i]
+            _apply(seq)
+
+    def _add() -> None:
+        name = add_var.get().strip()
+        if not name:
+            return
+        seq = _current_seq()
+        seq.append(name)
+        _apply(seq)
+
+    def _reset() -> None:
+        player.set_arrangement(None)
+        _refresh()
+
+    add_btn = ttk.Button(footer, text="+ add", command=_add)
+    add_btn.pack(side="left", padx=(4, 0))
+    reset_btn = ttk.Button(footer, text="↺ reset to .sb", command=_reset)
+    reset_btn.pack(side="right")
+
+    def _refresh() -> None:
+        for child in rows_frame.winfo_children():
+            child.destroy()
+
+        seq = _current_seq()
+        if not seq:
+            ttk.Label(
+                rows_frame,
+                text="(no song loaded — load one via the Builder tab)",
+                foreground="#888",
+            ).pack(padx=10, pady=20)
+        else:
+            for i, name in enumerate(seq):
+                row = ttk.Frame(rows_frame)
+                row.pack(fill="x", pady=1)
+                ttk.Label(
+                    row, text=f"{i+1:2d}.", width=4, anchor="e",
+                    foreground="#888",
+                ).pack(side="left")
+                ttk.Label(
+                    row, text=name, width=20, anchor="w",
+                    font=("TkDefaultFont", 10, "bold"),
+                ).pack(side="left", padx=(6, 6))
+                up_btn = ttk.Button(
+                    row, text="⇡", width=2,
+                    command=lambda i=i: _move(i, -1),
+                )
+                up_btn.pack(side="left")
+                down_btn = ttk.Button(
+                    row, text="⇣", width=2,
+                    command=lambda i=i: _move(i, +1),
+                )
+                down_btn.pack(side="left", padx=(2, 0))
+                del_btn = ttk.Button(
+                    row, text="✕", width=2,
+                    command=lambda i=i: _delete(i),
+                )
+                del_btn.pack(side="left", padx=(6, 0))
+                _persistent.append((up_btn, down_btn, del_btn))
+
+        # Refresh dropdown choices to match the currently-loaded song.
+        avail = _available_parts()
+        add_cb["values"] = avail
+        if avail and add_var.get() not in avail:
+            add_var.set(avail[0])
+        elif not avail:
+            add_var.set("")
+
+        if player.arrangement_override is not None:
+            reset_btn.state(["!disabled"])
+        else:
+            reset_btn.state(["disabled"])
+
+    _refresh()
+    _persistent.append(_refresh)
+    return _refresh
 
 
 def run_tweak_gui(
@@ -1758,6 +2632,64 @@ def run_tweak_gui(
     root.title("slackbeatz live — tweak")
     root.minsize(440, 480)
 
+    # ------------------------------------------------------------------
+    # 🎵 Render menubar — offline MIDI / audio / stems rendering of the
+    # currently-loaded song. Each entry opens a small dialog (file
+    # picker + Render button); the actual render runs on a worker
+    # thread so the GUI stays responsive, with a progress popup and a
+    # "Reveal in Finder" button on completion.
+    # ------------------------------------------------------------------
+    if player is not None:
+        menubar = tk.Menu(root)
+        render_menu = tk.Menu(menubar, tearoff=False)
+        render_menu.add_command(
+            label="Render MIDI…",
+            command=lambda: _open_render_dialog(root, player, "midi"),
+        )
+        render_menu.add_command(
+            label="Render audio…",
+            command=lambda: _open_render_dialog(root, player, "audio"),
+        )
+        render_menu.add_command(
+            label="Export stems…",
+            command=lambda: _open_render_dialog(root, player, "stems"),
+        )
+        menubar.add_cascade(label="🎵 Render", menu=render_menu)
+
+        # 🔍 Inspect menu — surfaces the same info as the REPL's /knobs,
+        # /status, slackbeatz list-generators, list-setups, list-ports
+        # and the `check` validate command, but in a Tk popup.
+        inspect_menu = tk.Menu(menubar, tearoff=False)
+        inspect_menu.add_command(
+            label="Active overrides",
+            command=lambda: _open_inspect_dialog(root, player, "overrides"),
+        )
+        inspect_menu.add_command(
+            label="Song status",
+            command=lambda: _open_inspect_dialog(root, player, "status"),
+        )
+        inspect_menu.add_separator()
+        inspect_menu.add_command(
+            label="List generators",
+            command=lambda: _open_inspect_dialog(root, player, "generators"),
+        )
+        inspect_menu.add_command(
+            label="List bundled setups",
+            command=lambda: _open_inspect_dialog(root, player, "setups"),
+        )
+        inspect_menu.add_command(
+            label="List MIDI ports",
+            command=lambda: _open_inspect_dialog(root, player, "ports"),
+        )
+        inspect_menu.add_separator()
+        inspect_menu.add_command(
+            label="Validate current song",
+            command=lambda: _open_inspect_dialog(root, player, "validate"),
+        )
+        menubar.add_cascade(label="🔍 Inspect", menu=inspect_menu)
+
+        root.config(menu=menubar)
+
     # NOTE: an earlier version of this code checked
     # ``tcl_platform(threaded)`` here to refuse non-threaded Tcl
     # outright. That check is wrong for Tcl 9 — the variable was
@@ -1823,6 +2755,22 @@ def run_tweak_gui(
             builder_tab, player=player, _var=_var, ttk=ttk, tk=tk,
         )
         main_thread_callbacks.append(builder_refresh)
+
+    # ------------------------------------------------------------------
+    # 🎬 Arrangement tab — reorder / add / remove parts in the play
+    # sequence at runtime. Edits the Player's ``arrangement_override``;
+    # the .sb's original ``play`` line is unchanged until the user
+    # explicitly saves via the Builder. Each row is a single
+    # arrangement position (groups are flattened — repeats can be made
+    # by duplicating rows).
+    # ------------------------------------------------------------------
+    if player is not None:
+        arr_tab = ttk.Frame(notebook)
+        notebook.add(arr_tab, text="🎬 Arrangement")
+        arr_refresh = _build_arrangement_tab(
+            arr_tab, player=player, _var=_var, ttk=ttk, tk=tk, root=root,
+        )
+        main_thread_callbacks.append(arr_refresh)
 
     # ------------------------------------------------------------------
     # Transport tab — only created if a Player is provided. Drives the
@@ -2155,7 +3103,7 @@ def run_tweak_gui(
     # pairs needing different sliders).
     # ------------------------------------------------------------------
     if player is not None:
-        from slackbeatz.player import KNOB_SPECS
+        from slackbeatz.player import KNOB_CHOICES, KNOB_SPECS
 
         gens_tab = ttk.Frame(notebook)
         notebook.add(gens_tab, text="Generators")
@@ -2290,10 +3238,50 @@ def run_tweak_gui(
                         anchor="w", padx=8, pady=2,
                     )
                     continue
+                gen_choices = KNOB_CHOICES.get(gen.type_, {})
                 for knob_name, lo, hi, default, kind in specs:
                     knob_row = ttk.Frame(row)
                     knob_row.pack(fill="x", padx=8, pady=1)
                     ttk.Label(knob_row, text=knob_name, width=14, anchor="w").pack(side="left")
+                    if kind == "enum":
+                        # Combobox: "(default)" clears the override and
+                        # lets the gen's style supply its default. Any
+                        # other value is stored verbatim as a string.
+                        choices = gen_choices.get(knob_name, [])
+                        values = ["(default)"] + list(choices)
+                        if handle in overrides and knob_name in overrides[handle]:
+                            current = str(overrides[handle][knob_name])
+                        elif knob_name in gen.knobs:
+                            current = str(gen.knobs[knob_name])
+                        else:
+                            current = "(default)"
+                        evar = _var(tk.StringVar, value=current)
+                        cb = ttk.Combobox(
+                            knob_row, values=values, textvariable=evar,
+                            state="readonly", width=20,
+                        )
+                        cb.pack(side="left", padx=(0, 4))
+
+                        def _on_enum(_event, h=handle, n=knob_name, v=evar):
+                            choice = v.get()
+                            if choice == "(default)":
+                                player.unset_knob(h, n)
+                            else:
+                                player.set_knob(h, n, choice)
+
+                        cb.bind("<<ComboboxSelected>>", _on_enum)
+
+                        def _reset_enum(h=handle, n=knob_name, v=evar):
+                            player.unset_knob(h, n)
+                            v.set("(default)")
+                        _pin(ttk.Button(
+                            knob_row, text="↺", width=2,
+                            command=_reset_enum,
+                        )).pack(side="left", padx=2)
+                        _persistent.append(_on_enum)
+                        _persistent.append(_reset_enum)
+                        continue
+
                     # Resolve initial value: override > gen.knobs > default.
                     if handle in overrides and knob_name in overrides[handle]:
                         value = overrides[handle][knob_name]
@@ -2315,9 +3303,9 @@ def run_tweak_gui(
                     # the last drag event.
                     pending = {"after_id": None}
 
-                    def _commit(v, h=handle, n=knob_name):
+                    def _commit(v, h=handle, n=knob_name, ii=is_int):
                         try:
-                            cast = int(float(v)) if is_int else float(v)
+                            cast = int(float(v)) if ii else float(v)
                         except ValueError:
                             return
                         player.set_knob(h, n, cast)
@@ -2628,6 +3616,32 @@ def run_tweak_gui(
 
     if player is not None:
         main_thread_callbacks.append(_refresh_instruments)
+
+    # ------------------------------------------------------------------
+    # 🔌 I/O tab — read-only display of the MIDI port + soundfont the
+    # session was launched with, plus a MIDI Clock toggle mirror of
+    # the Transport tab. Switching port/soundfont at runtime would
+    # require tearing down the RealtimeSink + FluidSynth process —
+    # we surface the values + a restart hint instead.
+    # ------------------------------------------------------------------
+    if player is not None:
+        io_tab = ttk.Frame(notebook)
+        notebook.add(io_tab, text="🔌 I/O")
+        _build_io_tab(io_tab, player=player, _var=_var, ttk=ttk, tk=tk)
+
+    # ------------------------------------------------------------------
+    # 🎛 Setup tab — read-only view of the currently-loaded Setup's
+    # inst + kit declarations. Surfaces the channel + (for inst) fixed
+    # note + (for kit) per-drum note map. Editing comes in a follow-up
+    # — Phase 3a per the GUI parity epic.
+    # ------------------------------------------------------------------
+    if player is not None:
+        setup_tab = ttk.Frame(notebook)
+        notebook.add(setup_tab, text="🎛 Setup")
+        setup_refresh = _build_setup_tab(
+            setup_tab, player=player, _var=_var, ttk=ttk, tk=tk,
+        )
+        main_thread_callbacks.append(setup_refresh)
 
     if on_close is not None:
         root.protocol("WM_DELETE_WINDOW", lambda: (on_close(), root.destroy()))
