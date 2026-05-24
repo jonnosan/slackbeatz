@@ -6,4 +6,4 @@ side-effect, populating :data:`slackbeatz.generators.registry.REGISTRY`.
 """
 
 from . import rhythm, drums, bass, melody, chords, candy  # noqa: F401
-from . import speech  # noqa: F401 — TTS-backed gen type (issue #27)
+from . import speech, sample  # noqa: F401 — TTS + sampler gen types
