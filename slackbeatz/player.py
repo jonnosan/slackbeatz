@@ -351,18 +351,20 @@ class Player:
 
         # Arrangement-level overrides applied AFTER resolution but
         # BEFORE the scheduler reads it. Set by the GUI's Builder
-        # tab; both are empty when no skip / no per-part meter is in
+        # tab; both are empty when no skip / no per-voice meter is in
         # play, in which case _resolve_current is a no-op for these.
         # `skip_parts` strips any matching part name from
         # resolved.arrangement (skips ALL occurrences if a part
         # appears multiple times — fine for v1, the user can save +
         # hand-edit if they need finer control).
-        # `part_meter_overrides` mutates each named part's meter in
-        # place via object.__setattr__ (ResolvedPart is frozen but
+        # `gen_meter_overrides` mutates each named gen's meter in
+        # place via object.__setattr__ (ResolvedGen is frozen but
         # the field is settable through that escape hatch — same
-        # pattern as tempo_override on file-loaded songs).
+        # pattern as tempo_override on file-loaded songs). Enables
+        # polyrhythm: drums in 4/4 while bass runs in 5/4 within
+        # the same part.
         self.skip_parts: set[str] = set()
-        self.part_meter_overrides: dict[str, str] = {}
+        self.gen_meter_overrides: dict[str, str] = {}
 
         # Loop on song end — re-render the same params and play again.
         self.loop: bool = False
@@ -834,15 +836,18 @@ class Player:
             verb = "muted" if skip else "live"
             return self._restart_after_change(f"part {part_name!r} {verb}")
 
-    def set_part_meter(self, part_name: str, meter: Optional[str]) -> str:
-        """Override the meter (time signature) of one named part.
-        ``meter=None`` clears the override and the part reverts to
-        whatever the composer / .sb file set.
+    def set_gen_meter(self, gen_handle: str, meter: Optional[str]) -> str:
+        """Override the meter (time signature) of one named gen
+        (voice). ``meter=None`` clears the override and the gen
+        reverts to whatever the composer / .sb file set — which by
+        default means "inherit the part's meter".
 
-        Enables polymeter compositions — different parts can run
-        in different time signatures. The DSL already supports this
-        via ``part NAME N meter=3/4``; this Player method exposes
-        the same control at runtime via the Builder UI."""
+        Enables polyrhythm compositions — different voices can run
+        in different time signatures within the same part (e.g.
+        drums in 4/4 while bass runs in 5/4). The DSL already
+        supports this via ``gen kick rhythm psytrance meter=3/4``;
+        this Player method exposes the same control at runtime via
+        the Generators UI."""
         with self._lock:
             if meter:
                 # Validate now so a bad string from the GUI doesn't
@@ -852,12 +857,12 @@ class Player:
                     Meter.parse(meter)
                 except ValueError as e:
                     return f"error: {e}"
-                self.part_meter_overrides[part_name] = meter
+                self.gen_meter_overrides[gen_handle] = meter
             else:
-                self.part_meter_overrides.pop(part_name, None)
+                self.gen_meter_overrides.pop(gen_handle, None)
             label = meter or "default"
             return self._restart_after_change(
-                f"part {part_name!r} meter → {label}",
+                f"gen {gen_handle!r} meter → {label}",
             )
 
     def set_style(self, style: Optional[str]) -> str:
@@ -1037,15 +1042,19 @@ class Player:
         # everything baked into the composed / loaded .sb).
         self._apply_knob_overrides(resolved)
 
-        # Per-part meter overrides (polymeter via the Builder UI). The
-        # ResolvedPart dataclass is frozen at the class level but its
-        # meter field is settable through object.__setattr__ — same
-        # escape hatch the tempo_override branch uses above.
-        if self.part_meter_overrides:
+        # Per-gen meter overrides (polyrhythm via the Generators UI).
+        # ResolvedGen is frozen at the class level but its meter
+        # field is settable through object.__setattr__ — same escape
+        # hatch the tempo_override branch uses above. ``meter=None``
+        # on a gen means "inherit the part meter", so writing a
+        # concrete Meter here forces that voice to run on its own
+        # cycle while every other voice in the part stays on the
+        # part meter.
+        if self.gen_meter_overrides:
             from slackbeatz.theory.meter import Meter
-            for name, meter_str in self.part_meter_overrides.items():
-                part = resolved.parts.get(name)
-                if part is None:
+            for handle, meter_str in self.gen_meter_overrides.items():
+                gen = resolved.gens.get(handle)
+                if gen is None:
                     continue
                 try:
                     new_meter = Meter.parse(meter_str)
@@ -1053,7 +1062,7 @@ class Player:
                     # Malformed string from a stale GUI state — skip
                     # rather than crash playback.
                     continue
-                object.__setattr__(part, "meter", new_meter)
+                object.__setattr__(gen, "meter", new_meter)
 
         # Arrangement filter (skip-part toggles from the Builder).
         # In-place mutation because resolved.arrangement is a list +

@@ -1438,21 +1438,17 @@ def _build_builder_tab(parent, *, player, _var, ttk, tk) -> None:
 
     # ------------------------------------------------------------------
     # Parts panel — shows the song's arrangement once a song is loaded.
-    # Each part gets a checkbox (skip toggle) + a meter dropdown
-    # (polymeter override). Both fire Player setters that regenerate
-    # playback if the song is currently playing.
+    # Each part gets a checkbox (skip toggle). Per-voice meter
+    # overrides live on the Generators tab — different voices can
+    # run in different time signatures within the same part (e.g.
+    # drums in 4/4 while bass runs in 5/4), which is what the user
+    # actually wants for polyrhythm work.
     # ------------------------------------------------------------------
     parts_frame = ttk.LabelFrame(parent, text="🧱  Parts")
     parts_frame.pack(fill="both", expand=True, padx=10, pady=(8, 8))
 
     parts_body = ttk.Frame(parts_frame)
     parts_body.pack(fill="both", expand=True, padx=8, pady=4)
-
-    # Meter dropdown choices — common signatures plus "auto" for
-    # "no override, use the part's composed meter". The Builder
-    # stores per-part overrides on Player.part_meter_overrides;
-    # selecting "auto" clears the override.
-    METER_CHOICES = ("auto", "4/4", "3/4", "6/8", "5/4", "7/8", "2/4", "9/8", "12/8")
 
     def _refresh_parts() -> None:
         # Wipe + rebuild — cheap. Fires on every state change
@@ -1517,28 +1513,15 @@ def _build_builder_tab(parent, *, player, _var, ttk, tk) -> None:
                 width=14, anchor="w", foreground="#666",
             ).pack(side="left", padx=(4, 8))
 
-            # Meter dropdown — current value from override map,
-            # or the part's composed meter as a fallback display.
-            current_meter = player.part_meter_overrides.get(name)
-            if current_meter is None and part is not None:
-                current_meter = str(part.meter)
-            meter_var = _var(tk.StringVar, value=current_meter or "auto")
-            meter_cb = ttk.Combobox(
-                row, values=METER_CHOICES, textvariable=meter_var,
-                state="readonly", width=6,
-            )
-            meter_cb.pack(side="left", padx=(0, 4))
-
-            def _on_meter(_event, n=name, v=meter_var, part_=part):
-                choice = v.get()
-                if choice == "auto":
-                    # Clear override. Compose layer / .sb gives us
-                    # the part's composed meter back.
-                    player.set_part_meter(n, None)
-                else:
-                    player.set_part_meter(n, choice)
-
-            meter_cb.bind("<<ComboboxSelected>>", _on_meter)
+            # Show the part's meter so the user has a reference point
+            # for what each voice will inherit if its meter dropdown
+            # on the Generators tab is left at "auto". Read-only —
+            # per-voice meter overrides live next to each gen.
+            if part is not None:
+                ttk.Label(
+                    row, text=f"meter {part.meter}",
+                    foreground="#888",
+                ).pack(side="left", padx=(0, 4))
 
     _refresh_parts()
 
@@ -2138,15 +2121,60 @@ def run_tweak_gui(
 
             overrides = player.get_knob_overrides()
 
+            # Meter dropdown options — "auto" clears the override
+            # (gen inherits the part's meter, which is the default).
+            # Anything else forces this voice to its own cycle, so
+            # e.g. drums can stay 4/4 while bass goes 5/4 within
+            # the same part.
+            GEN_METER_CHOICES = (
+                "auto", "4/4", "3/4", "6/8", "5/4", "7/8",
+                "2/4", "9/8", "12/8",
+            )
+
             for handle, gen in resolved.gens.items():
-                # Gen header row.
+                # Gen header row — label on the left, meter dropdown
+                # on the right.
                 row = ttk.Frame(gens_inner, borderwidth=1, relief="solid")
                 row.pack(fill="x", padx=4, pady=4)
+                header = ttk.Frame(row)
+                header.pack(fill="x", padx=4, pady=(2, 0))
                 ttk.Label(
-                    row,
+                    header,
                     text=f"{handle}  ({gen.type_} / {gen.style})",
                     font=("TkDefaultFont", 10, "bold"),
-                ).pack(anchor="w", padx=4, pady=(2, 0))
+                ).pack(side="left")
+
+                # Meter combo — show the current override if one is
+                # set, else show the gen's composed meter as a hint,
+                # else "auto" (= inherit part meter). Selecting
+                # "auto" clears the override.
+                override_meter = player.gen_meter_overrides.get(handle)
+                if override_meter is not None:
+                    current_meter = override_meter
+                elif gen.meter is not None:
+                    current_meter = str(gen.meter)
+                else:
+                    current_meter = "auto"
+                meter_var = _var(tk.StringVar, value=current_meter)
+                meter_cb = ttk.Combobox(
+                    header, values=GEN_METER_CHOICES,
+                    textvariable=meter_var,
+                    state="readonly", width=6,
+                )
+                meter_cb.pack(side="right", padx=(4, 4))
+                ttk.Label(
+                    header, text="meter", foreground="#666",
+                ).pack(side="right")
+
+                def _on_gen_meter(_event, h=handle, v=meter_var):
+                    choice = v.get()
+                    if choice == "auto":
+                        player.set_gen_meter(h, None)
+                    else:
+                        player.set_gen_meter(h, choice)
+
+                meter_cb.bind("<<ComboboxSelected>>", _on_gen_meter)
+                _persistent.append(_on_gen_meter)
 
                 specs = KNOB_SPECS.get(gen.type_, [])
                 if not specs:
