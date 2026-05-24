@@ -87,9 +87,9 @@ _GEN_KNOBS = frozenset(
      "fill_every", "fill_style", "phrase_lift",
      "harmonize_with", "interval", "modulate_to",
      "tension_dyn", "drop_intensity", "stutter", "mistakes",
-     # TTS list-of-strings example knob (issue #26). The full set
-     # of speech / sample gen knobs lands alongside those gens.
-     "phrases"}
+     # TTS list-of-strings example knob (issue #26) + speech
+     # generator knobs (issue #27). sample-gen knobs land in #28.
+     "phrases", "voice", "phrase_interval", "note_base", "velocity"}
 )
 # Part-level knobs:
 #   transpose_prob — per-instance roll for transposition (issue #10)
