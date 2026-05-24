@@ -1504,6 +1504,117 @@ def _build_builder_tab(parent, *, player, _var, ttk, tk) -> None:
     ).pack(side="left", padx=(8, 0))
     ttk.Label(tempo_row, text=" BPM").pack(side="left")
 
+    # 🎨 Per-voice style — collapsible disclosure. Each gen type gets
+    # its own style dropdown so a song generated with primary style
+    # "acid" can have e.g. lofi chords + dub_techno pads. Built from
+    # the generator registry so only legal (type, style) combos
+    # appear in each dropdown.
+    from slackbeatz.generators.registry import list_generators
+    styles_by_type: dict[str, list[str]] = {}
+    for (t_, s_) in list_generators():
+        styles_by_type.setdefault(t_, []).append(s_)
+    # Roles surfaced in the UI — order matches the song's natural
+    # layering (drums → bass → leads → chords → ear-candy).
+    _PER_VOICE_ROLES = (
+        "rhythm", "drums", "bass", "subbass", "melody", "chords", "candy",
+    )
+    per_voice_frame = ttk.Frame(form)
+    per_voice_vars: dict[str, "tk.StringVar"] = {}
+    per_voice_combos: dict[str, "ttk.Combobox"] = {}
+
+    disclose_var = _var(tk.StringVar, value="▸ 🎨 Per-voice style")
+    disclose_state = {"open": False}
+
+    def _populate_per_voice_dropdowns() -> None:
+        # Sync each combo to the current effective style for its
+        # type: explicit per-type override > global style_override >
+        # composer default (just shows the global, the composer's
+        # title-derived pick happens at compose time).
+        global_style = (
+            player.style_override
+            if player.style_override in KNOWN_STYLES else KNOWN_STYLES[0]
+        )
+        ovr = player.style_per_type or {}
+        for type_, var in per_voice_vars.items():
+            var.set(ovr.get(type_, global_style))
+
+    def _toggle_per_voice() -> None:
+        if disclose_state["open"]:
+            per_voice_frame.grid_remove()
+            disclose_var.set("▸ 🎨 Per-voice style")
+            disclose_state["open"] = False
+        else:
+            _populate_per_voice_dropdowns()
+            per_voice_frame.grid()
+            disclose_var.set("▾ 🎨 Per-voice style")
+            disclose_state["open"] = True
+
+    ttk.Button(
+        form, textvariable=disclose_var,
+        command=_toggle_per_voice, style="Toolbutton",
+    ).grid(row=3, column=0, columnspan=3, sticky="w",
+           padx=(0, 0), pady=(2, 2))
+    per_voice_frame.grid(row=4, column=0, columnspan=3,
+                         sticky="w", padx=(20, 0))
+    per_voice_frame.grid_remove()  # hidden until user opens it
+
+    for i, type_ in enumerate(_PER_VOICE_ROLES):
+        type_styles = sorted(styles_by_type.get(type_, []))
+        if not type_styles:
+            continue
+        ttk.Label(per_voice_frame, text=type_, width=8,
+                  anchor="w", foreground="#666").grid(
+            row=i, column=0, sticky="w", padx=(0, 4), pady=1,
+        )
+        v = _var(tk.StringVar, value=type_styles[0])
+        cb = ttk.Combobox(
+            per_voice_frame, textvariable=v, values=type_styles,
+            state="readonly", width=18,
+        )
+        cb.grid(row=i, column=1, sticky="w", pady=1)
+        per_voice_vars[type_] = v
+        per_voice_combos[type_] = cb
+
+        def _on_change(_event, t=type_, vv=v):
+            chosen = vv.get()
+            global_style = (
+                player.style_override
+                if player.style_override in KNOWN_STYLES else None
+            )
+            # Picking the same value as the global style clears the
+            # per-type override so the song re-inherits cleanly.
+            if chosen == global_style:
+                player.set_style_for_type(t, None)
+            else:
+                player.set_style_for_type(t, chosen)
+
+        cb.bind("<<ComboboxSelected>>", _on_change)
+
+        def _on_reset(t=type_, vv=v):
+            player.set_style_for_type(t, None)
+            global_style = (
+                player.style_override
+                if player.style_override in KNOWN_STYLES
+                else KNOWN_STYLES[0]
+            )
+            vv.set(global_style)
+
+        ttk.Button(
+            per_voice_frame, text="↺", width=2, command=_on_reset,
+        ).grid(row=i, column=2, sticky="w", padx=(4, 0), pady=1)
+
+    # Global Style change clears per-voice overrides so a switch
+    # from "acid → lofi" doesn't leave stale acid pads behind.
+    def _on_global_style(_event=None):
+        if player.style_per_type:
+            player.clear_styles_per_type()
+            _populate_per_voice_dropdowns()
+            status_var.set(
+                f"style → {style_var.get()} (per-voice cleared)"
+            )
+
+    style_cb.bind("<<ComboboxSelected>>", _on_global_style)
+
     # Status line — shows what was last generated. Updates on every
     # Generate + on player state changes from other tabs.
     status_var = _var(tk.StringVar, value="(no song generated yet)")
@@ -1594,16 +1705,44 @@ def _build_builder_tab(parent, *, player, _var, ttk, tk) -> None:
     # drums in 4/4 while bass runs in 5/4), which is what the user
     # actually wants for polyrhythm work.
     # ------------------------------------------------------------------
-    parts_frame = ttk.LabelFrame(parent, text="🧱  Parts")
+    parts_frame = ttk.LabelFrame(
+        parent, text="🧱  Parts (= arrangement order)"
+    )
     parts_frame.pack(fill="both", expand=True, padx=10, pady=(8, 8))
 
     parts_body = ttk.Frame(parts_frame)
     parts_body.pack(fill="both", expand=True, padx=8, pady=4)
 
+    # Footer for "+ add part" — created once, rebuilt each refresh.
+    parts_footer = ttk.Frame(parts_frame)
+    parts_footer.pack(fill="x", padx=8, pady=(2, 6))
+    add_part_var = _var(tk.StringVar, value="")
+    add_part_cb = ttk.Combobox(
+        parts_footer, textvariable=add_part_var,
+        state="readonly", width=18,
+    )
+
+    def _current_seq() -> list[str]:
+        # Mirror the standalone Arrangement tab: prefer
+        # arrangement_override when set, else fall back to the
+        # resolved arrangement (already skip-filtered by Player).
+        if player.arrangement_override is not None:
+            return list(player.arrangement_override)
+        resolved = player.current_resolved
+        if resolved is None:
+            return []
+        return list(resolved.arrangement)
+
+    def _apply_seq(seq: list[str]) -> None:
+        player.set_arrangement(seq)
+        _refresh_parts()
+
     def _refresh_parts() -> None:
         # Wipe + rebuild — cheap. Fires on every state change
-        # (Generate, Re-roll, REPL phrase load, skip-toggle, …).
+        # (Generate, Re-roll, REPL phrase load, reorder, skip-toggle, …).
         for w in parts_body.winfo_children():
+            w.destroy()
+        for w in parts_footer.winfo_children():
             w.destroy()
         resolved = player.current_resolved
         if resolved is None:
@@ -1613,41 +1752,74 @@ def _build_builder_tab(parent, *, player, _var, ttk, tk) -> None:
                 foreground="#888", font=("TkDefaultFont", 10, "italic"),
             ).pack(anchor="w")
             return
-        # Build a sorted list of unique part names from the
-        # composed arrangement (drop duplicates — skip is by name,
-        # not by arrangement index in v1). Show bars + use-count
-        # so the user knows what each part contributes.
-        seen: list[str] = []
-        uses: dict[str, int] = {}
-        for name in resolved.arrangement:
-            if name not in seen:
-                seen.append(name)
-            uses[name] = uses.get(name, 0) + 1
-        # Also include parts in resolved.parts that aren't in
-        # arrangement — they might be in skip_parts already.
-        for name in resolved.parts:
-            if name not in seen and name in player.skip_parts:
-                seen.append(name)
-                uses[name] = 0
-        if not seen:
+        seq = _current_seq()
+        if not seq:
             ttk.Label(
                 parts_body,
                 text="(this song has no parts? unusual — check the .sb)",
                 foreground="#888", font=("TkDefaultFont", 10, "italic"),
             ).pack(anchor="w")
             return
+
+        # Count how many times each name appears in the sequence so we
+        # can show a small "×N" hint next to duplicates.
+        name_counts: dict[str, int] = {}
+        for nm in seq:
+            name_counts[nm] = name_counts.get(nm, 0) + 1
+
         part_overrides_snapshot = player.get_part_overrides()
-        for name in seen:
+        # Each row is one *arrangement position*. Reorder / delete
+        # operate on this position; ☑ include and ▾ attribute editor
+        # operate on the part by name (so they affect every occurrence
+        # of the same part name).
+        for idx, name in enumerate(seq):
             wrapper = ttk.Frame(parts_body)
             wrapper.pack(fill="x", pady=1)
             row = ttk.Frame(wrapper)
             row.pack(fill="x")
+
+            # Position-arrow + delete buttons.
+            def _move(i, delta):
+                s = _current_seq()
+                j = i + delta
+                if not (0 <= j < len(s)):
+                    return
+                s[i], s[j] = s[j], s[i]
+                _apply_seq(s)
+
+            def _delete(i):
+                s = _current_seq()
+                if 0 <= i < len(s):
+                    del s[i]
+                    _apply_seq(s)
+
+            ttk.Button(
+                row, text="⇡", width=2,
+                command=lambda i=idx: _move(i, -1),
+            ).pack(side="left")
+            ttk.Button(
+                row, text="⇣", width=2,
+                command=lambda i=idx: _move(i, +1),
+            ).pack(side="left", padx=(2, 0))
+            ttk.Button(
+                row, text="✕", width=2,
+                command=lambda i=idx: _delete(i),
+            ).pack(side="left", padx=(2, 6))
+
+            # Position number — disambiguates duplicate part names.
+            ttk.Label(
+                row, text=f"{idx + 1:2d}.", width=3, anchor="e",
+                foreground="#888",
+            ).pack(side="left")
+
             include_var = _var(
                 tk.IntVar, value=0 if name in player.skip_parts else 1,
             )
 
             def _on_include(n=name, v=include_var):
-                # Checkbox is "include"; skip = not include.
+                # Checkbox is "include"; skip = not include. Applies
+                # to ALL occurrences of this part name — same
+                # semantics as before the merge.
                 player.set_skip_part(n, not bool(v.get()))
 
             ttk.Checkbutton(
@@ -1656,7 +1828,7 @@ def _build_builder_tab(parent, *, player, _var, ttk, tk) -> None:
 
             part = resolved.parts.get(name)
             bars = part.bars if part is not None else 0
-            use_count = uses.get(name, 0)
+            use_count = name_counts.get(name, 0)
             count_hint = f" ×{use_count}" if use_count > 1 else ""
             ttk.Label(
                 row, text=f"{name}", width=14, anchor="w",
@@ -1696,6 +1868,44 @@ def _build_builder_tab(parent, *, player, _var, ttk, tk) -> None:
             ttk.Button(
                 row, text="▾", width=2, command=_on_toggle,
             ).pack(side="left", padx=(4, 0))
+
+        # Footer — "Add part:" dropdown + add button. Choices are
+        # every part defined in the resolved song (including those
+        # currently missing from the arrangement via skip / delete).
+        avail = list(resolved.parts.keys())
+        ttk.Label(parts_footer, text="Add part:",
+                  foreground="#666").pack(side="left")
+        add_cb = ttk.Combobox(
+            parts_footer, textvariable=add_part_var,
+            values=avail, state="readonly", width=18,
+        )
+        add_cb.pack(side="left", padx=(4, 4))
+        if avail and add_part_var.get() not in avail:
+            add_part_var.set(avail[0])
+
+        def _on_add():
+            choice = add_part_var.get().strip()
+            if not choice:
+                return
+            s = _current_seq()
+            s.append(choice)
+            _apply_seq(s)
+
+        ttk.Button(parts_footer, text="+ add", command=_on_add).pack(
+            side="left",
+        )
+
+        def _on_reset_arr():
+            player.set_arrangement(None)
+            _refresh_parts()
+
+        reset_btn = ttk.Button(
+            parts_footer, text="↺ reset arrangement",
+            command=_on_reset_arr,
+        )
+        reset_btn.pack(side="right")
+        if player.arrangement_override is None:
+            reset_btn.state(["disabled"])
 
         def _populate_attrs(container, part, part_name, overrides):
             # Re-bind callback closures each rebuild so they see the
@@ -2758,21 +2968,11 @@ def run_tweak_gui(
         )
         main_thread_callbacks.append(builder_refresh)
 
-    # ------------------------------------------------------------------
-    # 🎬 Arrangement tab — reorder / add / remove parts in the play
-    # sequence at runtime. Edits the Player's ``arrangement_override``;
-    # the .sb's original ``play`` line is unchanged until the user
-    # explicitly saves via the Builder. Each row is a single
-    # arrangement position (groups are flattened — repeats can be made
-    # by duplicating rows).
-    # ------------------------------------------------------------------
-    if player is not None:
-        arr_tab = ttk.Frame(notebook)
-        notebook.add(arr_tab, text="🎬 Arrangement")
-        arr_refresh = _build_arrangement_tab(
-            arr_tab, player=player, _var=_var, ttk=ttk, tk=tk, root=root,
-        )
-        main_thread_callbacks.append(arr_refresh)
+    # Arrangement editing is folded into the Builder's Parts panel
+    # (each row is one arrangement position with ⇡⇣✕ controls). The
+    # standalone 🎬 Arrangement tab was removed in favour of that
+    # merged view — _build_arrangement_tab is kept in this module for
+    # now but no longer added to the notebook.
 
     # ------------------------------------------------------------------
     # Transport tab — only created if a Player is provided. Drives the

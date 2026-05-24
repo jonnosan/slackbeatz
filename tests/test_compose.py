@@ -111,6 +111,41 @@ def test_compose_single_char_change_differs() -> None:
 
 # --- Composed song actually resolves ------------------------------------
 
+def test_style_per_type_overrides_individual_gen_lines() -> None:
+    """``style_per_type={'chords': 'lofi'}`` rewrites only the chord
+    gen line; bass / melody / candy stay on the primary style."""
+    sb = compose_from_text(
+        "acid groove",
+        style_override="acid",
+        style_per_type={"chords": "lofi"},
+    )
+    found = {}
+    for line in sb.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("gen "):
+            continue
+        # gen <handle> <type> <style> [knobs…]
+        bits = stripped.split()
+        if len(bits) >= 4:
+            handle, type_, style = bits[1], bits[2], bits[3]
+            found[(handle, type_)] = style
+    chord_styles = {s for (_h, t), s in found.items() if t == "chords"}
+    other_styles = {s for (_h, t), s in found.items() if t != "chords"}
+    assert chord_styles == {"lofi"}, found
+    assert other_styles and "lofi" not in other_styles, found
+
+
+def test_style_per_type_none_is_byte_identical() -> None:
+    """Passing ``style_per_type=None`` (or omitting it) must reproduce
+    the byte-identical .sb the composer wrote pre-feature."""
+    a = compose_from_text("acid groove", style_override="acid")
+    b = compose_from_text("acid groove", style_override="acid",
+                          style_per_type=None)
+    c = compose_from_text("acid groove", style_override="acid",
+                          style_per_type={})
+    assert a == b == c
+
+
 def test_composed_song_resolves_against_gm_setup() -> None:
     """Every style + handle combo the composer emits must bind to the
     bundled `gm` setup."""

@@ -379,6 +379,16 @@ class Player:
         self.tempo_override: Optional[int] = None
         self.seed_offset: int = 0
 
+        # Per-gen-type style overrides — the Builder's 🎨 Per-voice
+        # style disclosure populates this with entries like
+        # ``{"chords": "lofi", "bass": "psytrance"}``. Threaded into
+        # :func:`compose_from_text` so each gen line in the rendered
+        # .sb gets its type-specific style. The primary
+        # :attr:`style_override` still drives the song profile
+        # (gen layout, tempo, arrangement); per-type entries just
+        # change which per-style algorithm each gen runs.
+        self.style_per_type: Optional[dict[str, str]] = None
+
         # Arrangement-level overrides applied AFTER resolution but
         # BEFORE the scheduler reads it. Set by the GUI's Builder
         # tab; both are empty when no skip / no per-voice meter is in
@@ -811,6 +821,7 @@ class Player:
                 self.current_phrase,
                 seed_offset=self.seed_offset,
                 style_override=self.style_override,
+                style_per_type=self.style_per_type,
                 tempo_override=self.tempo_override,
             )
             return self._with_state_header(sb)
@@ -972,6 +983,44 @@ class Player:
                 f"style → {self.style_override or 'auto'}",
             )
 
+    def set_style_for_type(self, type_: str, style: Optional[str]) -> str:
+        """Per-gen-type style override (Builder 🎨 Per-voice section).
+        ``style=None`` clears the override for *type_*. Validates *style*
+        against :data:`KNOWN_STYLES` — a per-type bad style is rejected
+        the same way :meth:`set_style` rejects the global one."""
+        with self._lock:
+            if self.current_song_path is not None:
+                return "style override only applies to phrase-composed songs"
+            if style is None:
+                if self.style_per_type:
+                    self.style_per_type.pop(type_, None)
+                    if not self.style_per_type:
+                        self.style_per_type = None
+                return self._restart_after_change(
+                    f"cleared {type_} style override",
+                )
+            if style not in KNOWN_STYLES:
+                return f"unknown style {style!r} — known: {', '.join(KNOWN_STYLES)}"
+            if self.style_per_type is None:
+                self.style_per_type = {}
+            self.style_per_type[type_] = style
+            return self._restart_after_change(
+                f"{type_} style → {style}",
+            )
+
+    def clear_styles_per_type(self) -> str:
+        """Wipe every entry in :attr:`style_per_type`. Used by the
+        Builder when the user picks a new global style — we don't
+        silently keep stale per-voice overrides around."""
+        with self._lock:
+            if not self.style_per_type:
+                return "no per-voice style overrides"
+            n = len(self.style_per_type)
+            self.style_per_type = None
+            return self._restart_after_change(
+                f"cleared {n} per-voice style override(s)",
+            )
+
     def set_seed_offset(self, offset: int) -> str:
         with self._lock:
             self.seed_offset = int(offset)
@@ -1101,6 +1150,7 @@ class Player:
                 self.current_phrase,
                 seed_offset=self.seed_offset,
                 style_override=self.style_override,
+                style_per_type=self.style_per_type,
                 tempo_override=self.tempo_override,
             )
             with tempfile.NamedTemporaryFile(

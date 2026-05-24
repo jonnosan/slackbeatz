@@ -292,6 +292,7 @@ def compose_from_text(
     output_path: Path | str | None = None,
     seed_offset: int = 0,
     style_override: str | None = None,
+    style_per_type: dict[str, str] | None = None,
     tempo_override: int | None = None,
 ) -> str:
     """Compose a slackbeatz `.sb` file from an arbitrary input string.
@@ -315,6 +316,13 @@ def compose_from_text(
     "deep_techno", "psytrance", "acid", "vaporwave", "dub_techno",
     "drum_and_bass", "garage", "euclid").
 
+    *style_per_type* — optional per-gen-type style override. The
+    primary *style* (and its profile in :data:`_STYLE_PROFILES`)
+    still drives the song's gen layout / tempo / arrangement; entries
+    in this map just rewrite individual gens' style column so e.g.
+    ``{"chords": "lofi"}`` runs the lofi chord algorithm inside an
+    otherwise-acid song. Unknown gen types are ignored.
+
     *tempo_override* — force a specific BPM in place of the
     sentiment-derived value.
     """
@@ -335,7 +343,10 @@ def compose_from_text(
     seed = int.from_bytes(h[0:6], "big")
     tempo = tempo_override if tempo_override is not None else derive_tempo(h, style, sentiment)
     key = derive_key(h, style, sentiment)
-    content = render_sb(title, style, key, tempo, seed, h, sentiment)
+    content = render_sb(
+        title, style, key, tempo, seed, h, sentiment,
+        style_per_type=style_per_type,
+    )
     if output_path is not None:
         Path(output_path).write_text(content)
     return content
@@ -487,8 +498,19 @@ def render_sb(
     seed: int,
     h: bytes,
     sentiment: int,
+    *,
+    style_per_type: dict[str, str] | None = None,
 ) -> str:
-    """Format a complete `.sb` file string."""
+    """Format a complete `.sb` file string.
+
+    *style_per_type* (optional) overrides the per-gen ``style`` column
+    for individual gen types — e.g. ``{"chords": "lofi"}`` writes
+    ``gen chord chords lofi`` while every other gen still uses the
+    primary *style*. The primary style continues to drive the song
+    profile (which gens are included, the arrangement template), so
+    per-type overrides change only the per-gen algorithm.
+    """
+    style_per_type = style_per_type or {}
     profile = _STYLE_PROFILES[style]
     seed_overrides = derive_seed_overrides(h)
     scale_override = derive_scale_override(h, style, sentiment)
@@ -515,7 +537,8 @@ def render_sb(
     # Gens with style-aware knobs sprinkled in.
     gens = profile.gens
     for handle, gen_type in gens:
-        parts = [f"gen {handle:<6} {gen_type:<7} {style}"]
+        gen_style = style_per_type.get(gen_type, style)
+        parts = [f"gen {handle:<6} {gen_type:<7} {gen_style}"]
         # If the chosen handle isn't a standard gm-setup instrument name,
         # add an inst= knob mapping it onto the real rig.
         if handle in _HANDLE_TO_INST:
@@ -532,7 +555,7 @@ def render_sb(
             if flair & 0x10:
                 parts.append("octave_jump=0.05")
             # Acid bass gets burble.
-            if style == "psytrance" and flair & 0x20:
+            if gen_style == "psytrance" and flair & 0x20:
                 parts.append("burble_prob=0.08")
         elif gen_type == "melody":
             if flair & 0x40:
@@ -544,7 +567,7 @@ def render_sb(
         elif gen_type == "chords":
             if flair & 0x04:
                 parts.append("voice_lead=1")
-            if style == "vaporwave" and flair & 0x02:
+            if gen_style == "vaporwave" and flair & 0x02:
                 parts.append("arp_prob=0.1")
         lines.append(" ".join(parts))
     lines.append("")
