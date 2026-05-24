@@ -337,6 +337,10 @@ _DEFAULT_FX_TYPE_SLOT2 = 1  # Delay
 # the signal to hide the row rather than render an unhelpful generic.
 FX_DOC_CACHE: dict[tuple[int, int], str] = {}
 _FX_DOC_DISCOVERY_DONE = threading.Event()
+# Acquired by whichever Surge instance starts the background sweep
+# first; non-blocking, so additional instances no-op without
+# spawning duplicate sweep threads.
+_FX_DOC_DISCOVERY_LOCK = threading.Lock()
 
 
 def fx_addr(slot: int, kind: str, param_idx: int | None = None) -> str:
@@ -513,17 +517,11 @@ class SurgeInstance:
         self.set_param(fx_addr(2, "type"), float(_DEFAULT_FX_TYPE_SLOT2))
         self.set_param(fx_addr(2, "deactivate"), 1.0)
 
-        # Discovery sweep — once per process. Subsequent Surge
-        # instances skip this since the cache they'd populate is
-        # already complete.
-        already_discovered = _FX_DOC_DISCOVERY_DONE.is_set()
-        if not already_discovered:
-            self._discover_fx_param_names_into_cache()
-            _FX_DOC_DISCOVERY_DONE.set()
-
-        # Now load the real default in slot 1 + query its docs. (When
-        # we skipped discovery the slot was untouched, so the type
-        # write is still needed here.)
+        # Load the real default in slot 1 + query its docs. Done
+        # BEFORE kicking off discovery so the user-visible FX state
+        # is correct immediately — discovery happens in the
+        # background and only writes to FX_DOC_CACHE, never to a
+        # user-visible slot.
         self.set_param(fx_addr(1, "type"), float(_DEFAULT_FX_TYPE_SLOT1))
         self.set_param(fx_addr(1, "deactivate"), 1.0)
         # Surge needs ~50ms to settle the new FX type's param tree
@@ -532,13 +530,54 @@ class SurgeInstance:
         self.query_fx_slot_docs(1)
         self.query_fx_slot_docs(2)
 
+        # Discovery sweep — once per process, in a background thread
+        # so we don't pile ~3s onto slackbeatz startup. The first
+        # Surge instance to reach this point owns the sweep;
+        # subsequent instances no-op. The Sound tab renders with
+        # the catalog fallback while discovery is in flight + auto-
+        # swaps to real labels on the next /doc repoll (the
+        # _FX_DOC_DISCOVERY_DONE event flips when the sweep
+        # finishes, which the GUI's _label_for_param checks each
+        # render).
+        if _FX_DOC_DISCOVERY_LOCK.acquire(blocking=False):
+            def _sweep_then_release() -> None:
+                try:
+                    # The sweep uses slot 2 as scratch space (not
+                    # slot 1) so the user-visible default in slot 1
+                    # stays put even if a Sound-tab repaint races
+                    # with the sweep. Final write at the end of
+                    # the sweep restores slot 2 to its default.
+                    self._discover_fx_param_names_into_cache()
+                    # Re-install the slot 2 default once the sweep
+                    # is done (the sweep left slot 2 at whatever
+                    # the last visited type was).
+                    self.set_param(
+                        fx_addr(2, "type"), float(_DEFAULT_FX_TYPE_SLOT2),
+                    )
+                    self.set_param(fx_addr(2, "deactivate"), 1.0)
+                    time.sleep(0.1)
+                    self.query_fx_slot_docs(2)
+                finally:
+                    _FX_DOC_DISCOVERY_DONE.set()
+                    _FX_DOC_DISCOVERY_LOCK.release()
+
+            threading.Thread(
+                target=_sweep_then_release,
+                name=f"surge-fx-doc-discovery-{self.config.role}",
+                daemon=True,
+            ).start()
+
     def _discover_fx_param_names_into_cache(self) -> None:
         """Sweep every FX type in :data:`FX_CATALOG`, load it into
-        slot 1 transiently, query Surge for each param's /doc reply,
-        and stash real names into :data:`FX_DOC_CACHE`. About 100ms
-        per FX type, ~1s total — runs once per slackbeatz session on
-        whichever Surge instance reaches it first."""
-        scratch_slot = 1
+        slot 2 transiently, query Surge for each param's /doc reply,
+        and stash real names into :data:`FX_DOC_CACHE`. About 300ms
+        per FX type, ~3s total — runs once per slackbeatz session on
+        whichever Surge instance reaches it first, in a background
+        thread so it doesn't block startup. Slot 2 is used as
+        scratch space (not slot 1) so the user-visible default
+        Distortion in slot 1 isn't disturbed if the GUI repaints
+        mid-sweep."""
+        scratch_slot = 2
         for type_id in FX_CATALOG:
             if type_id == 0:
                 continue  # "Off" — no params to label
@@ -546,11 +585,14 @@ class SurgeInstance:
             # fire /doc queries for all 12 slots.
             self.set_param(fx_addr(scratch_slot, "type"), float(type_id))
             self.set_param(fx_addr(scratch_slot, "deactivate"), 1.0)
-            time.sleep(0.08)
+            time.sleep(0.12)
             self.query_fx_slot_docs(scratch_slot)
-            # Replies trickle in over the next ~50ms — wait a beat
-            # so the docs cache is populated before we read it.
-            time.sleep(0.06)
+            # Replies arrive via the UDP server thread. We need to
+            # wait until they've actually been parsed into
+            # ``self._docs`` before we read; localhost UDP is
+            # sub-ms but Surge can batch up to a dozen replies
+            # serially. 200ms is comfortable headroom.
+            time.sleep(0.2)
             for p_idx in range(1, 13):
                 addr = fx_addr(scratch_slot, "param", p_idx)
                 doc = self._docs.get(addr)

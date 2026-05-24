@@ -1072,48 +1072,56 @@ def _build_surge_fx_slots(parent, surge_instance, _var, ttk, tk) -> None:
             for w in frame.winfo_children():
                 w.destroy()
 
-            spec = FX_CATALOG.get(spec_type_id)
-            essentials = spec.params if spec is not None else ()
+            # Source of truth for "what params exist on this FX type"
+            # is Surge itself — via the FX_DOC_CACHE the discovery
+            # sweep filled at spawn (or the live /doc cache on this
+            # instance for types we've touched since). The catalog's
+            # role is purely the dropdown's display-label mapping;
+            # the (label, p_idx) lists inside it can drift out of
+            # sync with the running Surge XT build (param indices
+            # and short names change between releases) and that
+            # USED to leave the user with no sliders to grab.
+            #
+            # Algorithm:
+            #   * collect every p_idx 1..12 that has a real name
+            #     (live /doc OR FX_DOC_CACHE for this type),
+            #   * split that list into "essentials" (first 3) +
+            #     "advanced" (the rest) so the row stays compact,
+            #   * if nothing has a name yet (discovery still in
+            #     flight on the first repaint), fall back to the
+            #     catalog so the user gets something to grab until
+            #     real labels arrive.
+            named_params: list[tuple[int, str]] = []
+            for p_idx in range(1, 13):
+                label, src = _label_for_param(
+                    slot_, p_idx, fallback="",  # blank fallback — see below
+                    type_id=spec_type_id,
+                )
+                if label and src in ("live", "cache"):
+                    named_params.append((p_idx, label))
 
-            # Essentials block — catalog-curated 1-3 params. These
-            # always render even if Surge has no name for them (the
-            # catalog label is good enough).
-            for catalog_label, p_idx in essentials:
-                label, _src = _label_for_param(
-                    slot_, p_idx, catalog_label, type_id=spec_type_id,
-                )
-                # Essentials use the catalog fallback if hide would
-                # fire — they're curated, so we trust the catalog.
-                _make_param_slider(
-                    frame, slot_, p_idx, label or catalog_label,
-                )
-            if not essentials:
-                # Catalog says "no essential params" (e.g. Off, Vocoder).
-                # We still render advanced for the full param list so
-                # the slot isn't a dead end.
-                ttk.Label(
-                    frame, text="(no essential params for this FX — "
-                                "see Advanced)",
-                    foreground="#888",
-                    font=("TkDefaultFont", 9, "italic"),
-                ).pack(anchor="w")
+            using_catalog_fallback = False
+            if not named_params:
+                # Pre-discovery or post-discovery-with-no-data cases.
+                # Use the catalog's essentials as a safety net so the
+                # user can still grab the common knobs.
+                spec = FX_CATALOG.get(spec_type_id)
+                catalog_essentials = spec.params if spec is not None else ()
+                named_params = [(p_idx, lbl) for lbl, p_idx in catalog_essentials]
+                using_catalog_fallback = bool(named_params)
 
-            # Advanced expander — every param 1-12 not already in
-            # essentials. Labels come from /doc + FX_DOC_CACHE; rows
-            # whose label is None (Surge has authoritatively said
-            # the slot has no name in this FX type, post-discovery)
-            # are skipped entirely.
-            essential_indices = {p_idx for _l, p_idx in essentials}
-            advanced_rows: list[tuple[int, str]] = []
-            for i in range(1, 13):
-                if i in essential_indices:
-                    continue
-                label, _src = _label_for_param(
-                    slot_, i, f"param {i}", type_id=spec_type_id,
-                )
-                if label is None:
-                    continue
-                advanced_rows.append((i, label))
+            essentials_rows = named_params[:3]
+            advanced_rows: list[tuple[int, str]] = named_params[3:]
+
+            # Essentials block.
+            for p_idx, label in essentials_rows:
+                _make_param_slider(frame, slot_, p_idx, label)
+            if not essentials_rows:
+                # Genuinely no params discovered for this FX type
+                # (e.g. Off, Vocoder). Skip the empty-essentials
+                # placeholder — the advanced section's "(no extra
+                # params)" hint below conveys the same thing.
+                pass
 
             adv_header = ttk.Frame(frame)
             adv_header.pack(fill="x", pady=(4, 0))
@@ -1144,15 +1152,42 @@ def _build_surge_fx_slots(parent, surge_instance, _var, ttk, tk) -> None:
                     command=_toggle_advanced,
                     width=16,
                 ).pack(side="left")
-            else:
-                # All advanced slots either are essentials or are
-                # known-unused in this FX type — no point in showing
-                # an empty expander.
+            elif essentials_rows:
+                # Got essentials but nothing beyond — say so.
                 ttk.Label(
                     adv_header, text="(no extra params for this FX)",
                     foreground="#888",
                     font=("TkDefaultFont", 9, "italic"),
                 ).pack(side="left")
+            else:
+                # No essentials AND no advanced. Could mean: Off /
+                # Vocoder (genuinely zero params), OR discovery
+                # hasn't completed yet on a type we've never seen.
+                # Either way, give the user a non-empty hint they
+                # can act on.
+                if not _FX_DOC_DISCOVERY_DONE.is_set():
+                    msg = "(discovering params from Surge — wait a moment)"
+                else:
+                    msg = (
+                        f"(Surge reports no params for FX type "
+                        f"#{spec_type_id} — try another type, "
+                        f"or use Open GUI editor…)"
+                    )
+                ttk.Label(
+                    adv_header, text=msg,
+                    foreground="#888",
+                    font=("TkDefaultFont", 9, "italic"),
+                ).pack(side="left")
+
+            # If we're rendering from the catalog fallback (no real
+            # labels yet), nudge the user with a one-time note.
+            if using_catalog_fallback:
+                ttk.Label(
+                    frame, text="(loading real param names — sliders "
+                                "will refresh in ~1 s)",
+                    foreground="#888",
+                    font=("TkDefaultFont", 9, "italic"),
+                ).pack(anchor="w", pady=(2, 0))
 
             # Render the advanced sliders into the (possibly hidden)
             # frame ahead of time so toggling it on is instant.
