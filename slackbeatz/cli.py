@@ -1088,6 +1088,31 @@ def cmd_repl(args) -> int:
             cleanup_fs()
             os._exit(0)
 
+        # Install a SIGINT handler that triggers _stop_now. macOS Tk
+        # mainloop runs NSApplication's run loop in C and swallows
+        # KeyboardInterrupt until the next Python frame — which may
+        # never come if the user isn't moving the mouse over a Tk
+        # widget. Without this handler, Ctrl-C in the terminal hangs
+        # silently and the user has to SIGKILL, orphaning the Surge
+        # subprocesses + sampler. The handler restores itself to
+        # default after firing so a second Ctrl-C is a hard kill in
+        # case _stop_now itself wedges.
+        import signal as _signal
+        def _sigint_handler(_signum, _frame):
+            try:
+                _signal.signal(_signal.SIGINT, _signal.SIG_DFL)
+            except Exception:
+                pass
+            print("\nslackbeatz: SIGINT — shutting down…", file=sys.stderr)
+            _stop_now()
+        try:
+            _signal.signal(_signal.SIGINT, _sigint_handler)
+        except (ValueError, OSError):
+            # signal.signal only works from the main thread — we're
+            # on it here, so this should succeed. Defensive in case
+            # a future refactor changes that.
+            pass
+
         repl_thread = threading.Thread(
             target=_repl_input_loop,
             args=(fs_proc, port_name, args, _stop_now),
@@ -1096,34 +1121,42 @@ def cmd_repl(args) -> int:
         )
         repl_thread.start()
         try:
-            run_tweak_gui(
-                fs_proc.stdin if fs_proc is not None else None,
-                initial_gain=args.gain,
-                initial_reverb_room=args.reverb,
-                player=player,
-                show_surge_gui_routing_hint=bool(surge_procs),
-                surge_instances=surge_instances or None,
-                on_close=_stop_now,
-            )
-        except RuntimeError as e:
-            # GUI refused to launch (e.g. non-threaded Tcl detected
-            # at startup). The REPL daemon thread is already running
-            # — but with the GUI gone, it ought to live on the main
-            # thread instead. Tell the daemon to exit, then run a
-            # fresh REPL on main with the same Player instance.
-            print(f"\n{e}\n\nFalling through to REPL-only mode.", file=sys.stderr)
-            # The daemon REPL might already be blocked in input(); we
-            # can't cleanly interrupt it cross-thread. Easiest is to
-            # let it co-exist as a no-op (it's daemon, dies when we
-            # exit) and run a new input loop on main. But two input()
-            # calls racing for stdin is broken, so instead we just
-            # exit — the user re-runs with the install-Tk hint.
+            try:
+                run_tweak_gui(
+                    fs_proc.stdin if fs_proc is not None else None,
+                    initial_gain=args.gain,
+                    initial_reverb_room=args.reverb,
+                    player=player,
+                    show_surge_gui_routing_hint=bool(surge_procs),
+                    surge_instances=surge_instances or None,
+                    on_close=_stop_now,
+                )
+            except RuntimeError as e:
+                # GUI refused to launch (e.g. non-threaded Tcl detected
+                # at startup). The REPL daemon thread is already running
+                # — but with the GUI gone, it ought to live on the main
+                # thread instead. Tell the daemon to exit, then run a
+                # fresh REPL on main with the same Player instance.
+                print(f"\n{e}\n\nFalling through to REPL-only mode.", file=sys.stderr)
+                # The daemon REPL might already be blocked in input(); we
+                # can't cleanly interrupt it cross-thread. Easiest is to
+                # let it co-exist as a no-op (it's daemon, dies when we
+                # exit) and run a new input loop on main. But two input()
+                # calls racing for stdin is broken, so instead we just
+                # exit — the user re-runs with the install-Tk hint.
+                return 1
+            except Exception as e:  # noqa: BLE001 — surface unexpected Tk runtime errors
+                print(f"(gui error: {e})", file=sys.stderr)
+            return 0
+        finally:
+            # Always tear down on the way out — covers normal close,
+            # caught Tk RuntimeError, caught generic Tk Exception, AND
+            # the KeyboardInterrupt path (which neither except clause
+            # catches, since KI inherits BaseException). Pre-fix this
+            # cleanup_fs() was outside the try block and got skipped
+            # whenever KI propagated, leaving Surge subprocesses
+            # running as orphans.
             cleanup_fs()
-            return 1
-        except Exception as e:  # noqa: BLE001 — surface unexpected Tk runtime errors
-            print(f"(gui error: {e})", file=sys.stderr)
-        cleanup_fs()
-        return 0
 
     # Fall-through path: --gui not set, OR Tk import failed. The REPL
     # runs on the main thread (no Tk involved).
