@@ -24,6 +24,8 @@ import mido
 
 from slackbeatz.engine.clock import PPQ, TempoMap, TempoSegment, bars_to_ticks
 from slackbeatz.engine.event import CC, Note, PitchBend, validate
+from slackbeatz.engine.feel_apply import apply_feel
+from slackbeatz.generators.feel import FEEL_KNOB_NAMES
 from slackbeatz.generators.registry import REGISTRY
 from slackbeatz.model.context import PartContext
 from slackbeatz.model.song import ResolvedSong
@@ -255,7 +257,13 @@ def render_events(song: ResolvedSong) -> list[tuple[int, mido.Message]]:
             )
             algo = _instantiate_algorithm(gen_resolved, algorithm=algorithm)
             bucket = events_by_gen.setdefault(gen_handle, [])
-            for event in algo.generate(ctx):
+            # Future hoist (see slackbeatz/engine/feel_apply.py): generators
+            # stop calling humanize_hit / apply_gate_jitter / etc. themselves
+            # and the post-emit apply_feel pass mutates events uniformly per
+            # the universal Feel knob set. apply_feel is a no-op pass-through
+            # today so byte-identical output is preserved.
+            feel = _feel_for_gen(gen_resolved)
+            for event in apply_feel(algo.generate(ctx), feel, ctx.rng, ctx):
                 validate(event)
                 if isinstance(event, Note):
                     on_tick = cursor + event.tick
@@ -310,6 +318,22 @@ def render_events(song: ResolvedSong) -> list[tuple[int, mido.Message]]:
     timed = [t for events in events_by_gen.values() for t in events]
     timed.sort(key=lambda t: (t[0], t[1]))
     return [(tick, msg) for tick, _key, msg in timed]
+
+
+def _feel_for_gen(gen) -> dict[str, object]:
+    """Extract the universal-Feel knob values from a resolved gen.
+
+    Today the values are read straight off the gen's knob dict; Phase C
+    will extend this to cascade Engine → Style → Song → Voice → Part
+    overrides before returning. The result is passed to
+    :func:`slackbeatz.engine.feel_apply.apply_feel` for the post-emit
+    pass (currently a no-op).
+    """
+    return {
+        name: gen.knobs.get(name)
+        for name in FEEL_KNOB_NAMES
+        if gen.knobs.get(name) is not None
+    }
 
 
 def _instantiate_algorithm(gen, *, algorithm: str | None = None):

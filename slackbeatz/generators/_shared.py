@@ -31,6 +31,15 @@ STEPS_PER_BAR = 16
 
 # --------------------------------------------------------------------------
 # Per-hit shaping (humanize / drop / accent / velocity jitter)
+#
+# These helpers are the *current* consumption point for the universal
+# Feel knob set declared in :mod:`slackbeatz.generators.feel`. A future
+# phase will hoist this logic into
+# :func:`slackbeatz.engine.feel_apply.apply_feel` (post-emit, scheduler-
+# level) so generators stop opting in by calling the helpers and the
+# Feel set is guaranteed to apply uniformly across every algorithm. See
+# the module docstring of :mod:`slackbeatz.engine.feel_apply` for the
+# tradeoffs of the hoist (byte-identical break + corpus regen).
 # --------------------------------------------------------------------------
 
 @dataclass(frozen=True)
