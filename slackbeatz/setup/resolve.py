@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from slackbeatz.dsl.ast import GenDecl, PartDecl, SongAST
 from slackbeatz.dsl.parser import expand_arrangement
+from slackbeatz.generators.registry import REGISTRY
 from slackbeatz.model.song import ResolvedGen, ResolvedPart, ResolvedSong
 from slackbeatz.theory.meter import COMMON_TIME, Meter
 
@@ -249,13 +250,36 @@ def _format_key(tonic: int, mode: str) -> str:
     return name
 
 
+def _style_algorithm_for_type(style_name: str, type_: str) -> str | None:
+    """Look up the algorithm a named style runs for a given gen type.
+
+    Powers the part-level ``style=NAME`` shorthand: each handle in the
+    part is mapped to the algorithm the style would assign to that
+    handle's gen type. Returns ``None`` if the style isn't known or
+    doesn't cover that type.
+    """
+    # Local import dodges a top-of-module circular dep —
+    # compose.py imports nothing from setup.resolve but is itself
+    # imported by cli.py / player.py which both depend on the resolver.
+    from slackbeatz.compose import _STYLE_PROFILES
+
+    profile = _STYLE_PROFILES.get(style_name)
+    if profile is None:
+        return None
+    for spec in profile.gens:
+        if spec.type_ == type_:
+            return spec.algorithm
+    return None
+
+
 def _resolve_part(
     part: PartDecl,
     song_tempo: int,
     song_key: str,
     song_meter: Meter,
-    known_gen_handles: set[str],
+    song_gens: dict[str, ResolvedGen],
 ) -> ResolvedPart:
+    known_gen_handles = set(song_gens)
     knobs = dict(part.knobs)
     tempo_raw = knobs.pop("tempo", None)
     key_raw = knobs.pop("key", None)
@@ -267,6 +291,7 @@ def _resolve_part(
     tension_raw = knobs.pop("tension", None)  # issue #14
     meter_raw = knobs.pop("meter", None)  # time signature override
     modulate_to_raw = knobs.pop("modulate_to", None)  # named modulation
+    style_raw = knobs.pop("style", None)  # Phase 4: part-level style shorthand
 
     if tempo_raw is None:
         tempo = song_tempo
@@ -350,6 +375,57 @@ def _resolve_part(
         except ValueError as e:
             raise ResolveError(part.line, f"part {part.name!r}: {e}") from None
 
+    # Phase 4 — per-part algorithm overrides.
+    #
+    # Two sources, applied in precedence order:
+    #   1. `style=NAME` expands to one override per handle, looking
+    #      up the algorithm by gen type in the named StyleProfile.
+    #   2. Explicit `<handle> <algorithm>` lines (parsed into
+    #      part.algorithm_overrides) override the style shorthand.
+    #
+    # Every override is validated against the registry so a typo
+    # surfaces at resolve time, not deep in the scheduler.
+    overrides: dict[str, str] = {}
+    if style_raw is not None:
+        if not isinstance(style_raw, str):
+            raise ResolveError(
+                part.line, f"part {part.name!r}: style must be a name",
+            )
+        for handle in part.gens:
+            gen = song_gens[handle]
+            algorithm = _style_algorithm_for_type(style_raw, gen.type_)
+            if algorithm is None:
+                # Unknown style or style that doesn't cover this gen
+                # type — fail loudly so users don't silently get the
+                # song-level default for half their handles.
+                raise ResolveError(
+                    part.line,
+                    f"part {part.name!r}: style={style_raw!r} has no "
+                    f"algorithm for {gen.type_!r} (handle {handle!r})",
+                )
+            overrides[handle] = algorithm
+    for handle, algorithm in part.algorithm_overrides.items():
+        gen = song_gens.get(handle)
+        if gen is None:
+            # Handle absent from song-level gens — same error message
+            # the part.gens loop above would produce, just hit by the
+            # override path first when the explicit `<handle> <algo>`
+            # syntax names a handle that isn't declared.
+            raise ResolveError(
+                part.line,
+                f"part {part.name!r}: gen {handle!r} not declared at song level",
+            )
+        if (gen.type_, algorithm) not in REGISTRY:
+            available = sorted(
+                a for (t, a) in REGISTRY if t == gen.type_
+            )
+            raise ResolveError(
+                part.line,
+                f"part {part.name!r}: unknown algorithm {algorithm!r} "
+                f"for {gen.type_} (available: {available})",
+            )
+        overrides[handle] = algorithm
+
     return ResolvedPart(
         name=part.name,
         bars=part.bars,
@@ -363,6 +439,7 @@ def _resolve_part(
         tension=tension,
         meter=meter,
         gen_handles=list(part.gens),
+        algorithm_overrides=overrides,
     )
 
 
@@ -405,7 +482,7 @@ def resolve_song(
     for p in song.parts:
         if p.name in parts:
             raise ResolveError(p.line, f"duplicate part name {p.name!r}")
-        parts[p.name] = _resolve_part(p, tempo, key, song_meter, set(gens))
+        parts[p.name] = _resolve_part(p, tempo, key, song_meter, gens)
 
     # Arrangement — must exist and reference only declared parts.
     if song.play is None:

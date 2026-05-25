@@ -108,7 +108,11 @@ _PART_KNOBS = frozenset(
      #   dominant (up P5), subdominant (up P4)
      #   fifth_up / fifth_down (M5)
      #   whole_up / whole_down (whole step)
-     "modulate_to"}
+     "modulate_to",
+     # Phase 4 — per-part style shorthand. `style=psytrance` on a
+     # part expands at resolve time to per-handle algorithm overrides
+     # sourced from the named style's StyleProfile.gens table.
+     "style"}
 )
 _INST_KNOBS = frozenset({"ch", "note"})
 _KIT_KNOBS = frozenset({"ch", "preset"})
@@ -524,12 +528,25 @@ class _Parser:
 
     def _handle_part_gen(self, ln: Line) -> None:
         assert self._open_part is not None
-        if len(ln.tokens) != 1:
+        # Phase 4: indented gen line is `<handle>` or
+        # `<handle> <algorithm>`. The second token is a per-part
+        # algorithm override for this handle.
+        if len(ln.tokens) == 1:
+            handle = ln.tokens[0]
+        elif len(ln.tokens) == 2:
+            handle, algorithm = ln.tokens
+            if handle in self._open_part.algorithm_overrides:
+                raise ParseError(
+                    ln.line_no,
+                    f"duplicate algorithm override for {handle!r}",
+                )
+            self._open_part.algorithm_overrides[handle] = algorithm
+        else:
             raise ParseError(
                 ln.line_no,
-                "expected a single gen handle (one per line)",
+                "expected '<handle>' or '<handle> <algorithm>' (one per line)",
             )
-        self._open_part.gens.append(ln.tokens[0])
+        self._open_part.gens.append(handle)
 
 
 # --------------------------------------------------------------------------

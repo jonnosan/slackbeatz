@@ -52,6 +52,12 @@ class ResolvedPart:
     tension: float | None = None  # issue #14: explicit override; else derive
     meter: Meter = COMMON_TIME    # 4/4 unless set on the part or song
     gen_handles: list[str] = field(default_factory=list)
+    # Phase 4: per-part algorithm overrides (handle → algorithm name).
+    # Populated from indented `<handle> <algorithm>` lines and from the
+    # `style=NAME` part-level shorthand. The scheduler consults this
+    # map when looking up the generator class for a (part, handle)
+    # pair — falling back to the song-level algorithm when absent.
+    algorithm_overrides: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
