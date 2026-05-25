@@ -237,6 +237,63 @@ def _rewrite_song_tempo(sb_src: str, new_tempo: int) -> str:
     return "".join(out)
 
 
+def _inject_part_algorithm_overrides(
+    sb_src: str, overrides: dict[str, dict[str, str]],
+) -> str:
+    """Round-trip per-(part, handle) algorithm overrides into the .sb text (#55).
+
+    Walks the source line-by-line; for each indented gen-handle line
+    inside a recognised part block, if ``overrides[part_name][handle]``
+    is set, rewrites the line as ``  <handle> <algorithm>``. Handle
+    lines that already carry an explicit algorithm token get their
+    algorithm replaced; otherwise the algorithm is appended.
+
+    The injection respects the source's own indentation (we read the
+    leading whitespace of the existing handle line and reuse it), so
+    files using two-space or tab indentation both round-trip cleanly.
+    """
+    if not overrides:
+        return sb_src
+    lines = sb_src.splitlines(keepends=True)
+    out: list[str] = []
+    current_part: str | None = None
+    part_indent: int | None = None
+    for line in lines:
+        stripped = line.lstrip()
+        leading = len(line) - len(stripped)
+        if not stripped or stripped.startswith("#"):
+            out.append(line)
+            continue
+        # Top-level `part <name> ...` opens a part block.
+        if leading == 0 and stripped.startswith("part"):
+            bits = stripped.split()
+            current_part = bits[1] if len(bits) >= 2 else None
+            part_indent = 0
+            out.append(line)
+            continue
+        # Any other top-level statement closes the current part block.
+        if leading == 0:
+            current_part = None
+            part_indent = None
+            out.append(line)
+            continue
+        # Indented child of an open part block — candidate handle line.
+        if current_part is not None and overrides.get(current_part):
+            bucket = overrides[current_part]
+            tokens = stripped.split()
+            if tokens:
+                handle = tokens[0]
+                algorithm = bucket.get(handle)
+                if algorithm is not None:
+                    indent_str = line[:leading]
+                    line_ending = "\n" if line.endswith("\n") else ""
+                    new_line = f"{indent_str}{handle} {algorithm}{line_ending}"
+                    out.append(new_line)
+                    continue
+        out.append(line)
+    return "".join(out)
+
+
 class Player:
     """Thread-safe holder for the currently-loaded song + playback thread.
 
@@ -900,7 +957,8 @@ class Player:
 
     def _serialize_current_state(self) -> str:
         """Build the ``.sb`` text reflecting the current source +
-        compose overrides + tempo override."""
+        compose overrides + tempo override + per-part algorithm
+        overrides (#55)."""
         if self.current_phrase is not None:
             sb = compose_from_text(
                 self.current_phrase,
@@ -909,12 +967,20 @@ class Player:
                 style_per_type=self.style_per_type,
                 tempo_override=self.tempo_override,
             )
-            return self._with_state_header(sb)
-        assert self.current_song_path is not None
-        src = self.current_song_path.read_text()
-        if self.tempo_override is not None:
-            src = _rewrite_song_tempo(src, int(self.tempo_override))
-        return self._with_state_header(src)
+        else:
+            assert self.current_song_path is not None
+            sb = self.current_song_path.read_text()
+            if self.tempo_override is not None:
+                sb = _rewrite_song_tempo(sb, int(self.tempo_override))
+        # Per-(part, handle) algorithm overrides round-trip through
+        # both save paths via a line-level injector — handle lines
+        # gain a second `<algorithm>` token where one is set. Empty
+        # override map is a no-op.
+        if self._part_algorithm_overrides:
+            sb = _inject_part_algorithm_overrides(
+                sb, self._part_algorithm_overrides,
+            )
+        return self._with_state_header(sb)
 
     def _with_state_header(self, sb: str) -> str:
         """Prepend a comment header documenting the override chain so

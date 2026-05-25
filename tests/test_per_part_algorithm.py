@@ -271,3 +271,94 @@ def test_song_with_per_part_override_renders_without_crashing() -> None:
         if msg.type == "note_on" and msg.channel == 1  # 0-indexed ch 2
     ]
     assert bass_notes
+
+
+# --------------------------------------------------------------------------
+# Save-state round-trip (#55) — _inject_part_algorithm_overrides
+# --------------------------------------------------------------------------
+
+def test_inject_part_algorithm_overrides_rewrites_handle_lines() -> None:
+    from slackbeatz.player import _inject_part_algorithm_overrides
+
+    src = (
+        'song "T"\n'
+        '  tempo 128\n'
+        '\n'
+        'gen kick rhythm euclid_drums\n'
+        'gen bass bass rolling\n'
+        '\n'
+        'part intro 8\n'
+        '  kick\n'
+        '  bass\n'
+        '\n'
+        'part drop 32\n'
+        '  kick\n'
+        '  bass\n'
+        '\n'
+        'play intro drop\n'
+    )
+    overrides = {"drop": {"bass": "gallop"}}
+    rewritten = _inject_part_algorithm_overrides(src, overrides)
+    # `intro` part's bass line is untouched.
+    assert "part intro 8\n  kick\n  bass\n" in rewritten
+    # `drop` part's bass line gains the algorithm token.
+    assert "part drop 32\n  kick\n  bass gallop\n" in rewritten
+
+
+def test_inject_part_algorithm_overrides_replaces_existing_token() -> None:
+    from slackbeatz.player import _inject_part_algorithm_overrides
+
+    # The source already has `bass rolling` — the override should
+    # replace `rolling` rather than append a third token.
+    src = (
+        'song "T"\n'
+        'gen bass bass rolling\n'
+        'part drop 8\n'
+        '  bass rolling\n'
+        'play drop\n'
+    )
+    overrides = {"drop": {"bass": "gallop"}}
+    rewritten = _inject_part_algorithm_overrides(src, overrides)
+    assert "  bass gallop\n" in rewritten
+    assert "  bass rolling\n" not in rewritten
+
+
+def test_inject_part_algorithm_overrides_empty_is_noop() -> None:
+    from slackbeatz.player import _inject_part_algorithm_overrides
+
+    src = 'song "T"\npart p 1\n  bass\nplay p\n'
+    assert _inject_part_algorithm_overrides(src, {}) == src
+
+
+def test_save_state_round_trip_re_loads_with_overrides_intact(tmp_path) -> None:
+    """End-to-end: set overrides via the Player, save_state, reload
+    from disk, confirm the resolved song carries the same overrides."""
+    from pathlib import Path
+    from slackbeatz.dsl.parser import parse_file
+    from slackbeatz.player import Player
+    from slackbeatz.setup.loader import load_setup
+    from slackbeatz.setup.resolve import resolve_song
+
+    p = Player(port_name="test", setup_arg="gm")
+    p.load_file(Path("examples/goa.sb"))
+    p._resolve_current()
+    # Pick a part and one of its handles, override it.
+    part_name, part = next(iter(p.current_resolved.parts.items()))
+    handle = part.gen_handles[0]
+    original_algo = p.current_resolved.gens[handle].style
+    # Pick a different valid algorithm for this gen's type.
+    gen_type = p.current_resolved.gens[handle].type_
+    other = next(
+        a for (t, a) in REGISTRY
+        if t == gen_type and a != original_algo
+    )
+    p.set_part_algorithm_override(part_name, handle, other)
+
+    # Save + re-load through the file path.
+    out_path = tmp_path / "round_trip.sb"
+    status = p.save_state(out_path)
+    assert "wrote" in status
+
+    fa = parse_file(out_path)
+    resolved = resolve_song(fa.song, load_setup("gm"))
+    assert resolved.parts[part_name].algorithm_overrides == {handle: other}
