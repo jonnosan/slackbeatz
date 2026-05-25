@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from slackbeatz.dsl.ast import KnobValue
+from slackbeatz.model.lfo import LfoApplication, LfoSpec
 from slackbeatz.setup.model import Instrument, Kit, Setup
 from slackbeatz.theory.meter import Meter, COMMON_TIME
 
@@ -64,6 +65,9 @@ class ResolvedPart:
     #   engine default → style profile → song-level gen → part override.
     # Knob names are validated against the parser's `_GEN_KNOBS` set.
     knob_overrides: dict[str, dict[str, object]] = field(default_factory=dict)
+    # Issue #65 — LFO applications for this part. Each entry binds a
+    # named LFO (resolved from ``ResolvedSong.lfos``) to a target.
+    lfo_applications: list[LfoApplication] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -108,3 +112,6 @@ class ResolvedSong:
     # Per-channel mixer state restored at load time. Empty when the
     # source had no scene block.
     scene: SceneState = field(default_factory=lambda: SceneState())
+    # Issue #65 — Named LFOs declared at the song level. Each part's
+    # ``lfo_applications`` reference these by name.
+    lfos: dict[str, LfoSpec] = field(default_factory=dict)

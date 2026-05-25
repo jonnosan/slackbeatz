@@ -24,6 +24,7 @@ from __future__ import annotations
 from slackbeatz.dsl.ast import GenDecl, PartDecl, SongAST
 from slackbeatz.dsl.parser import expand_arrangement
 from slackbeatz.generators.registry import REGISTRY
+from slackbeatz.model.lfo import LfoApplication, LfoSpec, parse_target
 from slackbeatz.model.song import ResolvedGen, ResolvedPart, ResolvedSong, SceneState
 from slackbeatz.theory.meter import COMMON_TIME, Meter
 
@@ -439,6 +440,18 @@ def _resolve_part(
             )
         knob_overrides[handle] = dict(knobs)
 
+    # Issue #65 — resolve per-part LFO applications. Target ref is
+    # parsed here (loudly rejects unknown target kinds); validation
+    # that the lfo_name exists happens in the song-level resolve below
+    # so all parts can share the same name pool.
+    lfo_applications: list[LfoApplication] = []
+    for lfo_name, target_raw, line_no in part.lfo_apply_lines:
+        try:
+            target = parse_target(target_raw)
+        except ValueError as e:
+            raise ResolveError(line_no, f"part {part.name!r}: {e}") from None
+        lfo_applications.append(LfoApplication(lfo_name=lfo_name, target=target))
+
     return ResolvedPart(
         name=part.name,
         bars=part.bars,
@@ -454,6 +467,7 @@ def _resolve_part(
         gen_handles=list(part.gens),
         algorithm_overrides=overrides,
         knob_overrides=knob_overrides,
+        lfo_applications=lfo_applications,
     )
 
 
@@ -544,6 +558,53 @@ def resolve_song(
                 scene_channels[entry.selector] = dict(entry.knobs)
     scene = SceneState(channels=scene_channels)
 
+    # Issue #65 — resolve top-level LFO declarations into LfoSpec.
+    lfos: dict[str, LfoSpec] = {}
+    for decl in song.lfos:
+        knobs = decl.knobs
+        shape = knobs.get("shape")
+        if shape not in ("sine", "sawtooth", "square", "pulse", "noise"):
+            raise ResolveError(
+                decl.line,
+                f"lfo {decl.name!r}: unknown shape {shape!r} "
+                f"(allowed: sine, sawtooth, square, pulse, noise)",
+            )
+        bars_raw = knobs.get("bars")
+        hz_raw = knobs.get("hz")
+        if bars_raw is not None:
+            period_bars = float(bars_raw)
+        elif hz_raw is not None:
+            # Hz at the song tempo. period_bars = (60/tempo*4) / (1/hz)
+            # → assuming 4-beat bars; the scheduler can recompute per
+            # part if meter changes. Good-enough conversion for the MVP.
+            period_seconds = 1.0 / float(hz_raw)
+            seconds_per_bar = (60.0 / tempo) * 4
+            period_bars = period_seconds / seconds_per_bar
+        else:
+            raise ResolveError(decl.line, f"lfo {decl.name!r}: bars or hz required")
+        width = float(knobs.get("width", 0.5))
+        height = float(knobs.get("height", 1.0))
+        offset_raw = knobs.get("offset")
+        offset = float(offset_raw) if offset_raw is not None else None
+        lfos[decl.name] = LfoSpec(
+            name=decl.name,
+            shape=shape,  # type: ignore[arg-type]
+            period_bars=period_bars,
+            width=width,
+            height=height,
+            offset=offset,
+        )
+
+    # Validate that every part's lfo_applications references known LFOs.
+    for resolved_part in parts.values():
+        for app in resolved_part.lfo_applications:
+            if app.lfo_name not in lfos:
+                raise ResolveError(
+                    0,  # part holds no source line for these post-hoc
+                    f"part {resolved_part.name!r}: apply references "
+                    f"undefined lfo {app.lfo_name!r}",
+                )
+
     return ResolvedSong(
         name=song.name,
         setup=setup,
@@ -557,4 +618,5 @@ def resolve_song(
         meter=song_meter,
         voice_defaults=voice_defaults,
         scene=scene,
+        lfos=lfos,
     )

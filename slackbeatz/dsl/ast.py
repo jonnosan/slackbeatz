@@ -97,7 +97,21 @@ class PartDecl:
     # an effective knob dict combining: engine default → style profile
     # → song-level gen → part-local override.
     knob_overrides: dict[str, "Knobs"] = field(default_factory=dict)
+    # Issue #65 — LFO applications: ``apply LFO_NAME target="..."``
+    # lines indented under the part. Each tuple is
+    # ``(lfo_name, target_raw, line_no)``; the resolver converts
+    # ``target_raw`` to an :class:`slackbeatz.model.lfo.LfoTarget`.
+    lfo_apply_lines: list[tuple[str, str, int]] = field(default_factory=list)
     line: int = 0
+
+
+@dataclass
+class LfoDecl:
+    """Top-level ``lfo NAME shape=... bars=... [width=...] [height=...]``."""
+
+    name: str
+    knobs: Knobs  # shape, bars / hz, optional width / height / offset
+    line: int
 
 
 @dataclass
@@ -179,6 +193,8 @@ class SongAST:
     # to every gen of that type. Cascades between the song-level gen
     # knobs and part-scoped knob overrides.
     voice_defaults: dict[str, Knobs] = field(default_factory=dict)
+    # Issue #65 — top-level ``lfo NAME ...`` declarations.
+    lfos: list[LfoDecl] = field(default_factory=list)
     play: PlayLine | None = None
     # Optional scene block — mixer / scene state for round-trip via the
     # GUI's Save action. ``None`` when the source has no scene block;

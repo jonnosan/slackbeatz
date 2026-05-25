@@ -302,6 +302,39 @@ def render_events(song: ResolvedSong) -> list[tuple[int, mido.Message]]:
                         "pitchwheel", channel=event.channel - 1,
                         pitch=event.value,
                     )))
+        # Issue #65 — emit per-part LFO events. Each `apply` line
+        # produces a stream of CC events (for MIDI CC targets) sampled
+        # at a fixed-rate per-part — every 24 ticks (= 1/16 note at
+        # PPQ=96) which is dense enough for filter sweeps without
+        # flooding the MIDI bus. Surge param targets are emitted as
+        # pitchwheel sentinels for now — Phase F wires
+        # SurgeInstance.set_param through to consume them.
+        if part.lfo_applications:
+            part_ticks = bars_to_ticks(bars, meter=part.meter)
+            tick_step = 24  # PPQ=96 → 16th notes
+            for app in part.lfo_applications:
+                spec = song.lfos.get(app.lfo_name)
+                if spec is None:
+                    continue
+                period_ticks = max(1, int(spec.period_bars * part.meter.ticks_per_bar(PPQ)))
+                handle_id = f"__lfo__{app.lfo_name}__{app.target.kind}"
+                bucket = events_by_gen.setdefault(handle_id, [])
+                # Use a deterministic per-(lfo, part-instance) PRNG so
+                # noise LFOs reproduce across runs.
+                lfo_rng = random.Random(derive_seed(
+                    song.seed, part_name, f"__lfo_{app.lfo_name}_{idx}",
+                ))
+                local_tick = 0
+                while local_tick < part_ticks:
+                    phase = (local_tick % period_ticks) / period_ticks
+                    from slackbeatz.model.lfo import lfo_value_at
+                    value = lfo_value_at(spec, phase, lfo_rng)
+                    abs_tick = cursor + local_tick
+                    msg = _lfo_event_for_target(app.target, value)
+                    if msg is not None:
+                        bucket.append((abs_tick, 0, msg))
+                    local_tick += tick_step
+
         cursor += bars_to_ticks(bars, meter=part.meter)
 
     # Harmonize pass: for each gen with harmonize_with=H, emit
@@ -332,6 +365,41 @@ def render_events(song: ResolvedSong) -> list[tuple[int, mido.Message]]:
     timed = [t for events in events_by_gen.values() for t in events]
     timed.sort(key=lambda t: (t[0], t[1]))
     return [(tick, msg) for tick, _key, msg in timed]
+
+
+def _lfo_event_for_target(target, value: float):
+    """Translate an LFO unit-range sample into a mido message.
+
+    * ``midi_cc`` — ``ref`` parsed as ``ch:N/cc:M``; emits
+      control_change on (channel-1, controller M) with value
+      ``round(value*127)``.
+    * ``surge_param`` — ``ref`` is a Surge OSC address. We emit a
+      sysex-tagged sentinel today so the Player's sink can intercept
+      it and call ``SurgeInstance.set_param``. Returns None when the
+      Player isn't wired for that (the event would be dropped).
+    * ``pattern_knob`` / ``feel_knob`` — deferred; returns None
+      (event silently dropped until engine support lands).
+    """
+    if target.kind == "midi_cc":
+        # Parse "ch:N/cc:M" or "ch:N/cc=M" — be lenient about the join.
+        try:
+            ch_part, cc_part = target.ref.split("/", 1)
+            channel = int(ch_part.split(":", 1)[1])
+            controller = int(cc_part.split(":", 1)[1]) if ":" in cc_part else int(cc_part.split("=", 1)[1])
+        except (ValueError, IndexError):
+            return None
+        if not 1 <= channel <= 16 or not 0 <= controller <= 127:
+            return None
+        return mido.Message(
+            "control_change",
+            channel=channel - 1,
+            control=controller,
+            value=max(0, min(127, int(round(value * 127)))),
+        )
+    # surge_param / pattern_knob / feel_knob — silently dropped today.
+    # A future commit wires Surge instances + the per-event knob
+    # mutation path.
+    return None
 
 
 def _feel_for_gen(gen) -> dict[str, object]:

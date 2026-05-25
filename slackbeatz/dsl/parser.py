@@ -19,6 +19,7 @@ from .ast import (
     InstDecl,
     KitDecl,
     KnobValue,
+    LfoDecl,
     PartDecl,
     PlayLine,
     SceneAST,
@@ -118,6 +119,15 @@ _PART_KNOBS = frozenset(
 )
 _INST_KNOBS = frozenset({"ch", "note"})
 _KIT_KNOBS = frozenset({"ch", "preset"})
+# Scene-entry knobs accepted on a `ch <N> ...` line inside a `scene` block.
+# Persisted mixer state — booleans for mute / solo, floats for vol / pan,
+# int for the GM program-change. Future scope kinds (surge / sampler /
+# part) will define their own knob sets when wired.
+_SCENE_CH_KNOBS = frozenset({"vol", "pan", "program", "mute", "solo"})
+# Issue #65 — knobs accepted on a top-level `lfo NAME ...` line.
+# ``shape`` is required; one of ``bars`` / ``hz`` must be set; the
+# rest are optional with shape-appropriate defaults.
+_LFO_KNOBS = frozenset({"shape", "bars", "hz", "width", "height", "offset"})
 # Scene-entry knobs accepted on a `ch <N> ...` line inside a `scene` block.
 # Persisted mixer state — booleans for mute / solo, floats for vol / pan,
 # int for the GM program-change. Future scope kinds (surge / sampler /
@@ -362,6 +372,8 @@ class _Parser:
             self._handle_voice_header(tail, ln.line_no)
         elif kw == "scene":
             self._handle_scene_header(tail, ln.line_no)
+        elif kw == "lfo":
+            self._handle_lfo(tail, ln.line_no)
         elif kw == "play":
             self._handle_play(tail, ln.line_no)
         else:
@@ -561,6 +573,24 @@ class _Parser:
                 )
             existing[k] = v
 
+    def _handle_lfo(self, tail: list[str], line_no: int) -> None:
+        """Issue #65 — ``lfo NAME shape=... bars=... [...]`` at top level."""
+        if self.file.song is None:
+            raise ParseError(line_no, "lfo outside of a song block")
+        if not tail:
+            raise ParseError(line_no, "lfo requires a name")
+        name, *rest = tail
+        if any(decl.name == name for decl in self.file.song.lfos):
+            raise ParseError(line_no, f"duplicate lfo name {name!r}")
+        knobs = _parse_kv_pairs(rest, allowed=_LFO_KNOBS, line_no=line_no)
+        if "shape" not in knobs:
+            raise ParseError(line_no, "lfo requires shape=<sine|sawtooth|square|pulse|noise>")
+        if "bars" not in knobs and "hz" not in knobs:
+            raise ParseError(line_no, "lfo requires bars=<N> or hz=<N>")
+        self.file.song.lfos.append(
+            LfoDecl(name=name, knobs=knobs, line=line_no),
+        )
+
     def _handle_scene_entry(self, ln: Line) -> None:
         assert self._open_scene is not None
         if not ln.tokens:
@@ -655,10 +685,16 @@ class _Parser:
         #   <handle> <algorithm>
         #   <handle> <k=v> [<k=v>...]
         #   <handle> <algorithm> <k=v> [<k=v>...]
+        # Also accept the LFO ``apply`` form for per-part automation
+        # (issue #65):
+        #   apply <lfo_name> target="..."
         # Algorithm token (when present) is the first tail token that
         # doesn't contain '='; everything after is parsed as knobs.
         if not ln.tokens:
             raise ParseError(ln.line_no, "empty part-gen line")
+        if ln.tokens[0] == "apply":
+            self._handle_part_apply(ln)
+            return
         handle, *tail = ln.tokens
         algorithm: str | None = None
         kv_tokens: list[str] = []
@@ -689,6 +725,29 @@ class _Parser:
                 )
             self._open_part.knob_overrides[handle] = knobs
         self._open_part.gens.append(handle)
+
+    def _handle_part_apply(self, ln: Line) -> None:
+        """Issue #65 — ``apply <lfo_name> target=...`` inside a part.
+
+        The target reference is bare (not quoted) so the lexer doesn't
+        split it on internal ``:`` / ``/`` characters. Form:
+        ``apply slow_filter target=midi:ch:2/cc:74``.
+        """
+        assert self._open_part is not None
+        toks = ln.tokens
+        if len(toks) < 3:
+            raise ParseError(
+                ln.line_no,
+                "expected: apply <lfo_name> target=<ref>",
+            )
+        _, lfo_name, *rest = toks
+        knobs = _parse_kv_pairs(rest, allowed=frozenset({"target"}), line_no=ln.line_no)
+        if "target" not in knobs:
+            raise ParseError(ln.line_no, "apply requires target=<ref>")
+        target = knobs["target"]
+        if not isinstance(target, str):
+            raise ParseError(ln.line_no, f"target must be a string, got {target!r}")
+        self._open_part.lfo_apply_lines.append((lfo_name, target, ln.line_no))
 
 
 # --------------------------------------------------------------------------

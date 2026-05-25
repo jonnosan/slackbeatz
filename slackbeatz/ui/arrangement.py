@@ -72,6 +72,7 @@ class ArrangementScreen(tk.Frame):
         ttk.Button(bar, text="View ▾", command=self._show_view_menu).pack(side="left")
         # Right-aligned screen swap buttons.
         ttk.Button(bar, text="Setup", command=self._goto_setup).pack(side="right")
+        ttk.Button(bar, text="LFOs", command=self._goto_lfos).pack(side="right")
         ttk.Button(bar, text="Mixer", command=self._goto_mixer).pack(side="right")
 
     def _build_header(self) -> None:
@@ -281,6 +282,10 @@ class ArrangementScreen(tk.Frame):
     def _goto_setup(self) -> None:
         from slackbeatz.ui.setup_editor import SetupScreen
         self.app.transition_to(SetupScreen)
+
+    def _goto_lfos(self) -> None:
+        from slackbeatz.ui.lfo_panel import LfoPanel
+        self.app.transition_to(LfoPanel)
 
     def _show_file_menu(self) -> None:
         menu = tk.Menu(self, tearoff=0)
