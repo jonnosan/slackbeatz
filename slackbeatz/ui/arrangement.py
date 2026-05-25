@@ -141,10 +141,38 @@ class ArrangementScreen(tk.Frame):
             side="left", padx=(0, 16),
         )
         if resolved is not None:
+            style_name = self._current_style_name()
+            if style_name:
+                tk.Label(
+                    head, text=f"Style: {style_name}",
+                    font=("TkDefaultFont", 10, "bold"), fg="#0a5",
+                ).pack(side="left", padx=4)
             tk.Label(head, text=f"Key: {resolved.key}").pack(side="left", padx=4)
             tk.Label(head, text=f"BPM: {resolved.tempo}").pack(side="left", padx=4)
             tk.Label(head, text=f"Seed: {resolved.seed}").pack(side="left", padx=4)
             tk.Label(head, text=f"Setup: {resolved.setup.name}").pack(side="left", padx=4)
+
+    def _current_style_name(self) -> str | None:
+        """Best-effort style display for the header.
+
+        * Phrase mode + ``style_override`` set → that override.
+        * Phrase mode + no override → ``pick_style(title)`` (the same
+          keyword-scoring path the composer uses).
+        * File mode → the .sb is the source of truth; style isn't
+          tracked separately, so we omit the label.
+        """
+        p = self.app.player
+        if p is None:
+            return None
+        if p.current_phrase is None:
+            return None
+        if p.style_override:
+            return p.style_override
+        try:
+            from slackbeatz.compose import pick_style
+            return pick_style(p.current_phrase)
+        except Exception:
+            return None
 
     def _build_grid(self) -> None:
         """Voice × Part toggle grid.
