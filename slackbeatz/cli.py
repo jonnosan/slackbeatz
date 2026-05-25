@@ -83,7 +83,33 @@ def _build_clock(args, tempo_map) -> ClockSource:
 # --------------------------------------------------------------------------
 
 def cmd_play(args) -> int:
-    song_path = Path(args.song_file)
+    """Stream a song to a MIDI sink.
+
+    Backend dispatch is driven by the resolved setup's ``backend`` field
+    — no per-flag opt-in. ``backend external`` (the default for
+    pre-redesign setups like ``gm`` / ``808`` / ``multitimbral``) sends
+    bare MIDI to an external port. ``backend surge`` (the bundled
+    ``surge`` setup) spawns headless surge-xt-cli for pitched channels
+    and uses FluidSynth for ch10 drums. ``--setup NAME`` overrides the
+    song's embedded setup, so the same .sb can play through any rig.
+    """
+    # Resolve source: explicit .sb file or compose from text.
+    cleanup_song = False
+    text_arg = getattr(args, "text", None)
+    if text_arg:
+        sb_content = compose_from_text(text_arg)
+        with tempfile.NamedTemporaryFile(
+            suffix=".sb", delete=False, mode="w", encoding="utf-8",
+        ) as tf:
+            tf.write(sb_content)
+            song_path = Path(tf.name)
+        cleanup_song = True
+    elif args.song_file:
+        song_path = Path(args.song_file)
+    else:
+        print("error: pass either a .sb file or --text \"phrase\"", file=sys.stderr)
+        return 2
+
     try:
         file_ast = parse_file(song_path)
         if file_ast.song is None:
@@ -93,23 +119,168 @@ def cmd_play(args) -> int:
         resolved = resolve_song(file_ast.song, setup, cli_seed=args.seed)
     except (ParseError, ResolveError, SetupError) as e:
         print(f"error: {e}", file=sys.stderr)
+        if cleanup_song:
+            song_path.unlink(missing_ok=True)
         return 2
 
+    backend = setup.backend
+    osc_routing_enabled = backend == "surge"
+    # FluidSynth still spawns for ch10 drums under the surge backend.
+    need_fluidsynth = osc_routing_enabled and _setup_has_drum_channel(setup)
+
+    fs_proc = None
+    port_name: Optional[str] = None
+    if need_fluidsynth:
+        try:
+            soundfont = find_soundfont(None)
+        except SoundfontError as e:
+            print(f"error: {e}", file=sys.stderr)
+            if cleanup_song:
+                song_path.unlink(missing_ok=True)
+            return 1
+        try:
+            fs_proc, new_port, spawn_err = _spawn_fluidsynth(
+                soundfont, gain=0.6, reverb=0.8,
+            )
+        except MissingToolError as e:
+            print(f"error: {e}", file=sys.stderr)
+            if cleanup_song:
+                song_path.unlink(missing_ok=True)
+            return 1
+        if spawn_err is not None:
+            print(f"error: {spawn_err}", file=sys.stderr)
+            if cleanup_song:
+                song_path.unlink(missing_ok=True)
+            return 1
+        assert fs_proc is not None and new_port is not None
+        port_name = new_port
+        print(
+            f"slackbeatz: routing ch10 drums through FluidSynth on "
+            f"{port_name!r} (surge backend) — press Ctrl+C to stop",
+        )
+    else:
+        port_name = args.port
+        if port_name is None:
+            ports = available_ports()
+            if not ports:
+                print(
+                    "error: no MIDI output ports available. On macOS, "
+                    "enable the IAC Driver in Audio MIDI Setup → MIDI "
+                    "Studio. Or use a setup with `backend surge` to "
+                    "spawn an in-process synth.",
+                    file=sys.stderr,
+                )
+                if cleanup_song:
+                    song_path.unlink(missing_ok=True)
+                return 1
+            port_name = ports[0]
+        print(
+            f"slackbeatz: streaming MIDI to {port_name!r} "
+            f"(setup={setup.name!r}, backend={backend}).",
+        )
+
+    from slackbeatz.player import Player
+    player = Player(
+        port_name=port_name,
+        setup_arg=args.setup,
+        osc_routing=osc_routing_enabled,
+    )
+    player.seed_offset = args.seed
+    if getattr(args, "emit_clock", False):
+        player.emit_clock = True
+    player.load_file(song_path)
+
+    surge_instances: list = []
+    sampler = None
+
+    if osc_routing_enabled:
+        player.ensure_osc_routing_ready()
+        from slackbeatz.surge_host import (
+            install_hint, is_surge_cli_installed, spawn_surge_instances,
+        )
+        if not is_surge_cli_installed():
+            print(
+                f"setup {setup.name!r} requested backend=surge but "
+                f"surge-xt-cli isn't installed. Install with:\n  "
+                f"{install_hint()}\nContinuing without Surge XT.",
+                file=sys.stderr,
+            )
+        else:
+            print("\nslackbeatz: spawning headless surge-xt-cli instances:")
+            surge_instances = spawn_surge_instances(on_progress=print)
+        sampler = _start_sampler_if_enabled(osc_routing_enabled)
+
+    player.play()
+
     try:
-        sink = RealtimeSink(port_name=args.port)
-        tempo_map = build_tempo_map(resolved)
-        clock = _build_clock(args, tempo_map)
-        Scheduler(resolved, sink, clock).run()
+        if getattr(args, "gui", False):
+            import threading
+
+            from slackbeatz.gui import run_tweak_gui
+
+            stop_event = threading.Event()
+
+            def _on_close():
+                player.stop()
+                stop_event.set()
+
+            run_tweak_gui(
+                fs_proc.stdin if fs_proc is not None else None,
+                initial_gain=0.6,
+                initial_reverb_room=0.8,
+                initial_programs=_program_map(resolved),
+                player=player,
+                show_surge_gui_routing_hint=False,
+                surge_instances=surge_instances or None,
+                on_close=_on_close,
+            )
+        else:
+            while player.is_playing:
+                time.sleep(0.1)
+    except KeyboardInterrupt:
+        print("\nslackbeatz: interrupted")
+        player.stop()
     except NoMidiPortError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
-    except NotImplementedError as e:
-        print(f"error: {e}", file=sys.stderr)
-        return 2
-    except KeyboardInterrupt:
-        print("\ninterrupted", file=sys.stderr)
-        return 130
+    finally:
+        try:
+            player.stop()
+        except Exception:
+            pass
+        for inst in surge_instances:
+            try:
+                inst.shutdown()
+            except Exception:
+                pass
+        if sampler is not None:
+            try:
+                sampler.stop()
+            except Exception:
+                pass
+        if fs_proc is not None:
+            fs_proc.terminate()
+            try:
+                fs_proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                fs_proc.kill()
+        if cleanup_song:
+            song_path.unlink(missing_ok=True)
     return 0
+
+
+def _setup_has_drum_channel(setup: Setup) -> bool:
+    """True if the setup has any channel-10 (drum) routing.
+
+    Drums on ch10 still go through FluidSynth in the surge backend; if
+    the active setup doesn't define ch10 voices at all, we skip the
+    FluidSynth spawn and run Surge-only.
+    """
+    if any(i.channel == 10 for i in setup.instruments.values()):
+        return True
+    if any(k.channel == 10 for k in setup.kits.values()):
+        return True
+    return False
 
 
 def cmd_check(args) -> int:
@@ -176,10 +347,13 @@ def cmd_audio(args) -> int:
 
     output_path = Path(args.output)
 
-    # --surge: render pitched / sub channels via Surge XT VST3, voice / fx
-    # via the sampler bank, drums via FluidSynth. The non-Surge default
-    # below stays as the lean FluidSynth-only path.
-    if getattr(args, "surge", False):
+    # Backend dispatch is driven by the resolved setup's backend field.
+    # `backend surge` → render pitched / sub via Surge XT VST3 (offline,
+    # deterministic), voice / fx via the sampler bank, drums via
+    # FluidSynth. `backend external` → lean FluidSynth-only path
+    # (matches the pre-redesign default for the bundled `gm` setup
+    # family).
+    if setup.backend == "surge":
         from slackbeatz.audio_offline import (
             OfflineRenderError, render_song_with_surge,
         )
@@ -240,321 +414,6 @@ def cmd_audio(args) -> int:
     size_kb = output_path.stat().st_size // 1024
     print(f"wrote {output_path} ({size_kb} KB)")
     return 0
-
-
-def cmd_live(args) -> int:
-    """Stream a song in real time.
-
-    Three modes (mutually exclusive flags):
-
-    * **bare MIDI** (no flag) — open the user's chosen MIDI output port
-      (``--port`` or auto-pick the first available) and stream events.
-      No FluidSynth, no Surge, no Sampler. The natural mode for
-      driving an external DAW or hardware synth.
-    * ``--fluidsynth`` — spawn FluidSynth, route every channel through
-      it. The historical pre-bare-MIDI-default behaviour.
-    * ``--surge`` / ``--surge-gui`` — spawn Surge XT (headless CLI or
-      GUI windows) for pitched + sub channels, in-process Sampler for
-      voice + fx, FluidSynth for drums. Full live mixer experience.
-    """
-    # Resolve source: explicit .sb file or compose from text.
-    if args.text:
-        sb_content = compose_from_text(args.text)
-        with tempfile.NamedTemporaryFile(
-            suffix=".sb", delete=False, mode="w", encoding="utf-8",
-        ) as tf:
-            tf.write(sb_content)
-            song_path = Path(tf.name)
-        cleanup_song = True
-    elif args.song_file:
-        song_path = Path(args.song_file)
-        cleanup_song = False
-    else:
-        print("error: pass either a .sb file or --text \"phrase\"", file=sys.stderr)
-        return 2
-
-    try:
-        file_ast = parse_file(song_path)
-        if file_ast.song is None:
-            print(f"error: {song_path}: no song block found", file=sys.stderr)
-            return 2
-        setup = _load_setup_for_song(song_path, file_ast, args.setup)
-        resolved = resolve_song(file_ast.song, setup, cli_seed=args.seed)
-    except (ParseError, ResolveError, SetupError) as e:
-        print(f"error: {e}", file=sys.stderr)
-        return 2
-
-    # Backend mode selection. argparse's mutually-exclusive group
-    # guarantees at most one of {--fluidsynth, --surge, --surge-gui}.
-    use_fluidsynth = getattr(args, "fluidsynth", False)
-    use_surge_gui = getattr(args, "surge_gui", False)
-    use_surge_cli = getattr(args, "surge", False)
-    osc_routing_enabled = use_surge_cli or use_surge_gui
-    # FluidSynth spawns when the user explicitly asks for it OR when
-    # --surge / --surge-gui is on (drums need a synth).
-    need_fluidsynth = use_fluidsynth or osc_routing_enabled
-
-    # Output-port + FluidSynth setup. In bare-MIDI mode we use the
-    # user's chosen port (or auto-pick) and never spawn FluidSynth.
-    fs_proc = None
-    port_name: Optional[str] = None
-    if need_fluidsynth:
-        try:
-            soundfont = find_soundfont(args.soundfont)
-        except SoundfontError as e:
-            print(f"error: {e}", file=sys.stderr)
-            return 1
-        try:
-            fs_proc, new_port, spawn_err = _spawn_fluidsynth(
-                soundfont, gain=args.gain, reverb=args.reverb,
-            )
-        except MissingToolError as e:
-            print(f"error: {e}", file=sys.stderr)
-            return 1
-        if spawn_err is not None:
-            print(f"error: {spawn_err}", file=sys.stderr)
-            return 1
-        assert fs_proc is not None and new_port is not None
-        port_name = new_port
-        print(
-            f"slackbeatz: streaming to FluidSynth on {port_name!r} — "
-            f"press Ctrl+C to stop",
-        )
-    else:
-        # Bare-MIDI: pick an external port + announce what we picked
-        # so the user can wire the receiving end (DAW track input,
-        # IAC bus, USB MIDI interface, etc.).
-        port_name = args.port
-        if port_name is None:
-            ports = available_ports()
-            if not ports:
-                print(
-                    "error: no MIDI output ports available. On macOS, "
-                    "enable the IAC Driver in Audio MIDI Setup → MIDI "
-                    "Studio. Or pass --fluidsynth / --surge to spawn "
-                    "an in-process synth.",
-                    file=sys.stderr,
-                )
-                return 1
-            port_name = ports[0]
-        print(
-            f"slackbeatz: streaming MIDI to {port_name!r}. Pass "
-            f"--fluidsynth / --surge to spawn an in-process synth, "
-            f"or --port to pick a different MIDI output.",
-        )
-
-    # Build a Player + bring up the backend. The Player owns the
-    # CompositeSink / MultiPortSink wiring, the scheduler thread, the
-    # tempo map + MIDI-clock emitter (if --emit-clock), and gives the
-    # GUI a Transport tab via the player= kwarg on run_tweak_gui.
-    # cmd_live shares the Player-driven backbone with the GUI.
-    from slackbeatz.player import Player
-    player = Player(
-        port_name=port_name,
-        setup_arg=args.setup,
-        osc_routing=osc_routing_enabled,
-    )
-    player.seed_offset = args.seed
-    if getattr(args, "emit_clock", False):
-        player.emit_clock = True
-    player.load_file(song_path)
-
-    surge_procs: list[subprocess.Popen] = []
-    surge_instances: list = []
-    sampler = None
-
-    if osc_routing_enabled:
-        # Eager MultiPortSink open so surge-xt-cli's --list-devices
-        # sees the virtual MIDI ports at spawn time.
-        player.ensure_osc_routing_ready()
-
-        if use_surge_cli:
-            from slackbeatz.surge_host import (
-                install_hint, is_surge_cli_installed, spawn_surge_instances,
-            )
-            if not is_surge_cli_installed():
-                print(
-                    f"--surge requested but surge-xt-cli isn't installed. "
-                    f"Install with:\n  {install_hint()}\n"
-                    f"Continuing without Surge XT.",
-                    file=sys.stderr,
-                )
-            else:
-                print("\nslackbeatz: spawning headless surge-xt-cli instances:")
-                surge_instances = spawn_surge_instances(on_progress=print)
-
-        if use_surge_gui:
-            from slackbeatz.synthhost import (
-                OSC_CHANNELS, _resolve_factory_patch,
-                channel_routing_summary, install_hint, is_surge_installed,
-                spawn_surge_xt,
-            )
-            if not is_surge_installed():
-                print(
-                    f"--surge-gui requested but Surge XT GUI isn't "
-                    f"installed. Install with:\n  {install_hint()}",
-                    file=sys.stderr,
-                )
-            else:
-                # Sampler-backed roles (patch_rel=None) don't get a
-                # Surge XT window — they're played by the in-process
-                # Sampler subscribed to the same virtual MIDI port.
-                gui_roles = [
-                    (inst, ch, patch_rel)
-                    for inst, (ch, _port, patch_rel) in OSC_CHANNELS.items()
-                    if patch_rel is not None
-                ]
-                print(f"\nslackbeatz: spawning {len(gui_roles)} Surge XT GUI windows.")
-                print(channel_routing_summary())
-                for _inst, ch_1idx, patch_rel in gui_roles:
-                    patch_path = _resolve_factory_patch(patch_rel)
-                    proc = spawn_surge_xt(ch_1idx, initial_patch=patch_path)
-                    if proc is not None:
-                        surge_procs.append(proc)
-
-        # MultiPortSink is open + surge instances (if any) are
-        # running — start the sampler listening on the voice + fx
-        # virtual ports.
-        sampler = _start_sampler_if_enabled(osc_routing_enabled)
-
-    # Kick off playback. Non-blocking — Player spawns its own daemon
-    # thread that runs the scheduler.
-    player.play()
-
-    try:
-        if args.gui:
-            # Tk on macOS must run on the main thread. The Player's
-            # worker thread is already producing MIDI; we just open
-            # the control window here and block on the mainloop.
-            import threading
-
-            from slackbeatz.gui import run_tweak_gui
-
-            stop_event = threading.Event()
-
-            def _on_close():
-                player.stop()
-                stop_event.set()
-
-            # fs_proc.stdin is the FluidSynth shell-command channel
-            # used by the Mixer's drums-strip Reverb/Chorus + master
-            # gain. None in bare-MIDI mode — the Mixer hides the
-            # drums strip and the synthetic Master fans out only to
-            # the live backends.
-            run_tweak_gui(
-                fs_proc.stdin if fs_proc is not None else None,
-                initial_gain=args.gain,
-                initial_reverb_room=args.reverb,
-                initial_programs=_program_map(resolved),
-                player=player,
-                show_surge_gui_routing_hint=bool(surge_procs),
-                surge_instances=surge_instances or None,
-                on_close=_on_close,
-            )
-        else:
-            # Non-GUI: wait for the song to finish (or Ctrl+C).
-            # Polling instead of player._thread.join() keeps the
-            # main thread responsive to KeyboardInterrupt — on some
-            # Python builds .join() swallows SIGINT until the thread
-            # exits.
-            while player.is_playing:
-                time.sleep(0.1)
-    except KeyboardInterrupt:
-        print("\nslackbeatz: interrupted")
-        player.stop()
-    except NoMidiPortError as e:
-        print(f"error: {e}", file=sys.stderr)
-        return 1
-    finally:
-        # Stop the Player first — its worker thread holds the sink +
-        # the clock emitter (when --emit-clock is on). Player.stop()
-        # is idempotent so it's safe to call again if we already
-        # stopped via _on_close.
-        try:
-            player.stop()
-        except Exception:
-            pass
-        # Kill Surge XT GUI instances (legacy --surge-gui path).
-        for sp_proc in surge_procs:
-            try:
-                sp_proc.terminate()
-            except Exception:
-                pass
-        # Shut down headless surge-xt-cli instances + their OSC servers.
-        for inst in surge_instances:
-            try:
-                inst.shutdown()
-            except Exception:
-                pass
-        if sampler is not None:
-            try:
-                sampler.stop()
-            except Exception:
-                pass
-        if fs_proc is not None:
-            fs_proc.terminate()
-            try:
-                fs_proc.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                fs_proc.kill()
-        if cleanup_song:
-            song_path.unlink(missing_ok=True)
-    return 0
-
-
-def cmd_from_text(args) -> int:
-    """Compose a `.sb` from an arbitrary input string.
-
-    Lands the composed file on disk; optionally also renders an audio
-    file (.wav / .mp3) when ``-o`` ends in an audio extension.
-    """
-    sb_content = compose_from_text(args.text)
-    out = Path(args.output) if args.output else None
-    if out is None:
-        # No --output → print the .sb to stdout (compose-only mode).
-        print(sb_content)
-        return 0
-    ext = out.suffix.lower()
-    if ext in (".sb", ""):
-        out.write_text(sb_content)
-        print(f"wrote {out}")
-        return 0
-    if ext in (".wav", ".mp3"):
-        # Compose + render in one step. Stash the .sb next to the audio
-        # so the user can re-render / tweak.
-        sb_path = out.with_suffix(".sb")
-        sb_path.write_text(sb_content)
-        try:
-            file_ast = parse_file(sb_path)
-            assert file_ast.song is not None
-            setup = _load_setup_for_song(sb_path, file_ast, None)
-            resolved = resolve_song(file_ast.song, setup, cli_seed=0)
-        except (ParseError, ResolveError, SetupError) as e:
-            print(f"error: {e}", file=sys.stderr)
-            return 2
-        try:
-            soundfont = find_soundfont(None)
-        except SoundfontError as e:
-            print(f"error: {e}", file=sys.stderr)
-            return 1
-        with tempfile.NamedTemporaryFile(suffix=".mid", delete=False) as tmp:
-            tmp_mid = Path(tmp.name)
-        try:
-            from slackbeatz.engine.midifile import write_midifile
-            write_midifile(resolved, tmp_mid)
-            render_audio(tmp_mid, out, soundfont)
-        except MissingToolError as e:
-            print(f"error: {e}", file=sys.stderr)
-            return 1
-        except subprocess.CalledProcessError as e:
-            print(f"error: subprocess failed (exit {e.returncode}): {e.cmd[0]}", file=sys.stderr)
-            return 1
-        finally:
-            tmp_mid.unlink(missing_ok=True)
-        print(f"wrote {sb_path} + {out}")
-        return 0
-    print(f"error: unsupported output extension {ext!r} (use .sb / .wav / .mp3)", file=sys.stderr)
-    return 2
 
 
 def _spawn_fluidsynth(soundfont: Path, *, gain: float, reverb: float) -> tuple[subprocess.Popen[bytes] | None, str | None, str | None]:
@@ -754,13 +613,37 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="slackbeatz",
         description="Chance-driven MIDI song generator with a tiny DSL.",
     )
-    sub = p.add_subparsers(dest="cmd", required=True)
+    # ``required=False`` so bare ``slackbeatz`` (no subcommand) launches
+    # the GUI. ``main()`` checks for that case before dispatching.
+    sub = p.add_subparsers(dest="cmd", required=False)
 
-    # play
-    sp = sub.add_parser("play", help="render a song to a MIDI output port")
-    sp.add_argument("song_file", help="path to a .sb song file")
-    sp.add_argument("--setup", help="bundled name or path to a setup file")
-    sp.add_argument("--port", help="MIDI output port (default: first available)")
+    # play — the unified live/playback subcommand. Backend (Surge vs
+    # bare-MIDI-to-external) is selected by the active setup's
+    # `backend` directive, not by a flag.
+    sp = sub.add_parser(
+        "play",
+        help="stream a song (live) — backend chosen by the setup's "
+             "`backend` directive (surge or external)",
+    )
+    sp.add_argument(
+        "song_file", nargs="?",
+        help="path to a .sb file (omit if using --text)",
+    )
+    sp.add_argument(
+        "--text",
+        help="compose from text and play directly — alternative to song_file",
+    )
+    sp.add_argument(
+        "--setup",
+        help="override the song's embedded setup (e.g. 'surge', 'external', "
+             "'multitimbral'); also picks the render backend",
+    )
+    sp.add_argument(
+        "--port",
+        help="MIDI output port for external-backend playback "
+             "(default: first available). Ignored under backend=surge — "
+             "Surge spawns its own virtual ports.",
+    )
     sp.add_argument("--seed", type=int, default=0,
                     help="fallback seed when the song doesn't set one (default 0)")
     sp.add_argument("--clock", choices=("internal", "external"), default="internal",
@@ -768,7 +651,9 @@ def _build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--clock-port",
                     help="MIDI input port for external clock (required if --clock external)")
     sp.add_argument("--emit-clock", action="store_true",
-                    help="emit MIDI Clock 0xF8 ticks downstream (internal clock only; v2)")
+                    help="emit MIDI Clock 0xF8 ticks downstream (internal clock only)")
+    sp.add_argument("--gui", action="store_true",
+                    help="open the Tk control window alongside playback")
     sp.set_defaults(func=cmd_play)
 
     # check
@@ -816,104 +701,24 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     sp.set_defaults(func=cmd_export)
 
-    # live — stream MIDI in real time (default: just emit to a MIDI
-    # port for an external DAW / HW synth to consume). --fluidsynth /
-    # --surge / --surge-gui opt into spawning an in-process backend.
-    sp = sub.add_parser(
-        "live",
-        help="stream a song to MIDI (default) or to a spawned synth "
-             "(--fluidsynth / --surge / --surge-gui)",
-    )
-    sp.add_argument(
-        "song_file", nargs="?",
-        help="path to a .sb file (omit if using --text)",
-    )
-    sp.add_argument(
-        "--text",
-        help="compose from text and play directly — alternative to song_file",
-    )
-    sp.add_argument("--setup", help="bundled name or path to a setup file")
-    sp.add_argument(
-        "--port",
-        help="MIDI output port for bare-MIDI mode "
-             "(default: first available). Ignored when --fluidsynth / "
-             "--surge spawn their own port.",
-    )
-    sp.add_argument(
-        "--soundfont",
-        help="path to a .sf2/.sf3 for --fluidsynth / --surge modes "
-             "(default: auto-discover or download). Unused in bare-MIDI mode.",
-    )
-    sp.add_argument(
-        "--gain", type=float, default=0.6,
-        help="FluidSynth output gain 0.0–1.0 (default 0.6); only meaningful "
-             "with --fluidsynth or --surge (drums)",
-    )
-    sp.add_argument(
-        "--reverb", type=float, default=0.8,
-        help="FluidSynth reverb room-size 0.0–1.0 (default 0.8); only "
-             "meaningful with --fluidsynth or --surge (drums)",
-    )
-    sp.add_argument(
-        "--seed", type=int, default=0,
-        help="fallback seed when the song doesn't set one (default 0)",
-    )
-    sp.add_argument(
-        "--gui", action="store_true",
-        help="open the Tk control window with Transport + Mixer + Generators",
-    )
-    sp.add_argument(
-        "--emit-clock", action="store_true",
-        help="broadcast MIDI Clock (0xF8 + Start/Stop) so external gear can sync",
-    )
-    backend = sp.add_mutually_exclusive_group()
-    backend.add_argument(
-        "--fluidsynth", action="store_true",
-        help="spawn FluidSynth and route every channel through it. Same as "
-             "the historical pre-bare-MIDI-default behaviour. Drums use "
-             "the GM percussion bank on ch 10; everything else uses the "
-             "active program-change per channel.",
-    )
-    backend.add_argument(
-        "--surge", action="store_true",
-        help="spawn one headless surge-xt-cli per pitched channel "
-             "(lead/bass/pad/candy/sub), each on its own slackbeatz virtual "
-             "MIDI port + OSC port; in-process Sampler handles voice + fx "
-             "channels; FluidSynth handles drums. The GUI Mixer tab drives "
-             "everything live.",
-    )
-    backend.add_argument(
-        "--surge-gui", action="store_true",
-        help="legacy: spawn Surge XT GUI windows instead of headless "
-             "surge-xt-cli. MIDI input must be manually picked per window "
-             "every launch (Surge XT GUI has a global-config bug). Useful "
-             "for one-off deep patch editing.",
-    )
-    sp.set_defaults(func=cmd_live)
-
-    # from-text
-    sp = sub.add_parser(
-        "from-text",
-        help="compose a .sb (or render audio) from an arbitrary input string",
-    )
-    sp.add_argument("text", help="input string — first phrase becomes the title")
-    sp.add_argument(
-        "-o", "--output",
-        help="output path. .sb writes the source file; .wav/.mp3 composes + renders. Omit to print the .sb to stdout.",
-    )
-    sp.set_defaults(func=cmd_from_text)
-
-    # audio
+    # audio — offline render. Backend (Surge VST3 vs FluidSynth) is
+    # selected by the active setup's `backend` directive.
     sp = sub.add_parser(
         "audio",
-        help="render a song to a .wav or .mp3 audio file via FluidSynth + ffmpeg",
+        help="render a song to a .wav or .mp3 audio file "
+             "(backend chosen by the setup's `backend` directive)",
     )
     sp.add_argument("song_file")
-    sp.add_argument("--setup")
+    sp.add_argument(
+        "--setup",
+        help="override the song's embedded setup; picks the render backend",
+    )
     sp.add_argument("--seed", type=int, default=0)
     sp.add_argument(
         "--soundfont",
-        help="path to a .sf2/.sf3 file (default: auto-discover or download)",
+        help="path to a .sf2/.sf3 file (default: auto-discover or download); "
+             "used by FluidSynth offline render and the Surge backend's "
+             "ch10 drum stem",
     )
     sp.add_argument(
         "--bitrate", default="192k", help="MP3 bitrate when output is .mp3 (default 192k)"
@@ -925,22 +730,38 @@ def _build_parser() -> argparse.ArgumentParser:
         "-o", "--output", required=True,
         help="output path; .wav stops after FluidSynth, .mp3 (or other ffmpeg fmts) goes through ffmpeg",
     )
-    sp.add_argument(
-        "--surge", action="store_true",
-        help="render the pitched / sub channels via Surge XT VST3 (offline, "
-             "deterministic, faster-than-real-time) + sampler-bank WAVs for "
-             "voice / fx + FluidSynth for drums. Needs `pip install "
-             "'slackbeatz[offline-render]'` (Python 3.9-3.12) and Surge XT "
-             "installed system-wide.",
-    )
     sp.set_defaults(func=cmd_audio)
 
     return p
 
 
+def cmd_gui(_args) -> int:
+    """Launch the GUI with no song loaded — the Welcome screen.
+
+    Invoked when ``slackbeatz`` is called with no subcommand. The
+    Welcome screen offers "New from title" / "Open .sb…" / Recents.
+    """
+    from slackbeatz.gui import run_tweak_gui
+
+    run_tweak_gui(
+        None,
+        initial_gain=0.6,
+        initial_reverb_room=0.8,
+        initial_programs={},
+        player=None,
+        show_surge_gui_routing_hint=False,
+        surge_instances=None,
+        on_close=None,
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = _build_parser()
     args = parser.parse_args(argv)
+    # Bare ``slackbeatz`` (no subcommand) → launch the GUI Welcome screen.
+    if getattr(args, "cmd", None) is None:
+        raise SystemExit(cmd_gui(args))
     raise SystemExit(args.func(args))
 
 

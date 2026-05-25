@@ -20,7 +20,7 @@ from slackbeatz.drums.presets import PRESETS, preset_map
 from slackbeatz.dsl.ast import KitDecl, InstDecl, SetupAST
 from slackbeatz.dsl.parser import parse_file
 
-from .model import Instrument, Kit, Setup
+from .model import Backend, Instrument, Kit, Setup
 
 
 class SetupError(Exception):
@@ -106,7 +106,13 @@ def setup_from_ast(ast: SetupAST) -> Setup:
             )
         kits[kdecl.name] = _kit_from_decl(kdecl)
 
-    return Setup(name=ast.name, instruments=instruments, kits=kits)
+    backend: Backend = ast.backend if ast.backend in ("surge", "external") else "external"  # type: ignore[assignment]
+    return Setup(
+        name=ast.name,
+        instruments=instruments,
+        kits=kits,
+        backend=backend,
+    )
 
 
 def _bundled_dir() -> Path:

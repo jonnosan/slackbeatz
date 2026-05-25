@@ -1,0 +1,32 @@
+# external.sb — bare MIDI to an external port (DAW or hardware).
+#
+# Selected when the user picks the `external` backend in the Welcome
+# dialog or passes `--setup external`. Slackbeatz emits raw MIDI to the
+# first available output port (or to `--port NAME`) with no in-process
+# synth — exactly the pre-redesign default. Channel layout matches
+# General MIDI so external receivers route as expected.
+#
+# The bundled `gm.sb`, `808.sb`, `909.sb`, and `multitimbral.sb` setups
+# all default to the `external` backend implicitly; this file just
+# states it explicitly for users who like the named entry point.
+
+setup "External MIDI"
+
+backend external
+
+# Drum voices on channel 10 at their GM notes.
+inst kick   ch=10 note=36
+inst snare  ch=10 note=38
+inst clap   ch=10 note=39
+inst hats   ch=10 note=42
+inst ohats  ch=10 note=46
+
+# Melodic voices.
+inst lead   ch=1
+inst bass   ch=2
+inst pad    ch=3
+inst candy  ch=4
+inst sub    ch=6
+
+# Full kit reference for `drums`-type gens.
+kit kit ch=10 preset=gm
