@@ -159,30 +159,30 @@ ROLE_STYLE_PRESETS: dict[tuple[str, str], tuple[tuple[str, float], ...]] = {
         ("FX A1 FX Type", 0.7949),           # Tape
         ("FX A1 Output - Mix", 0.55),        # 55% wet — present but the dry stays dominant
     ),
-    # ----- sh101_arp (iteration 1.7): pure SH-101 character -----
-    # 1.7 → 1.8: brightened cutoff (was 0.55, now 0.70 ≈ 2.5 kHz) so
-    # the lead actually cuts through the bass + drums mix.
-    # Added a short Delay on FX A1 to give the lead some space + width
-    # (helps the line stand out without raising velocity further).
+    # ----- sh101_arp (iteration 1.11): warm SH-101 character -----
+    # 1.7: cutoff 0.55. 1.8: bumped to 0.70 (acid context — needed to
+    # cut through). 1.11: pulled back to 0.50 + lower resonance + LP
+    # K35 filter (smoother than ladder) + tape FX matching the bass
+    # warmth, so the lead sits IN the bass+drums mix rather than
+    # cutting on top of it. User feedback was "feels bolted on" —
+    # this aims for a more cohesive warm-analogue blend. The acid
+    # arc no longer uses this preset (acid is pure-303 now).
     ("lead", "sh101_arp"): (
-        ("A Filter 1 Type", 0.1),            # LP Legacy Ladder
-        ("A Filter 1 Cutoff", 0.70),         # brighter — sits above the bass
-        ("A Filter 1 Resonance", 0.55),      # less res than bass (less screech)
-        ("A Filter 1 FEG Mod Amount", 0.75), # strong env per note
+        ("A Filter 1 Type", 0.4),            # LP K35 — round / smooth (matches bass)
+        ("A Filter 1 Cutoff", 0.50),         # mid — sits above the bass without screech
+        ("A Filter 1 Resonance", 0.35),      # restrained — no acid squelch
+        ("A Filter 1 FEG Mod Amount", 0.40), # moderate env per note (was 0.75)
         ("A Filter 1 Keytrack", 0.50),
         ("A Filter EG Attack", 0.0),
-        ("A Filter EG Decay", 0.30),
-        ("A Filter EG Sustain", 0.30),
-        ("A Filter EG Release", 0.25),
+        ("A Filter EG Decay", 0.40),         # longer decay → notes sing
+        ("A Filter EG Sustain", 0.35),
+        ("A Filter EG Release", 0.30),
         ("A Filter 2 Type", 0.0),
-        # Short delay — 1/16 note at 124 BPM ~ 120 ms. Subtle, just
-        # spreads the lead into stereo space.
-        ("FX A1 FX Type", 0.0251),
-        ("FX A1 Delay Time - Left", 0.32),    # ~120 ms
-        ("FX A1 Delay Time - Right", 0.35),   # slightly different = stereo spread
-        ("FX A1 Feedback/EQ - Feedback", 0.30),
-        ("FX A1 Feedback/EQ - High Cut", 0.55),
-        ("FX A1 Output - Mix", 0.22),
+        # FX A1 — Tape saturation (same as bass) for tonal cohesion.
+        # No delay here — the bass already carries the wet effect
+        # under it; adding delay to the lead too muddies the mix.
+        ("FX A1 FX Type", 0.7949),           # Tape
+        ("FX A1 Output - Mix", 0.50),
     ),
     # ----- acid candy/sweep: noise-y riser texture -----
     # The candy channel runs `acid_sweep` which emits a short noise

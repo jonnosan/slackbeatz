@@ -366,27 +366,43 @@ _STYLE_PROFILES: dict[str, StyleProfile] = {
             # Warm MS-10-style sub bass — same algorithmic shape as
             # rolling but with knob defaults tuned for sustain not
             # punch, and routed to a warmer Surge preset.
+            #
+            # Iteration 1.11: added a chord progression so bass +
+            # lead share a harmonic frame. "i-VII-VI-V" is the
+            # classic descending-minor walk that under-pins a lot
+            # of analogue mid-tempo techno (Berlin school, DMX Krew
+            # / Aleksi Perälä). 4 bars per chord = 16-bar progression
+            # cycle inside each 32-bar main/drop section.
             GenSpec("bass",  "bass",   "warm_sub", knob_defaults={
                 "intensity": 0.85,
-                # Longer gate → notes ring out warmly, not staccato.
                 "gate": 0.85,
-                # Walking + pickup contribute melodic interest under
-                # the lead.
+                "progression": "i-VII-VI-V",
+                "bars_per_chord": 4,
                 "walking": 0.3,
                 "pickup": 0.2,
                 "fifth_prob": 0.25,
             }),
-            # SH-101-style sequenced lead — the algorithm we built
-            # in the acid arc but moved here where it actually
-            # belongs (per user direction iteration 1.9).
+            # Iteration 1.11: lead now FOLLOWS the same progression.
+            # Pitches `0,3,7,5` are interpreted relative to the
+            # current chord root (re-anchoring every 4 bars) instead
+            # of the song tonic. So when the bass moves down through
+            # i→VII→VI→V, the lead's melodic shape rides along —
+            # they're harmonically locked instead of two unrelated
+            # voices in the same key.
+            #
+            # Also: steps=32 (2-bar phrase, sparser) + slightly
+            # lower velocity + intensity so the lead complements
+            # the bass rather than competing.
             GenSpec("lead",  "melody", "sh101_arp", knob_defaults={
                 "pitches": "0,3,7,5",
                 "pulses": 5,
-                "steps": 16,
+                "steps": 32,
                 "gate": 0.85,
+                "progression": "i-VII-VI-V",
+                "bars_per_chord": 4,
                 "evolution": 0.3,
-                "base_vel": 90,
-                "intensity": 0.9,
+                "base_vel": 80,
+                "intensity": 0.75,
             }),
             GenSpec("sweep", "candy",  "slow_lfo"),
         ],

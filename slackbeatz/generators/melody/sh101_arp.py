@@ -19,9 +19,19 @@ sequencer lines, lots of Phuture-era acid — all built on this trick.
 Knobs:
 * ``pitches`` — comma-separated scale degrees (default ``"0,3,7,5"``
   = root, min3, P5, P4 of the active scale). 3–6 entries works best;
-  longer sequences take many bars to come around.
+  longer sequences take many bars to come around. When a ``progression``
+  is set, ``0`` becomes "root of CURRENT chord" not "song tonic" — so
+  the line re-anchors at every chord change and the lead stays
+  musically locked to the bass.
+* ``progression`` — named chord progression (``i-VI-ii-IV``,
+  ``i-VII-VI-V``, ``i-iv``, ``i-v``, ``I-V-vi-IV``, ``12-bar``,
+  ``andalusian``). When set, ``pitches`` indices are interpreted
+  relative to the current chord root. When absent, pitches are
+  relative to the song tonic (default ``sh101_arp`` behaviour).
+* ``bars_per_chord`` — how slowly the progression advances (default 4).
 * ``pulses`` — euclidean K (number of triggers per cycle). Default 5.
 * ``steps`` — euclidean N (cycle length in 16th steps). Default 16.
+  Use 32 for a 2-bar phrase (less busy lead).
 * ``gate`` — fraction of the gap-to-next-trigger the note holds.
   Default 0.85 (slight separation between notes).
 * ``base_octave`` / ``octave`` — register offset around middle C
@@ -50,6 +60,7 @@ from slackbeatz.generators.base import Generator
 from slackbeatz.generators.defaults import (
     base_octave_for,
     base_vel_for,
+    bass_progression_for,
     gate_for,
     gate_jitter_for,
     macro_knobs,
@@ -110,6 +121,13 @@ class MelodySh101Arp(Generator):
         if not trigger_positions:
             return  # 0-pulse pattern — silence
 
+        # Optional chord progression — when set, every ``pitches``
+        # entry is interpreted as a scale-degree offset from the
+        # current CHORD root (not the song tonic). This re-anchors
+        # the melodic line at each chord change so the lead actually
+        # locks to whatever the bass is doing harmonically.
+        progression = bass_progression_for(self)
+
         tonic, _ = parse_key(ctx.key)
         step_ticks = step_duration(ctx.ppq)
         bars_per_cycle = max(1, (steps + 15) // 16)  # how many bars one cycle spans
@@ -154,8 +172,16 @@ class MelodySh101Arp(Generator):
 
                 deg = degrees[pitch_idx % len(degrees)]
                 pitch_idx += 1
+                # Re-anchor at the current chord root if a progression
+                # is set. Otherwise pitches are absolute scale degrees
+                # from the song tonic (legacy behaviour).
+                if progression is not None:
+                    chord_root_deg = progression.degree_at_bar(bar)
+                    effective_deg = chord_root_deg + deg
+                else:
+                    effective_deg = deg
                 pitch = transposed_pitch(
-                    scale_note(deg, tonic, scale, 4 + octave_off),
+                    scale_note(effective_deg, tonic, scale, 4 + octave_off),
                     ctx.transpose_semitones,
                 )
                 if not 0 <= pitch <= 127:
