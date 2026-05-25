@@ -566,26 +566,67 @@ _PATCH_HASH_BYTE: dict[tuple[str, str], int] = {
 }
 
 
+# Iteration 1.14 — hash-driven musical-knob variation for the
+# warm_analogue candy (top arp) voice. User feedback was that the
+# candy line "sounded too similar and too dominant" across songs
+# because every track used the same pitches/pulses/gate — only the
+# Surge timbre changed. Below: pools of arp shapes that get
+# hash-picked per song so each warm_analogue track has a genuinely
+# different top-line, not just a different filter colour. ~25% of
+# songs silence the candy entirely (intensity=0) so listeners
+# encounter bass+lead+drums without the top arp on occasion.
+_WARM_CANDY_PITCH_POOL = [
+    "0,2,4",         # 3-note triad ascend
+    "0,2,4,5,7",     # 5-note pentatonic walk (current default)
+    "0,3,5,7",       # min-3 + 4th + 5th outline
+    "0,5,7",         # spacious open-fifth shape
+    "0,2,5",         # tight 3-note cluster
+    "0,4,7,5,2",     # 5-note descend-then-rise
+]
+_WARM_CANDY_PULSE_POOL = [5, 7, 9, 11]
+_WARM_CANDY_GATE_POOL = [0.45, 0.6, 0.75]
+_WARM_CANDY_OCTAVE_POOL = [0, 1, 2]
+
+
 def _per_song_knob_extras(style: str, h: bytes) -> dict[str, dict[str, object]]:
     """Compute hash-driven per-song knob additions, keyed by gen handle.
 
-    Today this only emits ``patch=N`` for warm_analogue voices —
-    hash-pick which preset variant the Surge offline render uses
-    (see ``audio_offline_presets.PRESET_VARIANTS``). Returned dict is
-    ``{handle: {knob_name: value}}``; render_sb folds it into each
-    gen's emitted line alongside the static ``spec.knob_defaults``.
+    Two layers today, both warm_analogue-only:
 
-    Deterministic per phrase (same input → same patch variants).
+    * ``patch=N`` per voice — picks a Surge preset variant from
+      ``audio_offline_presets.PRESET_VARIANTS`` so songs in the same
+      style get different timbres.
+    * Musical-knob variation on the candy (top arp) — pitches /
+      pulses / gate / octave / sometimes-silence — so the candy
+      line itself differs musically between songs, not just sonically.
+
+    Returned dict is ``{handle: {knob_name: value}}``; render_sb
+    folds it into each gen's emitted line, with these entries
+    OVERRIDING any matching key in ``spec.knob_defaults``.
+
+    Deterministic per phrase (same input → same picks).
     """
     extras: dict[str, dict[str, object]] = {}
     for (s, handle), n_variants in _PATCH_VARIANT_COUNTS.items():
         if s != style:
             continue
         byte_idx = _PATCH_HASH_BYTE.get((s, handle), 23)
-        # h is the song hash bytes (sha256 digest); take byte modulo
-        # the variant count for a uniform-ish pick.
         variant = h[byte_idx % len(h)] % n_variants
         extras.setdefault(handle, {})["patch"] = variant
+
+    if style == "warm_analogue":
+        # Candy musical variation — uses bytes 23–27 so it doesn't
+        # collide with the patch bytes (20–22 in _PATCH_HASH_BYTE).
+        # Order matters: extras override knob_defaults at emit time.
+        cand = extras.setdefault("sweep", {})
+        cand["pitches"] = _WARM_CANDY_PITCH_POOL[h[23] % len(_WARM_CANDY_PITCH_POOL)]
+        cand["pulses"] = _WARM_CANDY_PULSE_POOL[h[24] % len(_WARM_CANDY_PULSE_POOL)]
+        cand["gate"] = _WARM_CANDY_GATE_POOL[h[25] % len(_WARM_CANDY_GATE_POOL)]
+        cand["octave"] = _WARM_CANDY_OCTAVE_POOL[h[26] % len(_WARM_CANDY_OCTAVE_POOL)]
+        # ~25% of songs silence the candy so bass+lead+drums get
+        # breathing room. intensity=0 short-circuits sh101_top.
+        if (h[27] % 4) == 0:
+            cand["intensity"] = 0
     return extras
 
 
@@ -863,12 +904,14 @@ def render_sb(
         # add an inst= knob mapping it onto the real rig.
         if handle in _HANDLE_TO_INST:
             parts.append(f"inst={_HANDLE_TO_INST[handle]}")
-        # Static knob defaults baked into the style profile — empty
-        # today, populated by the subbass + candy consolidation in #49.
-        for k, v in spec.knob_defaults.items():
-            parts.append(f"{k}={v}")
-        # Per-song extras (e.g. patch variant for warm_analogue).
-        for k, v in per_song_knob_extras.get(handle, {}).items():
+        # Static knob defaults baked into the style profile, merged
+        # with per-song hash-driven extras. Extras OVERRIDE matching
+        # keys (so warm_analogue's hash-picked candy pitches/pulses
+        # replace the style-profile defaults rather than appearing
+        # alongside them as duplicate ``pitches=`` knobs).
+        merged_knobs: dict[str, object] = dict(spec.knob_defaults)
+        merged_knobs.update(per_song_knob_extras.get(handle, {}))
+        for k, v in merged_knobs.items():
             parts.append(f"{k}={v}")
         # Rhythm gens get the humanize / drop_prob knobs.
         if gen_type == "rhythm":

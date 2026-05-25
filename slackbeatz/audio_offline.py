@@ -721,7 +721,7 @@ def render_song_with_surge(
         "bass": 1.0,
         "lead": 1.5,
         "pad": 0.75,
-        "candy": 0.85,
+        "candy": 0.55,
         "sub": 1.0,
         "voice": 0.9,
         "fx": 0.9,

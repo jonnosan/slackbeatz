@@ -13,7 +13,7 @@ gen clap   rhythm  four_floor_house humanize=5 drop_prob=0.06
 gen hats   rhythm  four_floor_house humanize=5 drop_prob=0.06 accent=4
 gen bass   bass    warm_sub intensity=0.85 gate=0.85 progression=i-VII-VI-V bars_per_chord=4 walking=0.3 pickup=0.2 fifth_prob=0.25 patch=3 octave_jump=0.05
 gen lead   melody  sh101_arp pitches=0,3,7,5 pulses=5 steps=32 gate=0.85 progression=i-VII-VI-V bars_per_chord=4 evolution=0.3 base_vel=80 intensity=0.75 patch=3 motif_memory=4 passing_tones=0.1 seed=738
-gen sweep  candy   sh101_top inst=riser pitches=0,2,4,5,7 pulses=11 steps=16 gate=0.55 progression=i-VII-VI-V bars_per_chord=4 octave=1 evolution=0.3 base_vel=55 intensity=0.65 patch=0
+gen sweep  candy   sh101_top inst=riser pitches=0,2,4 pulses=9 steps=16 gate=0.45 progression=i-VII-VI-V bars_per_chord=4 octave=0 evolution=0.3 base_vel=55 intensity=0.65 patch=0
 
 lfo lead_breath shape=sine bars=32 height=0.4 offset=0.55
 
