@@ -202,6 +202,7 @@ def _render_surge_stem(
     role: Optional[str] = None,
     style: Optional[str] = None,
     patch_variant: int = 0,
+    fx_seed: int | None = None,
 ):
     """Render one pitched channel via Surge XT VST3 + dawdreamer.
 
@@ -253,6 +254,7 @@ def _render_surge_stem(
         preset_applied = apply_preset(
             synth, role, style,
             variant=patch_variant,
+            fx_seed=fx_seed,
             engine=engine,
         )
 
@@ -586,6 +588,7 @@ def render_song_with_surge(
     # patch is registered.
     gen_style_by_channel: dict[int, str] = {}
     gen_patch_by_channel: dict[int, int] = {}
+    gen_fx_seed_by_channel: dict[int, int | None] = {}
     for handle in sorted(resolved.gens.keys()):
         gen = resolved.gens[handle]
         if gen.instrument is None:
@@ -604,6 +607,15 @@ def render_song_with_surge(
             gen_patch_by_channel[ch] = int(patch_raw)
         except (TypeError, ValueError):
             gen_patch_by_channel[ch] = 0
+        # `fx_seed` knob (iteration 1.15) — composer hash-picks per
+        # warm_analogue lead/candy voice; drives the random
+        # 0-2-FX-from-{delay,reverb,chorus,phaser} B-rack stack.
+        fx_raw = gen.knobs.get("fx_seed")
+        if fx_raw is not None:
+            try:
+                gen_fx_seed_by_channel[ch] = int(fx_raw)
+            except (TypeError, ValueError):
+                gen_fx_seed_by_channel[ch] = None
 
     surge_role_by_channel: dict[int, dict] = {}
     for cfg in SYNTH_ROLES:
@@ -684,6 +696,7 @@ def render_song_with_surge(
                     role=role_info["role"],
                     style=gen_style_by_channel.get(ch1),
                     patch_variant=gen_patch_by_channel.get(ch1, 0),
+                    fx_seed=gen_fx_seed_by_channel.get(ch1),
                 )
             finally:
                 tmp_midi.unlink(missing_ok=True)

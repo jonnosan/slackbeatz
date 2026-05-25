@@ -101,6 +101,15 @@ _GEN_KNOBS = frozenset(
      # Hash-driven per song by the composer for warm_analogue so
      # different phrases produce different timbres.
      "patch",
+     # Random FX-stack seed (iter 1.15) — composer hash-derives per
+     # warm_analogue lead/candy; drives a random 0..2 FX picks from
+     # {delay, reverb, chorus, phaser} stacked into Surge's B-rack.
+     # Deterministic per song; tempo-synced when delay is picked.
+     "fx_seed",
+     # candy/traditional_arp knobs (iter 1.15) — direction of the
+     # arpeggio (up/down/updown/random), step rate (per bar), and
+     # how many octaves the arp spans.
+     "direction", "rate", "octave_range",
      # TTS list-of-strings (issue #26) + speech (#27) + sample
      # (#28) generator knobs.
      "phrases", "voice", "phrase_interval", "note_base", "velocity",

@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 _AUTO_LABEL = "Auto (derive from title)"
 _EXPLICIT_STYLES = (
     "euclid", "deep_techno", "psytrance", "vaporwave", "acid",
-    "dub_techno", "drum_and_bass", "garage", "lofi",
+    "dub_techno", "drum_and_bass", "garage", "lofi", "warm_analogue",
 )
 
 

@@ -1,0 +1,72 @@
+# Auto-composed from text — sentiment=+0, style=warm_analogue
+# Title derived from first phrase of the input.
+
+song "Krew Analogue Voltage"
+  setup "gm"
+  tempo 123
+  key   Fm
+  seed  102932298039219
+
+gen kick   rhythm  four_floor_house humanize=2
+gen clap   rhythm  four_floor_house humanize=2 drop_prob=0.06
+gen hats   rhythm  four_floor_house humanize=2 drop_prob=0.06
+gen bass   bass    warm_sub intensity=0.85 gate=0.85 progression=i-VII-VI-V bars_per_chord=4 walking=0.3 pickup=0.2 fifth_prob=0.25 patch=2 octave_jump=0.05
+gen lead   melody  sh101_arp pitches=0,3,7,5 pulses=5 steps=32 gate=0.85 progression=i-VII-VI-V bars_per_chord=4 evolution=0.3 base_vel=80 intensity=0.75 patch=1 fx_seed=97 motif_memory=4 seed=826
+gen sweep  candy   traditional_arp inst=riser progression=i-VII-VI-V bars_per_chord=4 evolution=0.3 base_vel=55 intensity=0.65 patch=1 direction=random rate=8 octave_range=2 voicing=triad gate=0.4 octave=0 fx_seed=238
+
+lfo lead_breath shape=sine bars=32 height=0.4 offset=0.55
+
+part intro 16 role=intro
+  kick
+  clap
+  hats
+  bass
+  sweep
+
+part main 32 role=main
+  kick
+  clap
+  hats
+  bass
+  lead
+  sweep
+  apply lead_breath target=midi:ch:1/cc:74
+
+part build 8 role=build
+  kick
+  clap
+  hats
+  bass
+  sweep
+
+part drop 32 role=drop
+  kick
+  clap
+  hats
+  bass
+  lead
+  sweep
+  apply lead_breath target=midi:ch:1/cc:74
+
+part break 16 role=break
+  lead
+  sweep
+  apply lead_breath target=midi:ch:1/cc:74
+
+part main2 32 role=main
+  kick
+  clap
+  hats
+  bass
+  lead
+  sweep
+  apply lead_breath target=midi:ch:1/cc:74
+
+part outro 16 role=outro
+  kick
+  clap
+  hats
+  bass
+  sweep
+
+play intro main build drop break main2 outro

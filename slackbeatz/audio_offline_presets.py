@@ -306,6 +306,79 @@ _FX2_SOFT_OJD = (
 )
 
 
+# Per-song random FX stack (iteration 1.15). User wanted "delay,
+# reverb, chorus, phaser — each lead/candy gets 0, 1, or 2 FX from
+# the list, with randomised params". These are stacked into Surge's
+# B-rack (FX B1 / B2) so they sit alongside whatever A1-rack FX the
+# selected variant already has.
+_RANDOM_FX_POOL: tuple[tuple[str, float], ...] = (
+    ("delay", _FX_DELAY),
+    ("reverb", _FX_REVERB_1),
+    ("chorus", _FX_CHORUS),
+    ("phaser", _FX_PHASER),
+)
+
+
+def _random_fx_stack(seed: int) -> tuple[tuple[str, float], ...]:
+    """Deterministic per-song FX picks for the B-rack.
+
+    Returns Surge param entries setting FX B1 / B2 to picked types
+    (or Off) with a randomised wet/dry mix. The B-rack is independent
+    of the A-rack character FX baked into PRESET_VARIANTS, so what
+    you get is: tonal identity (A1) + 0..2 colourations (B1/B2).
+
+    Distribution by ``seed % 10``: 0..1 → no extra FX (20%), 2..6 →
+    one FX (50%), 7..9 → two FX (30%).
+    """
+    import random as _r
+
+    rng = _r.Random(seed)
+    mod = seed % 10
+    if mod < 2:
+        n_fx = 0
+    elif mod < 7:
+        n_fx = 1
+    else:
+        n_fx = 2
+
+    if n_fx == 0:
+        return (
+            ("FX B1 FX Type", _FX_OFF),
+            ("FX B2 FX Type", _FX_OFF),
+        )
+
+    picks = rng.sample(_RANDOM_FX_POOL, n_fx)
+    out: list[tuple[str, float]] = []
+    slot_names = ("B1", "B2")
+    for i, (label, fx_val) in enumerate(picks):
+        slot = slot_names[i]
+        out.append((f"FX {slot} FX Type", fx_val))
+        # Wet/dry mix 0.18–0.45 — moderate, never drenched, so the
+        # stacked effects colour without burying the synth.
+        mix = round(rng.uniform(0.18, 0.45), 3)
+        out.append((f"FX {slot} Output - Mix", mix))
+        if label == "delay":
+            # Tempo-sync the delay to the song so echoes lock to
+            # musical divisions (1/8, 1/4 dotted, etc.) instead of
+            # free-running ms. Surge's "Time" param re-interprets as
+            # note divisions when Tempo Sync is on. Pool tuned for
+            # techno-ish echo times — dotted-8th + quarter both
+            # work well at 120–125 BPM warm_analogue.
+            out.append((f"FX {slot} Delay - Tempo Sync", 1.0))
+            sync_time = rng.choice([0.35, 0.45, 0.50, 0.55])
+            out.append((f"FX {slot} Delay - Time L", sync_time))
+            out.append((f"FX {slot} Delay - Time R", sync_time))
+            # Feedback 0.3–0.55 — enough echoes to hear, not enough
+            # to swamp the mix.
+            out.append((f"FX {slot} Delay - Feedback", round(rng.uniform(0.30, 0.55), 3)))
+    # Explicitly silence any unused slot so this preset can override
+    # a previously-set FX state on the same synth.
+    for i in range(n_fx, 2):
+        slot = slot_names[i]
+        out.append((f"FX {slot} FX Type", _FX_OFF))
+    return tuple(out)
+
+
 PRESET_VARIANTS: dict[tuple[str, str], list[tuple[tuple[str, float], ...]]] = {
     # warm_analogue bass — six takes on the MS-10-style sub bass.
     ("bass", "warm_sub"): [
@@ -410,8 +483,20 @@ PRESET_VARIANTS: dict[tuple[str, str], list[tuple[tuple[str, float], ...]]] = {
     ],
 }
 
+# traditional_arp is the other half of warm_analogue's hash-picked
+# candy rotation — same role (bright top-arp above the lead), same
+# tonal palette as sh101_top, so it shares its variant pool. The
+# musical difference is in the GENERATOR (constant rate up/down vs
+# euclidean trigger pattern), not in the patch.
+PRESET_VARIANTS[("candy", "traditional_arp")] = PRESET_VARIANTS[
+    ("candy", "sh101_top")
+]
 
-def apply_preset(synth, role: str, style: str, *, variant: int = 0, engine=None) -> bool:
+
+def apply_preset(
+    synth, role: str, style: str,
+    *, variant: int = 0, fx_seed: int | None = None, engine=None,
+) -> bool:
     """Apply the (role, style) preset to *synth* if one exists.
 
     Returns True if a preset was applied; False if none is registered
@@ -462,6 +547,12 @@ def apply_preset(synth, role: str, style: str, *, variant: int = 0, engine=None)
         preset = ROLE_STYLE_PRESETS[key]
     else:
         return False
+
+    # Per-song random FX stack — composer hash-derives ``fx_seed`` per
+    # voice for warm_analogue lead/candy. Stacks into Surge's B-rack
+    # (B1, B2) on top of whatever A-rack character FX the variant has.
+    if fx_seed is not None:
+        preset = tuple(preset) + _random_fx_stack(fx_seed)
 
     fx_type_entries = [(n, v) for n, v in preset if n.endswith("FX Type")]
     other_entries = [(n, v) for n, v in preset if not n.endswith("FX Type")]

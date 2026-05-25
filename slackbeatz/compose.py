@@ -405,20 +405,19 @@ _STYLE_PROFILES: dict[str, StyleProfile] = {
                 "intensity": 0.75,
             }),
             # Iteration 1.12 — fast top arp ("molten" propulsive layer).
-            # Same chord-following sequencer as the lead but at ~11
-            # hits per bar (vs lead's 2.5) and an octave higher,
-            # giving the track that DMX Krew "two analogue synths
-            # interlocking" feel without competing with the lead's
-            # melodic role. Different pitch sequence so it weaves
-            # against the lead rather than doubling it.
+            #
+            # Iteration 1.15: algorithm gets hash-rotated 50/50
+            # between ``sh101_top`` (the original euclidean-clocked
+            # SH-101 sequencer) and ``traditional_arp`` (constant-rate
+            # up/down chord-tone arp). Algorithm-specific knobs
+            # (``pitches``/``pulses`` for sh101_top;
+            # ``direction``/``rate``/``octave_range``/``voicing`` for
+            # traditional_arp) come from
+            # ``compose._per_song_knob_extras``. Only the shared
+            # knobs live here.
             GenSpec("sweep", "candy",  "sh101_top", knob_defaults={
-                "pitches": "0,2,4,5,7",
-                "pulses": 11,
-                "steps": 16,
-                "gate": 0.55,
                 "progression": "i-VII-VI-V",
                 "bars_per_chord": 4,
-                "octave": 1,
                 "evolution": 0.3,
                 "base_vel": 55,
                 "intensity": 0.65,
@@ -567,17 +566,12 @@ _PATCH_HASH_BYTE: dict[tuple[str, str], int] = {
 
 
 # Iteration 1.14 — hash-driven musical-knob variation for the
-# warm_analogue candy (top arp) voice. User feedback was that the
-# candy line "sounded too similar and too dominant" across songs
-# because every track used the same pitches/pulses/gate — only the
-# Surge timbre changed. Below: pools of arp shapes that get
-# hash-picked per song so each warm_analogue track has a genuinely
-# different top-line, not just a different filter colour. ~25% of
-# songs silence the candy entirely (intensity=0) so listeners
-# encounter bass+lead+drums without the top arp on occasion.
+# warm_analogue candy (top arp) voice. ~25% of songs silence the
+# candy entirely (intensity=0) so listeners encounter bass+lead+drums
+# without the top arp on occasion.
 _WARM_CANDY_PITCH_POOL = [
     "0,2,4",         # 3-note triad ascend
-    "0,2,4,5,7",     # 5-note pentatonic walk (current default)
+    "0,2,4,5,7",     # 5-note pentatonic walk
     "0,3,5,7",       # min-3 + 4th + 5th outline
     "0,5,7",         # spacious open-fifth shape
     "0,2,5",         # tight 3-note cluster
@@ -587,18 +581,49 @@ _WARM_CANDY_PULSE_POOL = [5, 7, 9, 11]
 _WARM_CANDY_GATE_POOL = [0.45, 0.6, 0.75]
 _WARM_CANDY_OCTAVE_POOL = [0, 1, 2]
 
+# Iteration 1.15 — pools for the alternative ``traditional_arp``
+# candy generator. Different knob set than sh101_top (constant-rate
+# up/down arpeggio over chord tones, not euclidean-clocked fixed
+# pitch sequence). 50/50 hash-picked per song.
+_WARM_ARP_DIRECTION_POOL = ["up", "down", "updown", "random"]
+_WARM_ARP_RATE_POOL = [8, 12, 16]       # 8ths, 12ths, 16ths
+_WARM_ARP_OCTRANGE_POOL = [1, 2]
+_WARM_ARP_VOICING_POOL = ["triad", "seventh", "sus2", "sus4", "open"]
+_WARM_ARP_GATE_POOL = [0.4, 0.55, 0.7]
 
-def _per_song_knob_extras(style: str, h: bytes) -> dict[str, dict[str, object]]:
+
+def _per_song_algorithm_picks(style: str, h: bytes) -> dict[str, str]:
+    """Hash-pick alternate algorithms per gen handle for *style*.
+
+    Returns ``{handle: algorithm_name}`` for gens whose algorithm
+    rotates between options. render_sb overrides ``spec.algorithm``
+    with these values before emitting.
+
+    Today: warm_analogue's candy slot alternates 50/50 between
+    ``sh101_top`` (euclidean-clocked SH-101 sequencer) and
+    ``traditional_arp`` (constant-rate up/down chord-tone arp) —
+    same role, different musical character.
+    """
+    picks: dict[str, str] = {}
+    if style == "warm_analogue":
+        # Byte 28 — first byte not used by patch / candy musical knobs
+        # so picks stay decorrelated from those decisions.
+        picks["sweep"] = "sh101_top" if (h[28] % 2) == 0 else "traditional_arp"
+    return picks
+
+
+def _per_song_knob_extras(
+    style: str, h: bytes, algorithm_picks: dict[str, str],
+) -> dict[str, dict[str, object]]:
     """Compute hash-driven per-song knob additions, keyed by gen handle.
 
-    Two layers today, both warm_analogue-only:
+    Three layers, all warm_analogue-only today:
 
-    * ``patch=N`` per voice — picks a Surge preset variant from
-      ``audio_offline_presets.PRESET_VARIANTS`` so songs in the same
-      style get different timbres.
-    * Musical-knob variation on the candy (top arp) — pitches /
-      pulses / gate / octave / sometimes-silence — so the candy
-      line itself differs musically between songs, not just sonically.
+    * ``patch=N`` per voice — picks a Surge preset variant.
+    * Musical-knob variation on the candy — knob set depends on which
+      algorithm got picked for the sweep slot in *algorithm_picks*.
+    * ``fx_seed`` on lead + candy — drives the random per-song B-rack
+      FX stack in ``audio_offline_presets._random_fx_stack``.
 
     Returned dict is ``{handle: {knob_name: value}}``; render_sb
     folds it into each gen's emitted line, with these entries
@@ -615,18 +640,33 @@ def _per_song_knob_extras(style: str, h: bytes) -> dict[str, dict[str, object]]:
         extras.setdefault(handle, {})["patch"] = variant
 
     if style == "warm_analogue":
-        # Candy musical variation — uses bytes 23–27 so it doesn't
-        # collide with the patch bytes (20–22 in _PATCH_HASH_BYTE).
-        # Order matters: extras override knob_defaults at emit time.
+        # Candy musical variation — knob set depends on which algorithm
+        # picked at the sweep slot. Both pools use bytes 23–27 so they
+        # stay decorrelated from the patch bytes (20–22).
         cand = extras.setdefault("sweep", {})
-        cand["pitches"] = _WARM_CANDY_PITCH_POOL[h[23] % len(_WARM_CANDY_PITCH_POOL)]
-        cand["pulses"] = _WARM_CANDY_PULSE_POOL[h[24] % len(_WARM_CANDY_PULSE_POOL)]
-        cand["gate"] = _WARM_CANDY_GATE_POOL[h[25] % len(_WARM_CANDY_GATE_POOL)]
-        cand["octave"] = _WARM_CANDY_OCTAVE_POOL[h[26] % len(_WARM_CANDY_OCTAVE_POOL)]
+        sweep_algo = algorithm_picks.get("sweep", "sh101_top")
+        if sweep_algo == "sh101_top":
+            cand["pitches"] = _WARM_CANDY_PITCH_POOL[h[23] % len(_WARM_CANDY_PITCH_POOL)]
+            cand["pulses"] = _WARM_CANDY_PULSE_POOL[h[24] % len(_WARM_CANDY_PULSE_POOL)]
+            cand["gate"] = _WARM_CANDY_GATE_POOL[h[25] % len(_WARM_CANDY_GATE_POOL)]
+            cand["octave"] = _WARM_CANDY_OCTAVE_POOL[h[26] % len(_WARM_CANDY_OCTAVE_POOL)]
+        else:  # traditional_arp
+            cand["direction"] = _WARM_ARP_DIRECTION_POOL[h[23] % len(_WARM_ARP_DIRECTION_POOL)]
+            cand["rate"] = _WARM_ARP_RATE_POOL[h[24] % len(_WARM_ARP_RATE_POOL)]
+            cand["octave_range"] = _WARM_ARP_OCTRANGE_POOL[h[25] % len(_WARM_ARP_OCTRANGE_POOL)]
+            cand["voicing"] = _WARM_ARP_VOICING_POOL[h[26] % len(_WARM_ARP_VOICING_POOL)]
+            cand["gate"] = _WARM_ARP_GATE_POOL[h[25] % len(_WARM_ARP_GATE_POOL)]
+            cand["octave"] = _WARM_CANDY_OCTAVE_POOL[h[26] % len(_WARM_CANDY_OCTAVE_POOL)]
         # ~25% of songs silence the candy so bass+lead+drums get
-        # breathing room. intensity=0 short-circuits sh101_top.
+        # breathing room. intensity=0 short-circuits either algorithm.
         if (h[27] % 4) == 0:
             cand["intensity"] = 0
+
+        # fx_seed per voice — bytes 29 (lead) / 30 (sweep). Range 0..255
+        # is more than enough — _random_fx_stack only mods by 10 for
+        # the FX-count bucket and uses random.Random(seed) for picks.
+        extras.setdefault("lead", {})["fx_seed"] = h[29]
+        cand["fx_seed"] = h[30]
     return extras
 
 
@@ -885,10 +925,12 @@ def render_sb(
         lines.append(f"  scale {scale_override}")
     lines.append("")
 
-    # Per-song knob extras — currently only used by warm_analogue to
-    # hash-pick a different Surge preset variant per gen so songs in
-    # the same style get different timbres. Keyed by gen handle.
-    per_song_knob_extras = _per_song_knob_extras(style, h)
+    # Per-song hash-driven overrides — algorithm picks (e.g.
+    # warm_analogue's 50/50 sh101_top vs traditional_arp candy
+    # rotation) and knob extras (patch variant, musical knobs,
+    # fx_seed). Both keyed by gen handle.
+    per_song_algo_picks = _per_song_algorithm_picks(style, h)
+    per_song_knob_extras = _per_song_knob_extras(style, h, per_song_algo_picks)
 
     # Gens with style-aware knobs sprinkled in.
     gens = profile.gens
@@ -896,9 +938,13 @@ def render_sb(
         handle = spec.handle
         gen_type = spec.type_
         # Per-type override (from the Builder 🎨 Per-voice section)
-        # still wins; otherwise the style profile's algorithm is what
-        # ends up on the .sb gen line.
-        gen_algorithm = algorithm_per_type.get(gen_type, spec.algorithm)
+        # wins highest; next, hash-driven per-song algorithm rotation
+        # (e.g. warm_analogue's candy 50/50 sh101_top vs traditional_arp);
+        # finally the style profile's algorithm.
+        gen_algorithm = algorithm_per_type.get(
+            gen_type,
+            per_song_algo_picks.get(handle, spec.algorithm),
+        )
         parts = [f"gen {handle:<6} {gen_type:<7} {gen_algorithm}"]
         # If the chosen handle isn't a standard gm-setup instrument name,
         # add an inst= knob mapping it onto the real rig.
