@@ -1519,11 +1519,11 @@ def _build_builder_tab(parent, *, player, _var, ttk, tk) -> None:
     ).pack(side="left", padx=(8, 0))
     ttk.Label(tempo_row, text=" BPM").pack(side="left")
 
-    # 🎨 Per-voice style — collapsible disclosure. Each gen type gets
-    # its own style dropdown so a song generated with primary style
-    # "acid" can have e.g. lofi chords + dub_techno pads. Built from
-    # the generator registry so only legal (type, style) combos
-    # appear in each dropdown.
+    # 🎨 Per-voice algorithm — collapsible disclosure. Each gen type
+    # gets its own algorithm dropdown so a song generated with primary
+    # style "acid" can have e.g. lofi chord algorithm + dub_techno pad
+    # algorithm. Built from the generator registry so only legal
+    # (type, algorithm) combos appear in each dropdown.
     from slackbeatz.generators.registry import list_generators
     styles_by_type: dict[str, list[str]] = {}
     for (t_, s_) in list_generators():
@@ -2047,6 +2047,77 @@ def _build_builder_tab(parent, *, player, _var, ttk, tk) -> None:
             _entry("transpose_prob", "transpose_prob",
                    overrides.get("transpose_prob", part.transpose_prob),
                    kind="float")
+
+            # Phase 4 — per-(part, handle) algorithm override. One
+            # dropdown per gen handle in this part, listing the
+            # algorithms registered for that gen type. Leaving a
+            # dropdown on the song default is a clear (✕) on the row.
+            from slackbeatz.generators.registry import REGISTRY
+            algo_overrides = player.get_part_algorithm_overrides().get(
+                part_name, {},
+            )
+            resolved = player.current_resolved
+            if resolved is not None and part.gen_handles:
+                ttk.Separator(container, orient="horizontal").pack(
+                    fill="x", pady=(6, 2),
+                )
+                ttk.Label(
+                    container, text="per-voice algorithm",
+                    foreground="#666",
+                    font=("TkDefaultFont", 10, "italic"),
+                ).pack(anchor="w")
+                for handle in part.gen_handles:
+                    gen = resolved.gens.get(handle)
+                    if gen is None:
+                        continue
+                    line = ttk.Frame(container)
+                    line.pack(fill="x", pady=1)
+                    ttk.Label(
+                        line, text=handle, width=14, anchor="w",
+                        foreground="#666",
+                    ).pack(side="left")
+                    type_algos = sorted(
+                        a for (t, a) in REGISTRY if t == gen.type_
+                    )
+                    if not type_algos:
+                        continue
+                    current_algo = algo_overrides.get(handle, gen.style)
+                    if current_algo not in type_algos:
+                        # Stale override from a previous run / removed
+                        # algorithm — render it anyway so the user can
+                        # see and clear it.
+                        type_algos = sorted({*type_algos, current_algo})
+                    av = tk.StringVar(value=current_algo)
+                    cb = ttk.Combobox(
+                        line, textvariable=av, values=type_algos,
+                        state="readonly", width=18,
+                    )
+                    cb.pack(side="left")
+
+                    def _on_algo(_event, h=handle, vv=av, default=gen.style):
+                        chosen = vv.get()
+                        # Picking the song default clears the per-part
+                        # override so the row reverts cleanly.
+                        if chosen == default:
+                            player.set_part_algorithm_override(
+                                part_name, h, None,
+                            )
+                        else:
+                            player.set_part_algorithm_override(
+                                part_name, h, chosen,
+                            )
+
+                    cb.bind("<<ComboboxSelected>>", _on_algo)
+
+                    def _clear_algo(h=handle, vv=av, default=gen.style):
+                        player.set_part_algorithm_override(
+                            part_name, h, None,
+                        )
+                        vv.set(default)
+
+                    ttk.Button(
+                        line, text="↺", width=2, command=_clear_algo,
+                    ).pack(side="left", padx=(4, 0))
 
     _refresh_parts()
 

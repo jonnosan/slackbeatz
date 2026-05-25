@@ -250,7 +250,10 @@ def render_events(song: ResolvedSong) -> list[tuple[int, mido.Message]]:
                 events_by_gen.setdefault(gen_handle, [])
                 continue
             ctx = _build_context(song, idx, gen_handle)
-            algo = _instantiate_algorithm(gen_resolved)
+            algorithm = part.algorithm_overrides.get(
+                gen_handle, gen_resolved.style,
+            )
+            algo = _instantiate_algorithm(gen_resolved, algorithm=algorithm)
             bucket = events_by_gen.setdefault(gen_handle, [])
             for event in algo.generate(ctx):
                 validate(event)
@@ -309,9 +312,16 @@ def render_events(song: ResolvedSong) -> list[tuple[int, mido.Message]]:
     return [(tick, msg) for tick, _key, msg in timed]
 
 
-def _instantiate_algorithm(gen):
-    """Look up ``(type_, style)`` in the registry and build the algorithm."""
-    key = (gen.type_, gen.style)
+def _instantiate_algorithm(gen, *, algorithm: str | None = None):
+    """Look up ``(type_, algorithm)`` in the registry and build the algorithm.
+
+    Defaults to the gen's own ``style`` column when no per-part
+    override is in play. The instrument / knobs / kit binding always
+    comes from the song-level gen — only the algorithm class changes
+    per part.
+    """
+    style = algorithm if algorithm is not None else gen.style
+    key = (gen.type_, style)
     if key not in REGISTRY:
         raise KeyError(
             f"no generator registered for {key} — available: {sorted(REGISTRY)}"

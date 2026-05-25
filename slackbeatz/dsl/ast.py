@@ -62,12 +62,24 @@ class GenDecl:
 
 @dataclass
 class PartDecl:
-    """`part <name> <bars> [<k=v>...]` plus indented gen-handle lines."""
+    """`part <name> <bars> [<k=v>...]` plus indented gen-handle lines.
+
+    Each indented gen line is just a handle (``  bass``) or a handle
+    plus an algorithm override (``  bass rolling``). Algorithm overrides
+    flow into :attr:`algorithm_overrides`; handles always end up in
+    :attr:`gens` in source order so the existing scheduler iteration
+    is unchanged.
+    """
 
     name: str
     bars: int
     knobs: Knobs = field(default_factory=dict)  # tempo, key, role, seed
     gens: list[str] = field(default_factory=list)
+    # Part-local overrides: handle → algorithm name. A handle absent
+    # from this dict uses the song-level algorithm. Populated by the
+    # parser when a gen-line has a second token; expanded by the
+    # resolver for ``style=NAME`` shorthand.
+    algorithm_overrides: dict[str, str] = field(default_factory=dict)
     line: int = 0
 
 

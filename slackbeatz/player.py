@@ -421,6 +421,14 @@ class Player:
         # tension, transpose_prob, scale_override.
         self._part_overrides: dict[str, dict[str, object]] = {}
 
+        # Phase 4 — per-part algorithm overrides, set from the Builder's
+        # Parts panel attribute editor. Schema {part_name:
+        # {gen_handle: algorithm_name}}. Mirrored into the resolved
+        # song's ResolvedPart.algorithm_overrides in _resolve_current;
+        # the scheduler then instantiates the named algorithm for that
+        # (part, handle) pair instead of the song-level default.
+        self._part_algorithm_overrides: dict[str, dict[str, str]] = {}
+
         # Loop on song end — re-render the same params and play again.
         self.loop: bool = False
 
@@ -1006,6 +1014,56 @@ class Player:
         with self._lock:
             return {p: dict(a) for p, a in self._part_overrides.items()}
 
+    def set_part_algorithm_override(
+        self, part_name: str, gen_handle: str, algorithm: Optional[str],
+    ) -> str:
+        """Per-(part, handle) algorithm override (Phase 4).
+
+        ``algorithm=None`` clears the override. The chosen algorithm
+        is validated against the generator registry for the handle's
+        gen type. Applied in :meth:`_resolve_current` by mutating the
+        resolved part's ``algorithm_overrides`` dict in place; the
+        scheduler then picks the named algorithm for that (part,
+        handle) pair when rendering.
+        """
+        with self._lock:
+            if algorithm is None:
+                bucket = self._part_algorithm_overrides.get(part_name)
+                if bucket is not None:
+                    bucket.pop(gen_handle, None)
+                    if not bucket:
+                        self._part_algorithm_overrides.pop(part_name, None)
+                return self._restart_after_change(
+                    f"cleared {part_name}.{gen_handle} algorithm",
+                )
+            # Validate against registry for the gen's type so a typo
+            # surfaces here, not deep in the scheduler.
+            from slackbeatz.generators.registry import REGISTRY
+            resolved = self.current_resolved
+            gen_type: Optional[str] = None
+            if resolved is not None:
+                gen = resolved.gens.get(gen_handle)
+                if gen is not None:
+                    gen_type = gen.type_
+            if gen_type is not None and (gen_type, algorithm) not in REGISTRY:
+                available = sorted(a for (t, a) in REGISTRY if t == gen_type)
+                return (
+                    f"error: unknown algorithm {algorithm!r} for "
+                    f"{gen_type} (available: {available})"
+                )
+            self._part_algorithm_overrides.setdefault(part_name, {})[
+                gen_handle
+            ] = algorithm
+            return self._restart_after_change(
+                f"{part_name}.{gen_handle} → {algorithm}",
+            )
+
+    def get_part_algorithm_overrides(self) -> dict[str, dict[str, str]]:
+        with self._lock:
+            return {
+                p: dict(a) for p, a in self._part_algorithm_overrides.items()
+            }
+
     def set_arrangement(self, atoms: Optional[list[str]]) -> str:
         """Override the song's arrangement with *atoms* (a flat list of
         part names). ``atoms=None`` clears the override and the
@@ -1300,6 +1358,24 @@ class Player:
                         object.__setattr__(part, "bars_max", None)
                     except Exception:
                         pass
+
+        # Phase 4 — per-(part, handle) algorithm overrides. The
+        # ResolvedPart.algorithm_overrides dict is mutable even on
+        # the frozen dataclass; mutate in place so the scheduler
+        # picks the user's per-part algorithm when it instantiates
+        # the generator class for each (part, handle) pair.
+        if self._part_algorithm_overrides:
+            for pname, handle_to_algo in self._part_algorithm_overrides.items():
+                part = resolved.parts.get(pname)
+                if part is None:
+                    continue
+                for handle, algorithm in handle_to_algo.items():
+                    # Skip handles that aren't in the resolved part (the
+                    # .sb may have been re-generated without them). Same
+                    # defensive pattern as the knob-override path.
+                    if handle not in part.gen_handles:
+                        continue
+                    part.algorithm_overrides[handle] = algorithm
 
         # Apply per-gen knob overrides (last so they win against
         # everything baked into the composed / loaded .sb).
