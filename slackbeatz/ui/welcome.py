@@ -140,16 +140,50 @@ class WelcomeScreen(tk.Frame):
 
     def _build_player_from_file(self, path: Path, *,
                                 setup_arg: str | None = None) -> None:
-        from slackbeatz.player import Player
-        # Try to read the setup's backend to pick an output mode. If
-        # the song doesn't embed a setup, fall back to session
-        # last_setup. osc_routing controls whether the Player spins
-        # up Surge instances — we set it to False by default here so
-        # the Welcome → Arrangement path doesn't spawn synths for
-        # mere navigation (the user hits Play to actually start audio).
-        self.app.player = Player(
-            port_name="slackbeatz",
-            setup_arg=setup_arg or self.app.session.last_setup,
-            osc_routing=False,
-        )
-        self.app.player.load_file(path)
+        """Bring up the live audio runtime + bind to ``app.player``.
+
+        Uses :func:`slackbeatz.live_runtime.build_live_runtime` so the
+        same setup-aware spawn chain as the CLI runs: when the song's
+        setup has ``backend surge``, FluidSynth + one surge-xt-cli per
+        pitched channel are spawned automatically. Otherwise we open
+        a single external MIDI port (auto-falls-back to a virtual
+        ``slackbeatz`` port when none exist).
+
+        Shutting down the previous runtime first means switching songs
+        cleanly releases ports + subprocesses — no orphaned synth
+        instances stacking up across loads.
+        """
+        from slackbeatz.live_runtime import build_live_runtime, LiveRuntimeError
+        # Tear down any previous runtime first (port owners + subprocs).
+        prev = getattr(self.app, "live_runtime", None)
+        if prev is not None:
+            try:
+                prev.shutdown()
+            except Exception:
+                pass
+        try:
+            runtime = build_live_runtime(
+                path,
+                setup_arg=setup_arg or self.app.session.last_setup,
+            )
+        except LiveRuntimeError as e:
+            # Surface to the user via a dialog — but still attempt a
+            # bare-MIDI Player so the GUI can at least browse the song.
+            from tkinter import messagebox
+            messagebox.showerror(
+                "slackbeatz: audio setup error",
+                f"Couldn't bring up the live audio chain.\n\n{e}\n\n"
+                "Play will be disabled. You can still browse + edit "
+                "the song.",
+            )
+            from slackbeatz.player import Player
+            self.app.player = Player(
+                port_name="slackbeatz",
+                setup_arg=setup_arg or self.app.session.last_setup,
+                osc_routing=False,
+            )
+            self.app.player.load_file(path)
+            self.app.live_runtime = None
+            return
+        self.app.player = runtime.player
+        self.app.live_runtime = runtime

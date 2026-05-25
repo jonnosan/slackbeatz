@@ -49,6 +49,11 @@ class GuiApp:
         self.session = load_session()
         prune_missing_recents(self.session)
         self.player: Optional["Player"] = None
+        # Live runtime — owns spawned FluidSynth + surge-xt-cli processes
+        # for the current song. Set by welcome._build_player_from_file
+        # via live_runtime.build_live_runtime; torn down on _on_close +
+        # when switching songs.
+        self.live_runtime: object | None = None
         self._current_frame: Optional[tk.Frame] = None
         # Auto-save the session on close.
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -85,7 +90,15 @@ class GuiApp:
             pass
 
     def _on_close(self) -> None:
-        if self.player is not None:
+        # Shut down the live runtime (kills surge-xt-cli + FluidSynth
+        # subprocesses, closes virtual MIDI ports). Idempotent — safe
+        # even when build_live_runtime never ran.
+        if self.live_runtime is not None:
+            try:
+                self.live_runtime.shutdown()
+            except Exception:
+                pass
+        elif self.player is not None:
             try:
                 self.player.stop()
             except Exception:
