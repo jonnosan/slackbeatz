@@ -152,9 +152,24 @@ class ArrangementScreen(tk.Frame):
         Cells show a filled marker if the voice plays in that part. A
         dot suffix (``●``) flags a part-scope override (algorithm
         or knob) — a tiny visual cue without claiming any extra width.
+
+        Stores the wrap Frame as ``self._grid_wrap`` so
+        :meth:`_rebuild_grid_only` can refresh it after a knob edit
+        without destroying the rest of the screen (the drilldown lives
+        in a separate frame and must stay alive across knob edits).
         """
-        wrap = tk.Frame(self, relief="sunken", borderwidth=1)
-        wrap.pack(fill="both", expand=True, padx=12, pady=4)
+        # Reuse the existing wrap when _rebuild_grid_only sets the
+        # flag — that way we update the grid in place without
+        # destroying / re-creating the outer Frame (which would
+        # disturb pack order and bump the detail host around).
+        reuse_wrap = getattr(self, "_reuse_grid_wrap_for_next_build", None)
+        if reuse_wrap is not None and reuse_wrap.winfo_exists():
+            wrap = reuse_wrap
+            self._reuse_grid_wrap_for_next_build = None
+        else:
+            wrap = tk.Frame(self, relief="sunken", borderwidth=1)
+            wrap.pack(fill="both", expand=True, padx=12, pady=4)
+        self._grid_wrap = wrap
 
         resolved = self._resolved()
         if resolved is None:
@@ -177,6 +192,9 @@ class ArrangementScreen(tk.Frame):
         # grid dedupes by part name; multiple positions can share a
         # column label (e.g. main appearing twice).
         self._part_col_labels: dict[int, tk.Label] = {}
+        # Per-voice activity LEDs — handle → (label, channel_1idx).
+        # Populated in _build_voice_row, polled in _tick_transport.
+        self._voice_leds: dict[str, tuple[tk.Label, int]] = {}
         for part_name in self._arrangement_unique(resolved):
             col = tk.Frame(header)
             col.pack(side="left", padx=1)
@@ -231,6 +249,16 @@ class ArrangementScreen(tk.Frame):
         row = tk.Frame(parent)
         row.pack(fill="x", pady=1)
         gen = resolved.gens[handle]
+
+        # Activity LED — off (gray) when silent, green when this
+        # channel has notes sounding. Polled by _tick_transport.
+        # is_channel_active grace window is 150ms so short hi-hats
+        # blink visibly + 4-bar drones stay solid green.
+        led = tk.Label(row, text="●", fg="#444", width=2)
+        led.pack(side="left", padx=(2, 0))
+        if gen.instrument is not None:
+            self._voice_leds[handle] = (led, gen.instrument.channel)
+
         # Voice name is clickable — opens the drilldown for this voice
         # in voice-scope (changes apply to every part). We pick the
         # FIRST part where the voice is active as the "viewing
@@ -242,7 +270,7 @@ class ArrangementScreen(tk.Frame):
             None,
         )
         name_label = tk.Label(
-            row, text=handle, width=10, anchor="w",
+            row, text=handle, width=8, anchor="w",
             fg="blue", cursor="hand2",
             font=("TkDefaultFont", 10, "underline"),
         )
@@ -401,6 +429,16 @@ class ArrangementScreen(tk.Frame):
             self._highlight_active_part(p.current_playing_position())
         except Exception:
             pass
+        # Per-voice activity LEDs — green when channel is sounding,
+        # gray when silent. 150ms grace window inside is_channel_active
+        # so short notes blink visibly; held notes stay lit for the
+        # full duration via held_notes tracking on the Player side.
+        for handle, (led, channel_1idx) in self._voice_leds.items():
+            try:
+                active = p.is_channel_active(channel_1idx, window_ms=150.0)
+                led.config(fg="#22cc44" if active else "#444")
+            except (tk.TclError, AttributeError):
+                pass
 
     def _highlight_active_part(self, position_idx: int | None) -> None:
         """Background-highlight the part column header for the
@@ -471,14 +509,48 @@ class ArrangementScreen(tk.Frame):
             self._render_drilldown()
 
     def _on_drilldown_change(self) -> None:
-        # A knob / algorithm change happened — rebuild the grid so
-        # override markers refresh.
-        self._refresh_grid()
+        # A knob / algorithm change happened — refresh ONLY the grid's
+        # override markers, not the entire screen. Doing a full
+        # _refresh_grid here would destroy the open drilldown widget
+        # (closing the sound-design surface mid-edit, which was the
+        # bug the user reported: "if I change a knob, the view
+        # shouldn't change").
+        self._rebuild_grid_only()
+
+    def _rebuild_grid_only(self) -> None:
+        """Re-render just the Voice × Part marker grid in place.
+
+        Keeps the menubar, header, detail-host (drilldown), and
+        transport alive. Used after knob edits so the user's open
+        drilldown survives the change.
+        """
+        wrap = getattr(self, "_grid_wrap", None)
+        if wrap is None or not wrap.winfo_exists():
+            # No grid yet (or it was already destroyed) — fall back to
+            # a full rebuild.
+            self._refresh_grid()
+            return
+        for child in wrap.winfo_children():
+            child.destroy()
+        # _build_grid creates a NEW wrap as self._grid_wrap. To rebuild
+        # inside the EXISTING wrap, we inline the body here. Easiest
+        # path: temporarily steal `self.pack` behaviour by re-binding
+        # the wrap inside _build_grid via a flag.
+        self._reuse_grid_wrap_for_next_build = wrap
+        self._build_grid()
 
     def _refresh_grid(self) -> None:
-        # Cheap full rebuild — the grid is small.
+        """Full rebuild of every widget in the ArrangementScreen.
+
+        Used after structural changes — load file, change style,
+        re-roll, add voice — where the arrangement / parts / gens
+        themselves change. Knob-only edits go via
+        :meth:`_rebuild_grid_only` to keep the drilldown alive.
+        """
         for child in self.winfo_children():
             child.destroy()
+        # Reset per-build caches so the rebuilt widgets get fresh state.
+        self._active_part_label = None
         self._build()
 
     def _on_add_voice(self) -> None:
