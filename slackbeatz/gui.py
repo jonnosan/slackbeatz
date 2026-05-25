@@ -1537,31 +1537,46 @@ def _build_builder_tab(parent, *, player, _var, ttk, tk) -> None:
     per_voice_vars: dict[str, "tk.StringVar"] = {}
     per_voice_combos: dict[str, "ttk.Combobox"] = {}
 
-    disclose_var = _var(tk.StringVar, value="▸ 🎨 Per-voice style")
+    disclose_var = _var(tk.StringVar, value="▸ 🎨 Per-voice algorithm")
     disclose_state = {"open": False}
 
+    def _default_algorithm_for(gen_type: str) -> str | None:
+        """The algorithm the current song-level style would use for
+        *gen_type*. Returns ``None`` if the style isn't a composer
+        style or doesn't cover *gen_type* — in which case there's no
+        sensible "default" to revert the per-voice dropdown to."""
+        from slackbeatz.compose import _STYLE_PROFILES
+        style_name = player.style_override
+        profile = _STYLE_PROFILES.get(style_name) if style_name else None
+        if profile is None:
+            return None
+        for spec in profile.gens:
+            if spec.type_ == gen_type:
+                return spec.algorithm
+        return None
+
     def _populate_per_voice_dropdowns() -> None:
-        # Sync each combo to the current effective style for its
-        # type: explicit per-type override > global style_override >
-        # composer default (just shows the global, the composer's
-        # title-derived pick happens at compose time).
-        global_style = (
-            player.style_override
-            if player.style_override in KNOWN_STYLES else KNOWN_STYLES[0]
-        )
-        ovr = player.style_per_type or {}
+        # Sync each combo to the current effective algorithm for its
+        # type: explicit per-type override > song-style default > first
+        # registered algorithm (just a fallback so the dropdown isn't
+        # blank when no style is set).
+        ovr = player.algorithm_per_type or {}
         for type_, var in per_voice_vars.items():
-            var.set(ovr.get(type_, global_style))
+            current = ovr.get(type_) or _default_algorithm_for(type_)
+            if current is None:
+                fallback = sorted(styles_by_type.get(type_, [])) or [""]
+                current = fallback[0]
+            var.set(current)
 
     def _toggle_per_voice() -> None:
         if disclose_state["open"]:
             per_voice_frame.grid_remove()
-            disclose_var.set("▸ 🎨 Per-voice style")
+            disclose_var.set("▸ 🎨 Per-voice algorithm")
             disclose_state["open"] = False
         else:
             _populate_per_voice_dropdowns()
             per_voice_frame.grid()
-            disclose_var.set("▾ 🎨 Per-voice style")
+            disclose_var.set("▾ 🎨 Per-voice algorithm")
             disclose_state["open"] = True
 
     ttk.Button(
@@ -1574,16 +1589,16 @@ def _build_builder_tab(parent, *, player, _var, ttk, tk) -> None:
     per_voice_frame.grid_remove()  # hidden until user opens it
 
     for i, type_ in enumerate(_PER_VOICE_ROLES):
-        type_styles = sorted(styles_by_type.get(type_, []))
-        if not type_styles:
+        type_algos = sorted(styles_by_type.get(type_, []))
+        if not type_algos:
             continue
         ttk.Label(per_voice_frame, text=type_, width=8,
                   anchor="w", foreground="#666").grid(
             row=i, column=0, sticky="w", padx=(0, 4), pady=1,
         )
-        v = _var(tk.StringVar, value=type_styles[0])
+        v = _var(tk.StringVar, value=type_algos[0])
         cb = ttk.Combobox(
-            per_voice_frame, textvariable=v, values=type_styles,
+            per_voice_frame, textvariable=v, values=type_algos,
             state="readonly", width=18,
         )
         cb.grid(row=i, column=1, sticky="w", pady=1)
@@ -1592,37 +1607,38 @@ def _build_builder_tab(parent, *, player, _var, ttk, tk) -> None:
 
         def _on_change(_event, t=type_, vv=v):
             chosen = vv.get()
-            global_style = (
-                player.style_override
-                if player.style_override in KNOWN_STYLES else None
-            )
-            # Picking the same value as the global style clears the
-            # per-type override so the song re-inherits cleanly.
-            if chosen == global_style:
-                player.set_style_for_type(t, None)
+            # Picking the algorithm the song's style would pick by
+            # default clears the per-type override so the song
+            # re-inherits cleanly. Pre-#56 this compared `chosen`
+            # (an algorithm name) against `player.style_override`
+            # (a composer-style name) — they never matched, so the
+            # auto-clear path was dead. _default_algorithm_for
+            # looks up the right algorithm via _STYLE_PROFILES.
+            default_algo = _default_algorithm_for(t)
+            if chosen == default_algo:
+                player.set_algorithm_for_type(t, None)
             else:
-                player.set_style_for_type(t, chosen)
+                player.set_algorithm_for_type(t, chosen)
 
         cb.bind("<<ComboboxSelected>>", _on_change)
 
         def _on_reset(t=type_, vv=v):
-            player.set_style_for_type(t, None)
-            global_style = (
-                player.style_override
-                if player.style_override in KNOWN_STYLES
-                else KNOWN_STYLES[0]
-            )
-            vv.set(global_style)
+            player.set_algorithm_for_type(t, None)
+            default_algo = _default_algorithm_for(t)
+            if default_algo is not None:
+                vv.set(default_algo)
+            elif type_algos:
+                vv.set(type_algos[0])
 
         ttk.Button(
             per_voice_frame, text="↺", width=2, command=_on_reset,
         ).grid(row=i, column=2, sticky="w", padx=(4, 0), pady=1)
 
     # Global Style change clears per-voice overrides so a switch
-    # from "acid → lofi" doesn't leave stale acid pads behind.
+    # from "acid → lofi" doesn't leave stale acid algorithms behind.
     def _on_global_style(_event=None):
-        if player.style_per_type:
-            player.clear_styles_per_type()
+        if player.algorithm_per_type:
+            player.clear_algorithms_per_type()
             _populate_per_voice_dropdowns()
             status_var.set(
                 f"style → {style_var.get()} (per-voice cleared)"

@@ -34,16 +34,20 @@ from slackbeatz.setup.resolve import ResolveError, resolve_song
 from slackbeatz.sinks.realtime import RealtimeSink
 
 
-# Valid style names — used to validate /style X commands + populate the
-# GUI dropdown. Sourced from defaults.STYLE_BASE_VEL keys; if a new
-# style is added there this list updates automatically.
+# Composer style names — what `compose_from_text(style_override=…)`
+# accepts and what the song-level Style dropdown in the GUI lists.
+# Sourced from compose._STYLE_PROFILES so adding a new style there
+# updates this list automatically.
+#
+# Pre-Phase-3 this list was sourced from `defaults.STYLE_BASE_VEL`
+# keys, which happened to match the StyleProfile keys. Phase 3
+# re-keyed STYLE_BASE_VEL by *algorithm* (not style), so that
+# source now returns algorithm names like 'rolling' / 'acid_303'
+# — wrong shape for the song-level picker. Use _STYLE_PROFILES.keys()
+# directly to keep the semantic stable across the refactor.
 def _known_styles() -> list[str]:
-    from slackbeatz.generators.defaults import STYLE_BASE_VEL
-    seen: list[str] = []
-    for (_type, style) in STYLE_BASE_VEL.keys():
-        if style not in seen:
-            seen.append(style)
-    return seen
+    from slackbeatz.compose import _STYLE_PROFILES
+    return list(_STYLE_PROFILES.keys())
 
 
 KNOWN_STYLES = _known_styles()
@@ -372,15 +376,20 @@ class Player:
         self.tempo_override: Optional[int] = None
         self.seed_offset: int = 0
 
-        # Per-gen-type style overrides — the Builder's 🎨 Per-voice
-        # style disclosure populates this with entries like
-        # ``{"chords": "lofi", "bass": "psytrance"}``. Threaded into
-        # :func:`compose_from_text` so each gen line in the rendered
-        # .sb gets its type-specific style. The primary
-        # :attr:`style_override` still drives the song profile
-        # (gen layout, tempo, arrangement); per-type entries just
-        # change which per-style algorithm each gen runs.
-        self.style_per_type: Optional[dict[str, str]] = None
+        # Per-gen-type algorithm overrides — the Builder's 🎨 Per-voice
+        # algorithm disclosure populates this with entries like
+        # ``{"chords": "rhodes_chord", "bass": "gallop"}``. Threaded
+        # into :func:`compose_from_text` so each gen line in the
+        # rendered .sb gets its type-specific algorithm. The primary
+        # :attr:`style_override` still drives the song profile (gen
+        # layout, tempo, arrangement); per-type entries just rewrite
+        # individual gens' algorithm column.
+        #
+        # Pre-rename (issue #56) this was ``style_per_type`` —
+        # Phase 3 changed the values from style names (e.g. "lofi")
+        # to algorithm names (e.g. "rhodes_chord") but the field
+        # name lagged.
+        self.algorithm_per_type: Optional[dict[str, str]] = None
 
         # Arrangement-level overrides applied AFTER resolution but
         # BEFORE the scheduler reads it. Set by the GUI's Builder
@@ -898,7 +907,7 @@ class Player:
                 self.current_phrase,
                 seed_offset=self.seed_offset,
                 style_override=self.style_override,
-                style_per_type=self.style_per_type,
+                algorithm_per_type=self.algorithm_per_type,
                 tempo_override=self.tempo_override,
             )
             return self._with_state_header(sb)
@@ -1060,42 +1069,54 @@ class Player:
                 f"style → {self.style_override or 'auto'}",
             )
 
-    def set_style_for_type(self, type_: str, style: Optional[str]) -> str:
-        """Per-gen-type style override (Builder 🎨 Per-voice section).
-        ``style=None`` clears the override for *type_*. Validates *style*
-        against :data:`KNOWN_STYLES` — a per-type bad style is rejected
-        the same way :meth:`set_style` rejects the global one."""
+    def set_algorithm_for_type(
+        self, type_: str, algorithm: Optional[str],
+    ) -> str:
+        """Per-gen-type algorithm override (Builder 🎨 Per-voice section).
+
+        ``algorithm=None`` clears the override for *type_*. Validates
+        *algorithm* against the generator registry for *type_* —
+        a typo'd algorithm name surfaces here, not deep in the
+        scheduler.
+        """
         with self._lock:
             if self.current_song_path is not None:
-                return "style override only applies to phrase-composed songs"
-            if style is None:
-                if self.style_per_type:
-                    self.style_per_type.pop(type_, None)
-                    if not self.style_per_type:
-                        self.style_per_type = None
-                return self._restart_after_change(
-                    f"cleared {type_} style override",
+                return (
+                    "algorithm override only applies to phrase-composed songs"
                 )
-            if style not in KNOWN_STYLES:
-                return f"unknown style {style!r} — known: {', '.join(KNOWN_STYLES)}"
-            if self.style_per_type is None:
-                self.style_per_type = {}
-            self.style_per_type[type_] = style
+            if algorithm is None:
+                if self.algorithm_per_type:
+                    self.algorithm_per_type.pop(type_, None)
+                    if not self.algorithm_per_type:
+                        self.algorithm_per_type = None
+                return self._restart_after_change(
+                    f"cleared {type_} algorithm override",
+                )
+            from slackbeatz.generators.registry import REGISTRY
+            if (type_, algorithm) not in REGISTRY:
+                available = sorted(a for (t, a) in REGISTRY if t == type_)
+                return (
+                    f"unknown algorithm {algorithm!r} for {type_} — "
+                    f"known: {', '.join(available)}"
+                )
+            if self.algorithm_per_type is None:
+                self.algorithm_per_type = {}
+            self.algorithm_per_type[type_] = algorithm
             return self._restart_after_change(
-                f"{type_} style → {style}",
+                f"{type_} algorithm → {algorithm}",
             )
 
-    def clear_styles_per_type(self) -> str:
-        """Wipe every entry in :attr:`style_per_type`. Used by the
+    def clear_algorithms_per_type(self) -> str:
+        """Wipe every entry in :attr:`algorithm_per_type`. Used by the
         Builder when the user picks a new global style — we don't
         silently keep stale per-voice overrides around."""
         with self._lock:
-            if not self.style_per_type:
-                return "no per-voice style overrides"
-            n = len(self.style_per_type)
-            self.style_per_type = None
+            if not self.algorithm_per_type:
+                return "no per-voice algorithm overrides"
+            n = len(self.algorithm_per_type)
+            self.algorithm_per_type = None
             return self._restart_after_change(
-                f"cleared {n} per-voice style override(s)",
+                f"cleared {n} per-voice algorithm override(s)",
             )
 
     def set_seed_offset(self, offset: int) -> str:
@@ -1227,7 +1248,7 @@ class Player:
                 self.current_phrase,
                 seed_offset=self.seed_offset,
                 style_override=self.style_override,
-                style_per_type=self.style_per_type,
+                algorithm_per_type=self.algorithm_per_type,
                 tempo_override=self.tempo_override,
             )
             with tempfile.NamedTemporaryFile(
