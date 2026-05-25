@@ -450,6 +450,19 @@ class Player:
         #   {gen_type: {knob_name: value}}
         self._voice_knob_overrides: dict[str, dict[str, object]] = {}
 
+        # Deferred LFO edits for phrase-mode (composed-from-title)
+        # songs that have no .sb file on disk to mutate. Each entry
+        # is ``(op, args_dict)``; ``_resolve_current`` replays the
+        # whole list against the freshly-composed temp .sb after
+        # writing it but before parsing — so the user's LFO edits
+        # survive title/style/seed changes.
+        #
+        # ``op`` ∈ ``"add"`` / ``"remove"`` / ``"update"`` /
+        # ``"rename"`` / ``"add_apply"`` / ``"remove_apply"``.
+        # ``args_dict`` matches the kwargs of the corresponding
+        # ``slackbeatz.ui.sb_edit`` function.
+        self._lfo_edits: list[tuple[str, dict]] = []
+
         # Phase D — track which loaded song we've already applied scene
         # state for, so re-resolves (triggered by knob tweaks, etc.) on
         # the same song don't keep stamping the saved mutes back over
@@ -1578,6 +1591,11 @@ class Player:
                 tf.write(sb_content)
                 tmp_path = Path(tf.name)
             try:
+                # Replay deferred LFO edits — the user added/edited
+                # LFOs through the GUI but the song is in phrase mode
+                # (no .sb on disk). Each edit is an sb_edit operation
+                # we apply to the temp .sb before parsing.
+                self._replay_lfo_edits(tmp_path)
                 file_ast = parse_file(tmp_path)
                 if file_ast.song is None:
                     raise ParseError(0, "composer produced no song block")
@@ -1734,6 +1752,61 @@ class Player:
             elif knobs.get("solo") is False:
                 self._solo.discard(int(ch))
         self._recompute_mutes()
+
+    def record_lfo_edit(self, op: str, **kwargs) -> None:
+        """Append a deferred LFO edit (phrase-mode replay queue).
+
+        File-mode callers should write directly to disk via
+        :mod:`slackbeatz.ui.sb_edit`; this is only used for
+        phrase-mode songs where there's no .sb file to mutate
+        until composition time.
+
+        Op vocabulary mirrors ``sb_edit`` function names:
+        ``add`` / ``remove`` / ``update`` / ``rename`` /
+        ``add_apply`` / ``remove_apply``. Args dict matches the
+        corresponding function's kwargs.
+        """
+        self._lfo_edits.append((op, dict(kwargs)))
+
+    def reset_lfo_edits(self) -> None:
+        """Clear all deferred LFO edits — used by the GUI on Save As
+        / explicit reset to bring the song back to its pristine
+        composer output."""
+        self._lfo_edits.clear()
+
+    def _replay_lfo_edits(self, path: Path) -> None:
+        """Apply every queued LFO edit to *path* in order.
+
+        Silent on individual SbEditError (a bad / stale edit
+        shouldn't kill the whole replay) — surfaces issues via the
+        printed warning so the user knows their edit didn't stick.
+        """
+        if not self._lfo_edits:
+            return
+        from slackbeatz.ui import sb_edit
+        from slackbeatz.ui.sb_edit import SbEditError
+        for op, args in self._lfo_edits:
+            try:
+                if op == "add":
+                    sb_edit.add_lfo(path, args["name"], args["knobs"])
+                elif op == "remove":
+                    sb_edit.remove_lfo(path, args["name"])
+                elif op == "update":
+                    sb_edit.update_lfo(path, args["name"], args["knobs"])
+                elif op == "rename":
+                    sb_edit.rename_lfo(path, args["old_name"], args["new_name"])
+                elif op == "add_apply":
+                    sb_edit.add_apply(
+                        path, args["part_name"], args["lfo_name"], args["target_ref"],
+                    )
+                elif op == "remove_apply":
+                    sb_edit.remove_apply(path, args["part_name"], args["lfo_name"])
+            except SbEditError as e:
+                import sys as _sys
+                print(
+                    f"slackbeatz: lfo edit {op} ({args}) skipped: {e}",
+                    file=_sys.stderr,
+                )
 
     def _apply_knob_overrides(self, resolved) -> None:
         for handle, knobs in self._knob_overrides.items():

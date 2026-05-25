@@ -30,7 +30,8 @@ from tkinter import messagebox, ttk
 from typing import TYPE_CHECKING
 
 from slackbeatz.ui.sb_edit import (
-    SbEditError, add_apply, add_lfo, remove_apply, remove_lfo, update_lfo,
+    SbEditError, add_apply, add_lfo, remove_apply, remove_lfo,
+    rename_lfo, update_lfo,
 )
 
 if TYPE_CHECKING:
@@ -38,6 +39,28 @@ if TYPE_CHECKING:
 
 
 _SHAPES = ("sine", "sawtooth", "square", "pulse", "noise")
+
+
+def _shape_preview(shape: str, width: float = 0.5) -> str:
+    """Tiny ASCII glyph cluster for one cycle of *shape*.
+
+    Eight characters wide — drawn from the Unicode box-drawing /
+    block ranges so the preview looks vaguely waveform-shaped in a
+    fixed-width context. Width matters for square + pulse (duty
+    cycle position).
+    """
+    if shape == "sine":
+        return "_.-‾‾-._."
+    if shape == "sawtooth":
+        return "/|/|/|/|"
+    if shape == "noise":
+        return "~.‾.~_‾."
+    # square / pulse — eight chars; width determines on/off split.
+    try:
+        on_chars = max(1, min(7, round(width * 8)))
+    except (TypeError, ValueError):
+        on_chars = 4
+    return "‾" * on_chars + "_" * (8 - on_chars)
 
 
 class LfoPanel(tk.Frame):
@@ -54,25 +77,26 @@ class LfoPanel(tk.Frame):
             side="left", padx=12,
         )
 
-        editable = self._editable()
         ttk.Button(
             bar, text="+ New LFO", command=self._on_new_lfo,
-            state=("normal" if editable else "disabled"),
         ).pack(side="right", padx=4)
 
         body = tk.Frame(self)
         body.pack(fill="both", expand=True, padx=12, pady=12)
 
-        if not editable:
+        # Phrase-mode hint — edits are queued on the Player and
+        # replayed against each freshly-composed temp .sb. Survive
+        # reroll / style change / restart for the current session.
+        # User has to Save As to persist to a real .sb file.
+        if not self._editable():
             tk.Label(
                 body,
-                text="This song was composed live from a title — no .sb "
-                     "file on disk to edit.\nSave it via File → Save As… "
-                     "first, then re-open this panel to add LFOs.",
-                fg="gray", justify="left", wraplength=560,
-            ).pack(pady=40)
-            self._build_help(body)
-            return
+                text=("Composed song (phrase mode) — LFO edits live "
+                      "on the Player and replay against each compose. "
+                      "Use File → Save As… to persist them to a .sb."),
+                fg="#0a5", justify="left", wraplength=560,
+                font=("TkDefaultFont", 10, "italic"),
+            ).pack(fill="x", pady=(0, 8))
 
         resolved = self._resolved()
         if resolved is None:
@@ -101,9 +125,16 @@ class LfoPanel(tk.Frame):
 
         head = tk.Frame(row)
         head.pack(fill="x")
+        # Shape preview — tiny 8-char ASCII sketch so the user sees
+        # what each LFO actually does at a glance.
+        preview = _shape_preview(spec.shape, spec.width)
+        offset_str = (
+            f"offset={spec.offset}" if spec.offset is not None
+            else f"offset=(auto {spec.effective_offset()})"
+        )
         knob_str = (
-            f"shape={spec.shape}  period_bars={spec.period_bars}  "
-            f"width={spec.width}  height={spec.height}"
+            f"shape={spec.shape} {preview}  bars={spec.period_bars}  "
+            f"width={spec.width}  height={spec.height}  {offset_str}"
         )
         tk.Label(head, text=f"{spec.name}  —  {knob_str}",
                  anchor="w", font=("TkDefaultFont", 10, "bold"),
@@ -168,23 +199,33 @@ class LfoPanel(tk.Frame):
 
     def _on_new_lfo(self) -> None:
         LfoEditDialog(
-            self.app, on_apply=self._do_add_lfo,
-            initial={"shape": "sine", "bars": "8", "height": "0.5",
-                     "width": "0.5", "offset": "0.5"},
+            self.app, on_apply=lambda old, new, k: self._do_add_lfo(new, k),
+            initial={
+                "name": "", "shape": "sine", "bars": "8",
+                "height": "0.5", "width": "0.5", "offset": "",
+            },
         )
 
     def _on_edit_lfo(self, spec) -> None:
+        # Read TRUE offset off the spec — None means "use shape default"
+        # (currently 0.5 for every shape per ``effective_offset``); we
+        # blank the entry in that case so the user sees it's auto.
+        offset_str = "" if spec.offset is None else str(spec.offset)
         initial = {
             "name": spec.name,
             "shape": spec.shape,
             "bars": str(spec.period_bars),
             "width": str(spec.width),
             "height": str(spec.height),
-            "offset": "0.5",  # LfoSpec doesn't carry offset; default
+            "offset": offset_str,
         }
         LfoEditDialog(
-            self.app, on_apply=lambda n, k: self._do_update_lfo(spec.name, n, k),
-            initial=initial, locked_name=True,
+            self.app,
+            on_apply=lambda old, new, k: self._do_edit_lfo(old, new, k),
+            initial=initial,
+            # Rename is supported now: name is editable + sb_edit
+            # rewrites the lfo line + every `apply OLD ...` line.
+            locked_name=False,
         )
 
     def _on_delete_lfo(self, name: str) -> None:
@@ -196,13 +237,16 @@ class LfoPanel(tk.Frame):
         if not ok:
             return
         path = self._song_path()
-        if path is None:
-            return
-        try:
-            remove_lfo(path, name)
-        except SbEditError as e:
-            messagebox.showerror("Delete LFO", str(e))
-            return
+        if path is not None:
+            try:
+                remove_lfo(path, name)
+            except SbEditError as e:
+                messagebox.showerror("Delete LFO", str(e))
+                return
+        else:
+            # Phrase mode — queue the edit on the Player so it gets
+            # replayed against the next composed temp .sb.
+            self.app.player.record_lfo_edit("remove", name=name)
         self._reload()
 
     def _on_add_apply(self, lfo_name: str) -> None:
@@ -217,55 +261,74 @@ class LfoPanel(tk.Frame):
 
     def _on_remove_apply(self, part_name: str, lfo_name: str) -> None:
         path = self._song_path()
-        if path is None:
-            return
-        try:
-            remove_apply(path, part_name, lfo_name)
-        except SbEditError as e:
-            messagebox.showerror("Remove apply", str(e))
-            return
+        if path is not None:
+            try:
+                remove_apply(path, part_name, lfo_name)
+            except SbEditError as e:
+                messagebox.showerror("Remove apply", str(e))
+                return
+        else:
+            self.app.player.record_lfo_edit(
+                "remove_apply", part_name=part_name, lfo_name=lfo_name,
+            )
         self._reload()
 
     def _do_add_lfo(self, name: str, knobs: dict[str, str]) -> None:
         path = self._song_path()
-        if path is None:
-            return
-        try:
-            add_lfo(path, name, knobs)
-        except SbEditError as e:
-            messagebox.showerror("Add LFO", str(e))
-            return
+        if path is not None:
+            try:
+                add_lfo(path, name, knobs)
+            except SbEditError as e:
+                messagebox.showerror("Add LFO", str(e))
+                return
+        else:
+            self.app.player.record_lfo_edit("add", name=name, knobs=knobs)
         self._reload()
 
-    def _do_update_lfo(
+    def _do_edit_lfo(
         self, original_name: str, new_name: str, knobs: dict[str, str],
     ) -> None:
-        if new_name != original_name:
-            messagebox.showinfo(
-                "Edit LFO",
-                "Renaming an LFO isn't supported yet — delete the old "
-                "one + add a new one with the desired name.",
-            )
-            return
+        """Handle both knob-update and rename in one go.
+
+        If *new_name* differs from *original_name* we rename first
+        (rewrites the lfo line + every apply reference), THEN apply
+        the knob update against the new name.
+        """
         path = self._song_path()
-        if path is None:
-            return
-        try:
-            update_lfo(path, original_name, knobs)
-        except SbEditError as e:
-            messagebox.showerror("Edit LFO", str(e))
-            return
+        if new_name != original_name:
+            if path is not None:
+                try:
+                    rename_lfo(path, original_name, new_name)
+                except SbEditError as e:
+                    messagebox.showerror("Edit LFO", str(e))
+                    return
+            else:
+                self.app.player.record_lfo_edit(
+                    "rename", old_name=original_name, new_name=new_name,
+                )
+        if path is not None:
+            try:
+                update_lfo(path, new_name, knobs)
+            except SbEditError as e:
+                messagebox.showerror("Edit LFO", str(e))
+                return
+        else:
+            self.app.player.record_lfo_edit("update", name=new_name, knobs=knobs)
         self._reload()
 
     def _do_add_apply(self, part_name: str, lfo_name: str, target_ref: str) -> None:
         path = self._song_path()
-        if path is None:
-            return
-        try:
-            add_apply(path, part_name, lfo_name, target_ref)
-        except SbEditError as e:
-            messagebox.showerror("Add apply", str(e))
-            return
+        if path is not None:
+            try:
+                add_apply(path, part_name, lfo_name, target_ref)
+            except SbEditError as e:
+                messagebox.showerror("Add apply", str(e))
+                return
+        else:
+            self.app.player.record_lfo_edit(
+                "add_apply", part_name=part_name, lfo_name=lfo_name,
+                target_ref=target_ref,
+            )
         self._reload()
 
     # ----- shared helpers ---------------------------------------------
@@ -311,7 +374,19 @@ class LfoPanel(tk.Frame):
 
 
 class LfoEditDialog:
-    """Modal Toplevel — fill in / edit LFO knobs."""
+    """Modal Toplevel — fill in / edit LFO knobs.
+
+    Three callback signatures supported:
+
+    * ``on_apply(original_name, new_name, knobs)`` — used for both
+      add (where original_name="") and edit (where original_name is
+      the existing name). The panel branches on whether
+      ``original_name`` is empty to pick add vs update + rename.
+
+    Period can be expressed in ``bars`` (musical) or ``hz`` (clock).
+    A radio toggle flips the visible entry; only the active one is
+    serialised into the knob dict.
+    """
 
     def __init__(
         self, app: "GuiApp", *,
@@ -320,15 +395,17 @@ class LfoEditDialog:
     ) -> None:
         self.app = app
         self.on_apply = on_apply
+        self._original_name = initial.get("name", "")
         self.win = tk.Toplevel(app.root)
-        self.win.title("New LFO" if not locked_name else f"Edit LFO {initial.get('name', '')}")
+        title = "New LFO" if not self._original_name else f"Edit LFO {self._original_name}"
+        self.win.title(title)
         self.win.transient(app.root)
         self.win.grab_set()
         self.win.resizable(False, False)
 
         self.vars: dict[str, tk.StringVar] = {}
 
-        def _row(label: str, key: str, *, widget="entry", combo_values=None):
+        def _row(label: str, key: str, *, widget="entry", combo_values=None, hint=""):
             row = tk.Frame(self.win)
             row.pack(fill="x", padx=12, pady=2)
             tk.Label(row, text=label, width=10, anchor="w").pack(side="left")
@@ -339,18 +416,51 @@ class LfoEditDialog:
                 if locked_name and key == "name":
                     e.config(state="readonly")
                 e.pack(side="left")
-            else:  # combo
+            else:
                 ttk.Combobox(
                     row, textvariable=var, values=combo_values, state="readonly",
                     width=18,
                 ).pack(side="left")
+            if hint:
+                tk.Label(row, text=hint, fg="gray",
+                         font=("TkDefaultFont", 9)).pack(side="left", padx=6)
 
         _row("Name:", "name")
         _row("Shape:", "shape", widget="combo", combo_values=_SHAPES)
-        _row("Bars:", "bars")
-        _row("Width:", "width")
-        _row("Height:", "height")
-        _row("Offset:", "offset")
+
+        # Period — bars vs hz toggle. Default to bars unless the
+        # initial dict already has hz.
+        period_row = tk.Frame(self.win)
+        period_row.pack(fill="x", padx=12, pady=2)
+        tk.Label(period_row, text="Period:", width=10, anchor="w").pack(side="left")
+        self._period_mode = tk.StringVar(
+            value="hz" if initial.get("hz") else "bars",
+        )
+        self.vars["bars"] = tk.StringVar(value=initial.get("bars", ""))
+        self.vars["hz"] = tk.StringVar(value=initial.get("hz", ""))
+        bars_entry = ttk.Entry(period_row, textvariable=self.vars["bars"], width=10)
+        hz_entry = ttk.Entry(period_row, textvariable=self.vars["hz"], width=10)
+
+        def _show_period(*_a):
+            for w in (bars_entry, hz_entry):
+                w.pack_forget()
+            if self._period_mode.get() == "bars":
+                bars_entry.pack(side="left")
+            else:
+                hz_entry.pack(side="left")
+        ttk.Radiobutton(
+            period_row, text="bars", value="bars",
+            variable=self._period_mode, command=_show_period,
+        ).pack(side="left", padx=(8, 2))
+        ttk.Radiobutton(
+            period_row, text="hz", value="hz",
+            variable=self._period_mode, command=_show_period,
+        ).pack(side="left")
+        _show_period()
+
+        _row("Width:", "width", hint="(0–1, duty cycle for square/pulse)")
+        _row("Height:", "height", hint="(0–1, amplitude scale)")
+        _row("Offset:", "offset", hint="(0–1, blank = shape default 0.5)")
 
         btns = tk.Frame(self.win)
         btns.pack(padx=12, pady=(8, 12), fill="x")
@@ -365,18 +475,34 @@ class LfoEditDialog:
             messagebox.showerror("LFO", "name is required", parent=self.win)
             return
         knobs: dict[str, str] = {}
-        for k in ("shape", "bars", "width", "height", "offset"):
+        # Shape is required + comes from the combo.
+        shape = self.vars["shape"].get().strip()
+        if not shape:
+            messagebox.showerror("LFO", "shape is required", parent=self.win)
+            return
+        knobs["shape"] = shape
+        # Period — write whichever mode is selected; blank entry =
+        # require user to fill in.
+        if self._period_mode.get() == "bars":
+            bars = self.vars["bars"].get().strip()
+            if not bars:
+                messagebox.showerror("LFO", "bars value is required (or switch to hz)", parent=self.win)
+                return
+            knobs["bars"] = bars
+        else:
+            hz = self.vars["hz"].get().strip()
+            if not hz:
+                messagebox.showerror("LFO", "hz value is required (or switch to bars)", parent=self.win)
+                return
+            knobs["hz"] = hz
+        # Optional knobs — only emit when non-empty so blank ==
+        # "use generator's natural default".
+        for k in ("width", "height", "offset"):
             v = self.vars[k].get().strip()
             if v:
                 knobs[k] = v
-        if "shape" not in knobs:
-            messagebox.showerror("LFO", "shape is required", parent=self.win)
-            return
-        if "bars" not in knobs and "hz" not in knobs:
-            messagebox.showerror("LFO", "bars (or hz) is required", parent=self.win)
-            return
         self.win.destroy()
-        self.on_apply(name, knobs)
+        self.on_apply(self._original_name, name, knobs)
 
 
 class ApplyAddDialog:

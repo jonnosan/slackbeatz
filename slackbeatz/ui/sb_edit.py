@@ -112,6 +112,45 @@ def update_lfo(path: Path, name: str, knobs: dict[str, str]) -> None:
     _write(path, lines)
 
 
+def rename_lfo(path: Path, old_name: str, new_name: str) -> None:
+    """Rename an LFO + every ``apply OLD ...`` reference to it.
+
+    Atomic from the user's POV — either both the declaration and every
+    apply line are rewritten, or :class:`SbEditError` is raised before
+    any change is committed (we read the file once + write the
+    rewritten line list at the end).
+    """
+    if not new_name or " " in new_name:
+        raise SbEditError(f"invalid lfo name {new_name!r}")
+    if new_name == old_name:
+        return
+    lines = _read(path)
+    old_lfo_re = _lfo_line_re(old_name)
+    new_lfo_re = _lfo_line_re(new_name)
+    if any(new_lfo_re.match(ln) for ln in lines):
+        raise SbEditError(f"lfo {new_name!r} already exists")
+    apply_re = re.compile(rf"^(\s*apply\s+){re.escape(old_name)}(\s|$)")
+    out: list[str] = []
+    found_lfo = False
+    for ln in lines:
+        if old_lfo_re.match(ln):
+            # Rewrite "lfo OLD k=v..." → "lfo NEW k=v..."
+            out.append(re.sub(rf"^lfo\s+{re.escape(old_name)}", f"lfo {new_name}", ln, count=1))
+            found_lfo = True
+            continue
+        m = apply_re.match(ln)
+        if m:
+            out.append(re.sub(
+                rf"(^\s*apply\s+){re.escape(old_name)}(\s|$)",
+                rf"\g<1>{new_name}\g<2>", ln, count=1,
+            ))
+            continue
+        out.append(ln)
+    if not found_lfo:
+        raise SbEditError(f"no lfo {old_name!r} to rename")
+    _write(path, out)
+
+
 def remove_lfo(path: Path, name: str) -> None:
     """Remove the ``lfo NAME ...`` declaration AND every
     ``apply NAME ...`` line that references it.
