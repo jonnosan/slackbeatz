@@ -201,6 +201,7 @@ def _render_surge_stem(
     vst3_path: Path,
     role: Optional[str] = None,
     style: Optional[str] = None,
+    patch_variant: int = 0,
 ):
     """Render one pitched channel via Surge XT VST3 + dawdreamer.
 
@@ -249,7 +250,11 @@ def _render_surge_stem(
     # FX param names on first render.
     preset_applied = False
     if role is not None and style is not None:
-        preset_applied = apply_preset(synth, role, style, engine=engine)
+        preset_applied = apply_preset(
+            synth, role, style,
+            variant=patch_variant,
+            engine=engine,
+        )
 
     # Path 2: fall back to .fxp (legacy, silently no-ops) only when no
     # preset was registered. Future: extend the preset table so every
@@ -580,6 +585,7 @@ def render_song_with_surge(
     # :attr:`SynthRoleConfig.initial_patch` when no style-specific
     # patch is registered.
     gen_style_by_channel: dict[int, str] = {}
+    gen_patch_by_channel: dict[int, int] = {}
     for handle in sorted(resolved.gens.keys()):
         gen = resolved.gens[handle]
         if gen.instrument is None:
@@ -590,6 +596,14 @@ def render_song_with_surge(
         if _GEN_TYPE_TO_ROLE.get(gen.type_) is None:
             continue
         gen_style_by_channel[ch] = gen.style
+        # `patch` knob (iteration 1.13) — composer hash-picks per song
+        # for variation styles; selects which preset variant + .fxp
+        # patch the offline + live renders use. Default 0.
+        patch_raw = gen.knobs.get("patch", 0)
+        try:
+            gen_patch_by_channel[ch] = int(patch_raw)
+        except (TypeError, ValueError):
+            gen_patch_by_channel[ch] = 0
 
     surge_role_by_channel: dict[int, dict] = {}
     for cfg in SYNTH_ROLES:
@@ -669,6 +683,7 @@ def render_song_with_surge(
                     vst3_path=vst3,
                     role=role_info["role"],
                     style=gen_style_by_channel.get(ch1),
+                    patch_variant=gen_patch_by_channel.get(ch1, 0),
                 )
             finally:
                 tmp_midi.unlink(missing_ok=True)

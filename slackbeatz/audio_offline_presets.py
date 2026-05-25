@@ -222,7 +222,196 @@ ROLE_STYLE_PRESETS: dict[tuple[str, str], tuple[tuple[str, float], ...]] = {
 }
 
 
-def apply_preset(synth, role: str, style: str, *, engine=None) -> bool:
+# --------------------------------------------------------------------------
+# Patch variant table — iteration 1.13
+#
+# Some (role, algorithm) pairs need MULTIPLE preset variants so
+# different songs in the same style can have different timbres
+# without exiting the style profile. Keyed by (role, algorithm) →
+# list of preset tuples. ``apply_preset`` picks ``variants[i %
+# len(variants)]`` where ``i`` comes from the gen's ``patch`` knob
+# (the composer hash-picks this per song for variation styles like
+# warm_analogue).
+#
+# When a (role, algorithm) appears in BOTH this dict and
+# ``ROLE_STYLE_PRESETS``, this dict wins — but the ROLE_STYLE_PRESETS
+# entry is treated as "variant 0" for any (role, algorithm) absent
+# here.
+# Surge FX type normalised values — handy lookup so variants below
+# read clearly. Probed from the Surge XT VST3 in iteration 1.10/1.13.
+_FX_OFF        = 0.0
+_FX_DELAY      = 0.0251
+_FX_REVERB_1   = 0.0603
+_FX_PHASER     = 0.0905
+_FX_DISTORTION = 0.1590
+_FX_CHORUS     = 0.2965
+_FX_REVERB_2   = 0.3668
+_FX_FLANGER    = 0.4020
+_FX_TAPE       = 0.7949
+_FX_SPRING_REV = 0.9146
+
+
+def _preset(
+    *,
+    filter_type: float = 0.4,        # default LP K35 — warm + smooth
+    cutoff: float = 0.50,
+    resonance: float = 0.35,
+    feg_mod: float = 0.40,
+    keytrack: float = 0.50,
+    eg_attack: float = 0.0,
+    eg_decay: float = 0.40,
+    eg_sustain: float = 0.35,
+    eg_release: float = 0.30,
+    fx1_type: float = _FX_TAPE,      # tape FX by default (warmth)
+    fx1_mix: float = 0.50,
+    fx2_extras: tuple[tuple[str, float], ...] = (),
+) -> tuple[tuple[str, float], ...]:
+    """Build a Surge preset tuple from named parameters.
+
+    Keeps variant entries one-line readable in ``PRESET_VARIANTS``
+    instead of 12-line tuples. ``fx2_extras`` is for the occasional
+    variant that uses FX A2 in addition to FX A1 (e.g. tape +
+    distortion stacked).
+    """
+    base = [
+        ("A Filter 1 Type", filter_type),
+        ("A Filter 1 Cutoff", cutoff),
+        ("A Filter 1 Resonance", resonance),
+        ("A Filter 1 FEG Mod Amount", feg_mod),
+        ("A Filter 1 Keytrack", keytrack),
+        ("A Filter EG Attack", eg_attack),
+        ("A Filter EG Decay", eg_decay),
+        ("A Filter EG Sustain", eg_sustain),
+        ("A Filter EG Release", eg_release),
+        ("A Filter 2 Type", _FX_OFF),
+        ("FX A1 FX Type", fx1_type),
+        ("FX A1 Output - Mix", fx1_mix),
+    ]
+    return tuple(base) + fx2_extras
+
+
+# Filter type shortcuts for readability.
+_F_LADDER         = 0.1   # LP Legacy Ladder — classic 303/Moog
+_F_NOTCH12        = 0.2
+_F_VINTAGE_LADDER = 0.3   # LP Vintage Ladder — smoother ladder
+_F_K35            = 0.4   # LP K35 — round / warm
+_F_HP             = 0.6   # HP OB-Xd 12 dB
+
+# FX A2 extras for stacking — used by a few variants.
+_FX2_SOFT_OJD = (
+    ("FX A2 FX Type", _FX_DISTORTION),
+    ("FX A2 Distortion - Drive", 0.45),
+    ("FX A2 Distortion - Model", 0.727),  # OJD (Tube Screamer)
+    ("FX A2 Output - Gain", 0.45),
+)
+
+
+PRESET_VARIANTS: dict[tuple[str, str], list[tuple[tuple[str, float], ...]]] = {
+    # warm_analogue bass — six takes on the MS-10-style sub bass.
+    ("bass", "warm_sub"): [
+        # 0 — Smoothie K35 + tape (default, the original iter 1.10 preset)
+        _preset(filter_type=_F_K35, cutoff=0.40, resonance=0.25,
+                feg_mod=0.35, keytrack=0.65,
+                eg_decay=0.50, eg_sustain=0.50,
+                fx1_type=_FX_TAPE, fx1_mix=0.55),
+        # 1 — Ladder + soft drive (rounder, dirtier)
+        _preset(filter_type=_F_LADDER, cutoff=0.35, resonance=0.40,
+                feg_mod=0.40, keytrack=0.60,
+                eg_decay=0.55, eg_sustain=0.55, eg_release=0.35,
+                fx1_type=_FX_TAPE, fx1_mix=0.45,
+                fx2_extras=_FX2_SOFT_OJD),
+        # 2 — Sub-heavy K35 clean (no FX, just warm sub)
+        _preset(filter_type=_F_K35, cutoff=0.32, resonance=0.15,
+                feg_mod=0.20, keytrack=0.75,
+                eg_decay=0.60, eg_sustain=0.65, eg_release=0.40,
+                fx1_type=_FX_OFF, fx1_mix=0.0),
+        # 3 — K35 + chorus (analogue ensemble character)
+        _preset(filter_type=_F_K35, cutoff=0.45, resonance=0.30,
+                feg_mod=0.35, keytrack=0.60,
+                eg_decay=0.50, eg_sustain=0.45,
+                fx1_type=_FX_CHORUS, fx1_mix=0.40),
+        # 4 — Vintage Ladder + reverb (atmospheric / dub-leaning)
+        _preset(filter_type=_F_VINTAGE_LADDER, cutoff=0.38,
+                resonance=0.35, feg_mod=0.30, keytrack=0.60,
+                eg_decay=0.55, eg_sustain=0.50,
+                fx1_type=_FX_REVERB_1, fx1_mix=0.25),
+        # 5 — Square / FM-flavoured (HP for mid-focus + tape)
+        _preset(filter_type=_F_LADDER, cutoff=0.50, resonance=0.45,
+                feg_mod=0.55, keytrack=0.55,
+                eg_decay=0.30, eg_sustain=0.30, eg_release=0.20,
+                fx1_type=_FX_TAPE, fx1_mix=0.50),
+    ],
+    # warm_analogue lead — six SH-101-style sequencer voices.
+    ("lead", "sh101_arp"): [
+        # 0 — K35 + tape (default, the iter 1.11 preset)
+        _preset(filter_type=_F_K35, cutoff=0.50, resonance=0.35,
+                feg_mod=0.40, keytrack=0.50,
+                eg_decay=0.40, eg_sustain=0.35,
+                fx1_type=_FX_TAPE, fx1_mix=0.50),
+        # 1 — Ladder + chorus (classic SH-101 edge)
+        _preset(filter_type=_F_LADDER, cutoff=0.55, resonance=0.50,
+                feg_mod=0.60, keytrack=0.45,
+                eg_decay=0.30, eg_sustain=0.30, eg_release=0.25,
+                fx1_type=_FX_CHORUS, fx1_mix=0.40),
+        # 2 — K35 + phaser (Rephlex/IDM colour)
+        _preset(filter_type=_F_K35, cutoff=0.60, resonance=0.40,
+                feg_mod=0.50, keytrack=0.50,
+                eg_decay=0.35, eg_sustain=0.30, eg_release=0.25,
+                fx1_type=_FX_PHASER, fx1_mix=0.35),
+        # 3 — Vintage Ladder + delay (echoey lead — Aphex-leaning)
+        _preset(filter_type=_F_VINTAGE_LADDER, cutoff=0.52,
+                resonance=0.45, feg_mod=0.55, keytrack=0.50,
+                eg_decay=0.30, eg_sustain=0.30, eg_release=0.30,
+                fx1_type=_FX_DELAY, fx1_mix=0.35),
+        # 4 — K35 + flanger (swooshy, modulated)
+        _preset(filter_type=_F_K35, cutoff=0.58, resonance=0.40,
+                feg_mod=0.45, keytrack=0.50,
+                eg_decay=0.40, eg_sustain=0.40,
+                fx1_type=_FX_FLANGER, fx1_mix=0.40),
+        # 5 — Ladder + tape (dirtier / saturated lead)
+        _preset(filter_type=_F_LADDER, cutoff=0.50, resonance=0.45,
+                feg_mod=0.55, keytrack=0.50,
+                eg_decay=0.30, eg_sustain=0.30, eg_release=0.25,
+                fx1_type=_FX_TAPE, fx1_mix=0.55),
+    ],
+    # warm_analogue top arp — six takes on the bright sequencer
+    # sparkle above the lead.
+    ("candy", "sh101_top"): [
+        # 0 — Bell Seq sparkle, K35 + tape (iter 1.12 default)
+        _preset(filter_type=_F_K35, cutoff=0.65, resonance=0.30,
+                feg_mod=0.50, keytrack=0.40,
+                eg_decay=0.25, eg_sustain=0.10, eg_release=0.15,
+                fx1_type=_FX_TAPE, fx1_mix=0.45),
+        # 1 — Clavinet/wood pluck (very short decay)
+        _preset(filter_type=_F_K35, cutoff=0.50, resonance=0.25,
+                feg_mod=0.55, keytrack=0.55,
+                eg_decay=0.15, eg_sustain=0.05, eg_release=0.10,
+                fx1_type=_FX_TAPE, fx1_mix=0.40),
+        # 2 — Resonant mini-303 top (Ladder + chorus)
+        _preset(filter_type=_F_LADDER, cutoff=0.55, resonance=0.60,
+                feg_mod=0.70, keytrack=0.45,
+                eg_decay=0.20, eg_sustain=0.10, eg_release=0.20,
+                fx1_type=_FX_CHORUS, fx1_mix=0.35),
+        # 3 — Echoey sparkle (K35 + delay)
+        _preset(filter_type=_F_K35, cutoff=0.60, resonance=0.35,
+                feg_mod=0.50, keytrack=0.40,
+                eg_decay=0.20, eg_sustain=0.05, eg_release=0.25,
+                fx1_type=_FX_DELAY, fx1_mix=0.40),
+        # 4 — Atmospheric (K35 + reverb)
+        _preset(filter_type=_F_K35, cutoff=0.55, resonance=0.30,
+                feg_mod=0.45, keytrack=0.40,
+                eg_decay=0.30, eg_sustain=0.20, eg_release=0.30,
+                fx1_type=_FX_REVERB_1, fx1_mix=0.40),
+        # 5 — Modulated (Vintage Ladder + phaser)
+        _preset(filter_type=_F_VINTAGE_LADDER, cutoff=0.62,
+                resonance=0.40, feg_mod=0.55, keytrack=0.45,
+                eg_decay=0.25, eg_sustain=0.10, eg_release=0.20,
+                fx1_type=_FX_PHASER, fx1_mix=0.40),
+    ],
+}
+
+
+def apply_preset(synth, role: str, style: str, *, variant: int = 0, engine=None) -> bool:
     """Apply the (role, style) preset to *synth* if one exists.
 
     Returns True if a preset was applied; False if none is registered
@@ -263,9 +452,16 @@ def apply_preset(synth, role: str, style: str, *, engine=None) -> bool:
     without an engine (e.g. the unit tests' stub-synth path).
     """
     key = (role, style)
-    if key not in ROLE_STYLE_PRESETS:
+    # PRESET_VARIANTS wins when it has entries for this (role, style) —
+    # the indexed variant lets the composer hash-pick a timbre per song.
+    # Falls back to the single-preset ROLE_STYLE_PRESETS map.
+    if key in PRESET_VARIANTS:
+        variants = PRESET_VARIANTS[key]
+        preset = variants[variant % len(variants)]
+    elif key in ROLE_STYLE_PRESETS:
+        preset = ROLE_STYLE_PRESETS[key]
+    else:
         return False
-    preset = ROLE_STYLE_PRESETS[key]
 
     fx_type_entries = [(n, v) for n, v in preset if n.endswith("FX Type")]
     other_entries = [(n, v) for n, v in preset if not n.endswith("FX Type")]

@@ -542,6 +542,54 @@ def _apply_lines_per_role(style: str) -> dict[str, tuple[str, ...]]:
 
 
 # --------------------------------------------------------------------------
+# Per-song hash-driven knob extras (iteration 1.13)
+# --------------------------------------------------------------------------
+
+# How many preset variants exist per (style, handle) — keep in sync
+# with audio_offline_presets.PRESET_VARIANTS lengths. Used to mod the
+# hash byte into a valid variant index.
+_PATCH_VARIANT_COUNTS: dict[tuple[str, str], int] = {
+    # warm_analogue voices — keep in sync with PRESET_VARIANTS list
+    # lengths in audio_offline_presets.py.
+    ("warm_analogue", "bass"):  6,
+    ("warm_analogue", "lead"):  6,
+    ("warm_analogue", "sweep"): 6,
+}
+
+# Per-(style, handle) byte index into the song hash. Different bytes
+# per gen so the variants don't move together (bass=0 lead=0 sweep=0
+# would mean every song uses variants [0,0,0] or [1,1,1] etc.).
+_PATCH_HASH_BYTE: dict[tuple[str, str], int] = {
+    ("warm_analogue", "bass"):  20,
+    ("warm_analogue", "lead"):  21,
+    ("warm_analogue", "sweep"): 22,
+}
+
+
+def _per_song_knob_extras(style: str, h: bytes) -> dict[str, dict[str, object]]:
+    """Compute hash-driven per-song knob additions, keyed by gen handle.
+
+    Today this only emits ``patch=N`` for warm_analogue voices —
+    hash-pick which preset variant the Surge offline render uses
+    (see ``audio_offline_presets.PRESET_VARIANTS``). Returned dict is
+    ``{handle: {knob_name: value}}``; render_sb folds it into each
+    gen's emitted line alongside the static ``spec.knob_defaults``.
+
+    Deterministic per phrase (same input → same patch variants).
+    """
+    extras: dict[str, dict[str, object]] = {}
+    for (s, handle), n_variants in _PATCH_VARIANT_COUNTS.items():
+        if s != style:
+            continue
+        byte_idx = _PATCH_HASH_BYTE.get((s, handle), 23)
+        # h is the song hash bytes (sha256 digest); take byte modulo
+        # the variant count for a uniform-ish pick.
+        variant = h[byte_idx % len(h)] % n_variants
+        extras.setdefault(handle, {})["patch"] = variant
+    return extras
+
+
+# --------------------------------------------------------------------------
 # Public API
 # --------------------------------------------------------------------------
 
@@ -796,6 +844,11 @@ def render_sb(
         lines.append(f"  scale {scale_override}")
     lines.append("")
 
+    # Per-song knob extras — currently only used by warm_analogue to
+    # hash-pick a different Surge preset variant per gen so songs in
+    # the same style get different timbres. Keyed by gen handle.
+    per_song_knob_extras = _per_song_knob_extras(style, h)
+
     # Gens with style-aware knobs sprinkled in.
     gens = profile.gens
     for spec in gens:
@@ -813,6 +866,9 @@ def render_sb(
         # Static knob defaults baked into the style profile — empty
         # today, populated by the subbass + candy consolidation in #49.
         for k, v in spec.knob_defaults.items():
+            parts.append(f"{k}={v}")
+        # Per-song extras (e.g. patch variant for warm_analogue).
+        for k, v in per_song_knob_extras.get(handle, {}).items():
             parts.append(f"{k}={v}")
         # Rhythm gens get the humanize / drop_prob knobs.
         if gen_type == "rhythm":

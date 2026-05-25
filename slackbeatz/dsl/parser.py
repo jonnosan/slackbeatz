@@ -95,6 +95,12 @@ _GEN_KNOBS = frozenset(
      # SH-101-style arp (melody:sh101_arp): the pitch sequence the
      # gen cycles through, comma-separated scale degrees.
      "pitches",
+     # Patch variant index — selects one of the preset variants in
+     # audio_offline_presets.PRESET_VARIANTS[(role, algorithm)]
+     # (and the parallel .fxp variant list in surge_host). Int 0..N.
+     # Hash-driven per song by the composer for warm_analogue so
+     # different phrases produce different timbres.
+     "patch",
      # TTS list-of-strings (issue #26) + speech (#27) + sample
      # (#28) generator knobs.
      "phrases", "voice", "phrase_interval", "note_base", "velocity",
