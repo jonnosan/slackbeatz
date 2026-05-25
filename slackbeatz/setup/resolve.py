@@ -426,6 +426,19 @@ def _resolve_part(
             )
         overrides[handle] = algorithm
 
+    # Per-part knob overrides — copy each handle's dict so the resolved
+    # part owns its own data and validate the handle exists at song
+    # level (matches the algorithm-override validation above).
+    knob_overrides: dict[str, dict[str, object]] = {}
+    for handle, knobs in part.knob_overrides.items():
+        if handle not in song_gens:
+            raise ResolveError(
+                part.line,
+                f"part {part.name!r}: knob overrides target undeclared "
+                f"gen {handle!r}",
+            )
+        knob_overrides[handle] = dict(knobs)
+
     return ResolvedPart(
         name=part.name,
         bars=part.bars,
@@ -440,6 +453,7 @@ def _resolve_part(
         meter=meter,
         gen_handles=list(part.gens),
         algorithm_overrides=overrides,
+        knob_overrides=knob_overrides,
     )
 
 
@@ -496,6 +510,21 @@ def resolve_song(
                 song.play.line, f"play references undeclared part {part_name!r}"
             )
 
+    # Voice-scoped knob defaults — validate the type appears in the
+    # registry so a typo (`voice bas` vs `voice bass`) doesn't silently
+    # apply to nothing. Empty knob dicts are allowed (the user opened
+    # the block but didn't add any overrides yet).
+    voice_defaults: dict[str, dict[str, object]] = {}
+    known_types = {t for (t, _algo) in REGISTRY}
+    for voice_type, knobs in song.voice_defaults.items():
+        if voice_type not in known_types:
+            raise ResolveError(
+                song.line,
+                f"voice block references unknown type {voice_type!r} "
+                f"(known: {sorted(known_types)})",
+            )
+        voice_defaults[voice_type] = dict(knobs)
+
     return ResolvedSong(
         name=song.name,
         setup=setup,
@@ -507,4 +536,5 @@ def resolve_song(
         arrangement=arrangement,
         scale_override=song.scale,
         meter=song_meter,
+        voice_defaults=voice_defaults,
     )

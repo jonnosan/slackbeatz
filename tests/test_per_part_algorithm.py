@@ -69,7 +69,9 @@ def test_parser_stashes_per_part_algorithm_override() -> None:
 
 
 def test_parser_rejects_three_tokens_on_part_gen_line() -> None:
-    with pytest.raises(ParseError, match="expected '<handle>'"):
+    # After algorithm token, further bare tokens (no '=') are not allowed —
+    # knob overrides must use k=v form.
+    with pytest.raises(ParseError, match="knob overrides must use k=v form"):
         parse(
             'song "S"\n'
             'gen bass bass rolling\n'
@@ -77,6 +79,34 @@ def test_parser_rejects_three_tokens_on_part_gen_line() -> None:
             '  bass gallop oops\n'
             'play p\n'
         )
+
+
+def test_parser_stashes_per_part_knob_overrides_without_algorithm() -> None:
+    fa = parse(
+        'song "S"\n'
+        'gen bass bass rolling\n'
+        'part p 1\n'
+        '  bass swing=0.6 humanize=4\n'
+        'play p\n'
+    )
+    part = fa.song.parts[0]
+    assert part.gens == ["bass"]
+    assert part.algorithm_overrides == {}
+    assert part.knob_overrides == {"bass": {"swing": 0.6, "humanize": 4}}
+
+
+def test_parser_stashes_per_part_knob_overrides_with_algorithm() -> None:
+    fa = parse(
+        'song "S"\n'
+        'gen bass bass rolling\n'
+        'part p 1\n'
+        '  bass gallop swing=0.4 humanize=3\n'
+        'play p\n'
+    )
+    part = fa.song.parts[0]
+    assert part.gens == ["bass"]
+    assert part.algorithm_overrides == {"bass": "gallop"}
+    assert part.knob_overrides == {"bass": {"swing": 0.4, "humanize": 3}}
 
 
 def test_parser_rejects_duplicate_override_for_same_handle() -> None:
@@ -135,6 +165,174 @@ def test_resolver_lists_available_algorithms_in_error() -> None:
             '  bass not_a_real_algorithm\n'
             'play p\n'
         )
+
+
+# --------------------------------------------------------------------------
+# Voice blocks — song-level defaults keyed by gen type
+# --------------------------------------------------------------------------
+
+def test_parser_stashes_voice_block_knobs() -> None:
+    fa = parse(
+        'song "S"\n'
+        'gen bass bass rolling\n'
+        'voice bass\n'
+        '  swing=0.6\n'
+        '  humanize=4\n'
+        'part p 1\n'
+        '  bass\n'
+        'play p\n'
+    )
+    assert fa.song.voice_defaults == {"bass": {"swing": 0.6, "humanize": 4}}
+
+
+def test_parser_rejects_duplicate_voice_block_for_same_type() -> None:
+    with pytest.raises(ParseError, match="more than one voice block"):
+        parse(
+            'song "S"\n'
+            'gen bass bass rolling\n'
+            'voice bass\n'
+            '  swing=0.6\n'
+            'voice bass\n'
+            '  humanize=4\n'
+            'part p 1\n'
+            '  bass\n'
+            'play p\n'
+        )
+
+
+def test_parser_rejects_duplicate_knob_inside_voice_block() -> None:
+    with pytest.raises(ParseError, match="duplicate knob 'swing'"):
+        parse(
+            'song "S"\n'
+            'gen bass bass rolling\n'
+            'voice bass\n'
+            '  swing=0.6\n'
+            '  swing=0.7\n'
+            'part p 1\n'
+            '  bass\n'
+            'play p\n'
+        )
+
+
+def test_resolver_propagates_voice_defaults() -> None:
+    r = _resolve(
+        'gen bass bass rolling\n'
+        'voice bass\n'
+        '  swing=0.6\n'
+        'part p 1\n'
+        '  bass\n'
+        'play p\n'
+    )
+    assert r.voice_defaults == {"bass": {"swing": 0.6}}
+
+
+def test_resolver_rejects_voice_block_with_unknown_type() -> None:
+    with pytest.raises(ResolveError, match="unknown type 'bas'"):
+        _resolve(
+            'gen bass bass rolling\n'
+            'voice bas\n'
+            '  swing=0.6\n'
+            'part p 1\n'
+            '  bass\n'
+            'play p\n'
+        )
+
+
+def test_voice_default_applied_when_no_part_override() -> None:
+    # Voice-scoped swing=0.6 should reach the algorithm when no part
+    # override is set for this handle.
+    song = parse(
+        'song "S"\n'
+        '  tempo 128\n'
+        '  key Am\n'
+        'gen bass bass rolling humanize=2\n'
+        'voice bass\n'
+        '  swing=0.6\n'
+        'part p 1\n'
+        '  bass\n'
+        'play p\n'
+    ).song
+    r = resolve_song(song, _setup())
+    gen = r.gens["bass"]
+    part = r.parts["p"]
+    voice_knobs = r.voice_defaults.get(gen.type_, {})
+    part_knobs = part.knob_overrides.get("bass", {})
+    algo = _instantiate_algorithm(
+        gen, knob_overrides={**voice_knobs, **part_knobs} or None,
+    )
+    assert algo.knobs["swing"] == 0.6
+    # song-level humanize=2 still wins where voice didn't override
+    assert algo.knobs["humanize"] == 2
+
+
+def test_part_override_beats_voice_default() -> None:
+    # voice sets swing=0.6, part overrides to swing=0.9 — part wins.
+    song = parse(
+        'song "S"\n'
+        '  tempo 128\n'
+        '  key Am\n'
+        'gen bass bass rolling\n'
+        'voice bass\n'
+        '  swing=0.6\n'
+        'part p 1\n'
+        '  bass swing=0.9\n'
+        'play p\n'
+    ).song
+    r = resolve_song(song, _setup())
+    gen = r.gens["bass"]
+    part = r.parts["p"]
+    voice_knobs = r.voice_defaults.get(gen.type_, {})
+    part_knobs = part.knob_overrides.get("bass", {})
+    algo = _instantiate_algorithm(
+        gen, knob_overrides={**voice_knobs, **part_knobs} or None,
+    )
+    assert algo.knobs["swing"] == 0.9
+
+
+def test_resolver_propagates_knob_overrides_to_resolved_part() -> None:
+    r = _resolve(
+        'gen bass bass rolling\n'
+        'part p 1\n'
+        '  bass swing=0.6 humanize=4\n'
+        'play p\n'
+    )
+    assert r.parts["p"].knob_overrides == {"bass": {"swing": 0.6, "humanize": 4}}
+
+
+def test_resolver_rejects_knob_overrides_for_undeclared_handle() -> None:
+    # An undeclared handle that only appears via a knob-override line
+    # (no algorithm token) is still caught by the part.gens validation
+    # — the message comes from there rather than from the knob-override
+    # path, but the protection holds.
+    with pytest.raises(ResolveError, match="not declared at song level"):
+        _resolve(
+            'gen bass bass rolling\n'
+            'part p 1\n'
+            '  bass\n'
+            '  ghost swing=0.4\n'
+            'play p\n'
+        )
+
+
+def test_scheduler_merges_part_knob_overrides_over_song_gen_knobs() -> None:
+    # song-level gen sets humanize=2; part override raises it to 8.
+    # The algorithm gets the effective knobs at instantiation time.
+    song = parse(
+        'song "S"\n'
+        '  tempo 128\n'
+        '  key Am\n'
+        'gen bass bass rolling humanize=2\n'
+        'part p 1\n'
+        '  bass humanize=8\n'
+        'play p\n'
+    ).song
+    r = resolve_song(song, _setup())
+    gen = r.gens["bass"]
+    part = r.parts["p"]
+    algo = _instantiate_algorithm(
+        gen, knob_overrides=part.knob_overrides.get("bass"),
+    )
+    assert algo.knobs["humanize"] == 8
 
 
 def test_resolver_rejects_override_for_undeclared_handle() -> None:
@@ -384,6 +582,44 @@ def test_inject_part_algorithm_overrides_empty_is_noop() -> None:
 
     src = 'song "T"\npart p 1\n  bass\nplay p\n'
     assert _inject_part_algorithm_overrides(src, {}) == src
+
+
+def test_save_state_round_trip_preserves_part_knob_overrides(tmp_path) -> None:
+    """Per-part knob overrides come from the .sb source text. The
+    file-loaded save_state path copies the source verbatim, so
+    handwritten or GUI-emitted knob overrides round-trip naturally.
+    Confirms via parse → resolve → save → reparse → resolve.
+    """
+    from pathlib import Path
+    from slackbeatz.dsl.parser import parse_file
+    from slackbeatz.player import Player
+    from slackbeatz.setup.loader import load_setup
+    from slackbeatz.setup.resolve import resolve_song
+
+    src_path = tmp_path / "src.sb"
+    src_path.write_text(
+        'song "S"\n'
+        '  tempo 128\n'
+        '  key Am\n'
+        'gen bass bass rolling\n'
+        'voice bass\n'
+        '  swing=0.6\n'
+        'part p 1\n'
+        '  bass humanize=4\n'
+        'play p\n'
+    )
+
+    p = Player(port_name="test", setup_arg="gm")
+    p.load_file(src_path)
+
+    out_path = tmp_path / "round_trip.sb"
+    status = p.save_state(out_path)
+    assert "wrote" in status
+
+    fa = parse_file(out_path)
+    resolved = resolve_song(fa.song, load_setup("gm"))
+    assert resolved.voice_defaults == {"bass": {"swing": 0.6}}
+    assert resolved.parts["p"].knob_overrides == {"bass": {"humanize": 4}}
 
 
 def test_save_state_round_trip_re_loads_with_overrides_intact(tmp_path) -> None:

@@ -58,6 +58,12 @@ class ResolvedPart:
     # map when looking up the generator class for a (part, handle)
     # pair — falling back to the song-level algorithm when absent.
     algorithm_overrides: dict[str, str] = field(default_factory=dict)
+    # Per-part knob overrides (handle → {knob → value}). The scheduler
+    # merges these over the song-level gen knobs when invoking the
+    # algorithm — effective knob dict cascades:
+    #   engine default → style profile → song-level gen → part override.
+    # Knob names are validated against the parser's `_GEN_KNOBS` set.
+    knob_overrides: dict[str, dict[str, object]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -74,3 +80,10 @@ class ResolvedSong:
     arrangement: list[str]  # flat list of part names (groups + *N expanded)
     scale_override: str | None = None  # song-level `scale <name>`, optional
     meter: Meter = COMMON_TIME  # song-level default time signature
+    # Voice-scoped knob defaults — gen type_ → knob dict. Applied by
+    # the scheduler between the song-level gen knobs and any per-part
+    # knob overrides, so a `voice bass\n  swing=0.6` block raises swing
+    # to 0.6 for every bass gen unless a specific part overrides it.
+    # Validated at resolve time against the generator registry's known
+    # types.
+    voice_defaults: dict[str, dict[str, object]] = field(default_factory=dict)

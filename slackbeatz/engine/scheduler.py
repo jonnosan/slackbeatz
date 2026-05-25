@@ -255,7 +255,21 @@ def render_events(song: ResolvedSong) -> list[tuple[int, mido.Message]]:
             algorithm = part.algorithm_overrides.get(
                 gen_handle, gen_resolved.style,
             )
-            algo = _instantiate_algorithm(gen_resolved, algorithm=algorithm)
+            # Effective knob overrides for (part, handle): cascade
+            # voice_defaults[type_] (lower precedence) then
+            # part.knob_overrides[handle] (higher precedence). A future
+            # phase will add Player runtime overrides between these.
+            voice_knobs = song.voice_defaults.get(gen_resolved.type_, {})
+            part_knobs = part.knob_overrides.get(gen_handle, {})
+            if voice_knobs or part_knobs:
+                effective_overrides = {**voice_knobs, **part_knobs}
+            else:
+                effective_overrides = None
+            algo = _instantiate_algorithm(
+                gen_resolved,
+                algorithm=algorithm,
+                knob_overrides=effective_overrides,
+            )
             bucket = events_by_gen.setdefault(gen_handle, [])
             # Future hoist (see slackbeatz/engine/feel_apply.py): generators
             # stop calling humanize_hit / apply_gate_jitter / etc. themselves
@@ -323,11 +337,11 @@ def render_events(song: ResolvedSong) -> list[tuple[int, mido.Message]]:
 def _feel_for_gen(gen) -> dict[str, object]:
     """Extract the universal-Feel knob values from a resolved gen.
 
-    Today the values are read straight off the gen's knob dict; Phase C
-    will extend this to cascade Engine → Style → Song → Voice → Part
-    overrides before returning. The result is passed to
-    :func:`slackbeatz.engine.feel_apply.apply_feel` for the post-emit
-    pass (currently a no-op).
+    Today the values are read straight off the gen's knob dict; the
+    universal-Feel application (when the per-generator strip lands)
+    will receive the effective values from
+    :func:`slackbeatz.engine.feel_apply.apply_feel`. The result is
+    currently passed through unchanged — apply_feel is a no-op.
     """
     return {
         name: gen.knobs.get(name)
@@ -336,13 +350,20 @@ def _feel_for_gen(gen) -> dict[str, object]:
     }
 
 
-def _instantiate_algorithm(gen, *, algorithm: str | None = None):
+def _instantiate_algorithm(
+    gen,
+    *,
+    algorithm: str | None = None,
+    knob_overrides: dict[str, object] | None = None,
+):
     """Look up ``(type_, algorithm)`` in the registry and build the algorithm.
 
     Defaults to the gen's own ``style`` column when no per-part
-    override is in play. The instrument / knobs / kit binding always
-    comes from the song-level gen — only the algorithm class changes
-    per part.
+    override is in play. The instrument / kit binding always comes from
+    the song-level gen — only the algorithm class and the *effective
+    knob dict* change per part. ``knob_overrides`` merges over the
+    song-level gen knobs so the algorithm sees the cascaded values
+    (engine default → style profile → song gen → part override).
     """
     style = algorithm if algorithm is not None else gen.style
     key = (gen.type_, style)
@@ -351,9 +372,13 @@ def _instantiate_algorithm(gen, *, algorithm: str | None = None):
             f"no generator registered for {key} — available: {sorted(REGISTRY)}"
         )
     cls = REGISTRY[key]
+    if knob_overrides:
+        effective_knobs = {**gen.knobs, **knob_overrides}
+    else:
+        effective_knobs = gen.knobs
     return cls(
         handle=gen.handle,
-        knobs=gen.knobs,
+        knobs=effective_knobs,
         instrument=gen.instrument,
         kit=gen.kit,
     )
