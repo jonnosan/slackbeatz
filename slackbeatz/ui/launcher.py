@@ -17,6 +17,7 @@ fallback for ``--gui`` on a playing CLI session. Bare ``slackbeatz``
 
 from __future__ import annotations
 
+import sys
 import tkinter as tk
 from pathlib import Path
 from typing import Callable, Optional, TYPE_CHECKING
@@ -74,9 +75,52 @@ class GuiApp:
         self._current_frame = frame
 
     def run(self) -> None:
-        """Open the Welcome screen and run the Tk main loop."""
+        """Open the Welcome screen and run the Tk main loop.
+
+        Installs SIGINT / SIGTERM handlers + an atexit hook so any
+        exit path — Ctrl+C in the terminal, ``kill`` from outside,
+        crash inside Tk callbacks, etc. — still runs
+        :meth:`_on_close` and tears down the live runtime (kills
+        surge-xt-cli + FluidSynth subprocesses, releases virtual
+        MIDI ports). Without this, ^C in the launching terminal
+        leaves Surge instances running and squatting on their OSC
+        ports, blocking the next launch with "Address already in use".
+        """
+        import atexit
+        import signal
         from slackbeatz.ui.welcome import WelcomeScreen
+
+        def _emergency_shutdown(*_a) -> None:
+            # Idempotent — _on_close guards against double-shutdown
+            # via the LiveRuntime._down flag.
+            try:
+                self._on_close()
+            except Exception:
+                pass
+
+        atexit.register(_emergency_shutdown)
+        # SIGINT lands on the Python main thread when ^C hits the
+        # terminal; raising SystemExit from the handler unwinds Tk
+        # cleanly and the atexit hook does the rest. SIGTERM is
+        # what `kill <pid>` sends — same flow.
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                signal.signal(sig, lambda *_a: (_emergency_shutdown(), sys.exit(0)))
+            except (OSError, ValueError):
+                # Some embedding contexts (non-main threads on macOS)
+                # don't permit signal installation. Skip silently —
+                # atexit + WM_DELETE_WINDOW still cover the GUI-quit
+                # paths.
+                pass
+
         self.transition_to(WelcomeScreen)
+        # Poll Tk on a short interval so SIGINT can interrupt the
+        # event loop on Python 3.10+ where signal handlers don't
+        # always wake mainloop() until the next event. Without this,
+        # ^C only fires after the next mouse move / key press.
+        def _signal_pump():
+            self.root.after(100, _signal_pump)
+        self.root.after(100, _signal_pump)
         self.root.mainloop()
 
     def remember_opened(self, path: Path) -> None:
@@ -92,22 +136,32 @@ class GuiApp:
     def _on_close(self) -> None:
         # Shut down the live runtime (kills surge-xt-cli + FluidSynth
         # subprocesses, closes virtual MIDI ports). Idempotent — safe
-        # even when build_live_runtime never ran.
+        # to call from WM_DELETE_WINDOW, SIGINT/SIGTERM handlers,
+        # and atexit, in any order.
         if self.live_runtime is not None:
             try:
                 self.live_runtime.shutdown()
             except Exception:
                 pass
+            # Null out so a subsequent call (atexit after WM_DELETE)
+            # short-circuits cleanly instead of double-firing the
+            # shutdown.
+            self.live_runtime = None
         elif self.player is not None:
             try:
                 self.player.stop()
             except Exception:
                 pass
+            self.player = None
         try:
             save_session(self.session)
         except OSError:
             pass
-        self.root.destroy()
+        try:
+            self.root.destroy()
+        except tk.TclError:
+            # Already destroyed (re-entrant call via signal handler).
+            pass
 
 
 def launch() -> int:

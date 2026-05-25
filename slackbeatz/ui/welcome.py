@@ -136,6 +136,17 @@ class WelcomeScreen(tk.Frame):
         # Remember the chosen setup for next launch.
         self.app.session.last_setup = setup_name
         self._build_player_from_file(tmp_path, setup_arg=setup_name)
+        # Switch the Player into PHRASE mode so Song → Reroll +
+        # the style picker re-compose from the title with a new
+        # seed_offset / style_override instead of re-reading the
+        # frozen temp file. The temp file's only job was to let
+        # build_live_runtime detect the song's setup + spawn the
+        # right backends; subsequent resolves recompose live.
+        if self.app.player is not None:
+            self.app.player.current_phrase = title
+            self.app.player.current_song_path = None
+            self.app.player.style_override = style
+            self.app.player.seed_offset = seed
         self.app.transition_to(ArrangementScreen)
 
     def _build_player_from_file(self, path: Path, *,

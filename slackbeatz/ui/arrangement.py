@@ -38,6 +38,13 @@ if TYPE_CHECKING:
     from slackbeatz.ui.launcher import GuiApp
 
 
+def _fmt_time(seconds: float) -> str:
+    """Format seconds as ``M:SS`` for the transport time readout."""
+    seconds = max(0, int(seconds))
+    m, s = divmod(seconds, 60)
+    return f"{m}:{s:02d}"
+
+
 class ArrangementScreen(tk.Frame):
     """Top-level frame holding the arrangement surface.
 
@@ -165,11 +172,22 @@ class ArrangementScreen(tk.Frame):
                  font=("TkDefaultFont", 10, "bold")).pack(side="left")
         arrangement = resolved.arrangement
         loop_idx = self._current_loop_position()
+        # Map ARRANGEMENT POSITION → column label so we can
+        # background-highlight the active part during playback. The
+        # grid dedupes by part name; multiple positions can share a
+        # column label (e.g. main appearing twice).
+        self._part_col_labels: dict[int, tk.Label] = {}
         for part_name in self._arrangement_unique(resolved):
             col = tk.Frame(header)
             col.pack(side="left", padx=1)
-            tk.Label(col, text=part_name, width=10, anchor="center",
-                     font=("TkDefaultFont", 10, "bold")).pack()
+            name_label = tk.Label(
+                col, text=part_name, width=10, anchor="center",
+                font=("TkDefaultFont", 10, "bold"),
+            )
+            name_label.pack()
+            for pos_i, p_at_pos in enumerate(arrangement):
+                if p_at_pos == part_name:
+                    self._part_col_labels[pos_i] = name_label
             # Look up the FIRST arrangement position matching this part
             # name. The Voice × Part grid dedupes; the Player's
             # jump/loop APIs take a position INDEX into the full
@@ -213,7 +231,28 @@ class ArrangementScreen(tk.Frame):
         row = tk.Frame(parent)
         row.pack(fill="x", pady=1)
         gen = resolved.gens[handle]
-        tk.Label(row, text=handle, width=10, anchor="w").pack(side="left")
+        # Voice name is clickable — opens the drilldown for this voice
+        # in voice-scope (changes apply to every part). We pick the
+        # FIRST part where the voice is active as the "viewing
+        # context" so the drilldown has something to show; voice-scope
+        # edits land in voice_defaults regardless.
+        first_active_part = next(
+            (p_name for p_name in self._arrangement_unique(resolved)
+             if handle in resolved.parts[p_name].gen_handles),
+            None,
+        )
+        name_label = tk.Label(
+            row, text=handle, width=10, anchor="w",
+            fg="blue", cursor="hand2",
+            font=("TkDefaultFont", 10, "underline"),
+        )
+        name_label.pack(side="left")
+        if first_active_part is not None:
+            name_label.bind(
+                "<Button-1>",
+                lambda _e, h=handle, p=first_active_part:
+                    self._select_cell(h, p, scope="voice"),
+            )
         for part_name in self._arrangement_unique(resolved):
             part = resolved.parts[part_name]
             active = handle in part.gen_handles
@@ -274,18 +313,137 @@ class ArrangementScreen(tk.Frame):
         self.play_btn.pack(side="left", padx=4, pady=4)
         self.stop_btn = ttk.Button(bar, text="■ Stop", command=self._on_stop)
         self.stop_btn.pack(side="left", padx=4, pady=4)
+
+        # Position slider — drag to seek. Range = 0..total_ticks; we
+        # poll ``player.get_current_tick`` every 100ms while NOT being
+        # dragged so the thumb tracks the playhead live.
+        self._slider_dragging = False
+        self._pos_scale = tk.Scale(
+            bar, from_=0, to=1, orient="horizontal", length=400,
+            showvalue=False, sliderlength=20,
+        )
+        self._pos_scale.pack(side="left", padx=8, fill="x", expand=True)
+        self._pos_scale.bind("<ButtonPress-1>", lambda _e: self._on_slider_press())
+        self._pos_scale.bind("<ButtonRelease-1>", lambda _e: self._on_slider_release())
+        self._time_label = tk.Label(bar, text="0:00 / 0:00", width=12)
+        self._time_label.pack(side="left", padx=4)
+
         resolved = self._resolved()
         if resolved is not None:
-            tk.Label(bar, text=f"  BPM {resolved.tempo}").pack(side="left", padx=8)
+            tk.Label(bar, text=f"BPM {resolved.tempo}").pack(side="left", padx=8)
             tk.Label(bar, text=f"Setup: {resolved.setup.name}",
                      fg="gray").pack(side="right", padx=8)
+            try:
+                total = self.app.player.get_total_ticks()
+                self._pos_scale.config(to=max(1, total))
+            except Exception:
+                pass
+
+        # Kick off the polling loop. Cancels itself when the frame
+        # disappears (Tk raises TclError on the after-callback).
+        self._poll_active = True
+        self.after(100, self._poll_transport_state)
+
+    def _on_slider_press(self) -> None:
+        self._slider_dragging = True
+
+    def _on_slider_release(self) -> None:
+        self._slider_dragging = False
+        if self.app.player is None:
+            return
+        try:
+            self.app.player.seek_to_tick(int(self._pos_scale.get()))
+        except Exception:
+            pass
+
+    def _poll_transport_state(self) -> None:
+        """Tick the playhead slider, time readout, and active-part
+        highlight every 100ms. Cancels itself if the frame is gone."""
+        if not getattr(self, "_poll_active", False):
+            return
+        try:
+            self._tick_transport()
+        finally:
+            try:
+                self.after(100, self._poll_transport_state)
+            except tk.TclError:
+                # Frame destroyed — stop polling.
+                self._poll_active = False
+
+    def _tick_transport(self) -> None:
+        p = self.app.player
+        if p is None:
+            return
+        try:
+            cur = p.get_current_tick()
+            total = p.get_total_ticks() or 1
+        except Exception:
+            return
+        if not self._slider_dragging:
+            self._pos_scale.config(to=max(1, total))
+            self._pos_scale.set(cur)
+        # Time readout — convert ticks → seconds via tempo.
+        try:
+            resolved = p.current_resolved
+            if resolved is not None:
+                tpb = 96  # standard ticks-per-beat used by scheduler
+                bps = resolved.tempo / 60.0
+                tps = tpb * bps
+                cur_s = cur / tps if tps else 0
+                tot_s = total / tps if tps else 0
+                self._time_label.config(
+                    text=f"{_fmt_time(cur_s)} / {_fmt_time(tot_s)}",
+                )
+        except Exception:
+            pass
+        # Active-part highlight in the grid header.
+        try:
+            self._highlight_active_part(p.current_playing_position())
+        except Exception:
+            pass
+
+    def _highlight_active_part(self, position_idx: int | None) -> None:
+        """Background-highlight the part column header for the
+        currently-playing arrangement position.
+
+        Tracks one previously-highlighted Label so we can clear it on
+        the next tick — Tk doesn't give us bulk "reset all" cheaply.
+        """
+        col_label = getattr(self, "_part_col_labels", {}).get(position_idx)
+        prev_label = getattr(self, "_active_part_label", None)
+        if prev_label is col_label:
+            return  # no change
+        if prev_label is not None:
+            try:
+                prev_label.config(bg=self._default_label_bg)
+            except tk.TclError:
+                pass
+        if col_label is not None:
+            try:
+                self._default_label_bg = col_label.cget("bg")
+                col_label.config(bg="#ffe680")  # warm yellow
+            except tk.TclError:
+                pass
+        self._active_part_label = col_label
 
     # ----- actions -----------------------------------------------------
 
-    def _select_cell(self, handle: str, part_name: str) -> None:
+    def _select_cell(
+        self, handle: str, part_name: str, *, scope: str | None = None,
+    ) -> None:
+        """Open the drilldown for *handle* @ *part_name*.
+
+        *scope* is set when the caller knows the right scope —
+        clicking the voice row header opens voice-scope, clicking
+        a cell defaults to whatever the user picked in the scope
+        radio. Drilldown still shows knobs in context of the chosen
+        part so the user sees concrete values + can edit at any
+        scope from there.
+        """
         self.selected = (handle, part_name)
         self.sel_label.config(text=f"Selected: {handle} @ {part_name}")
-        # Future: scope picker auto-jumps to most-specific existing override.
+        if scope is not None:
+            self.scope_var.set(scope)
         self._render_drilldown()
 
     def _render_drilldown(self) -> None:
@@ -380,7 +538,53 @@ class ArrangementScreen(tk.Frame):
     def _show_song_menu(self) -> None:
         menu = tk.Menu(self, tearoff=0)
         menu.add_command(label="Re-roll (new seed)", command=self._reroll)
+        menu.add_command(label="Change style…", command=self._change_style)
         menu.tk_popup(self.winfo_pointerx(), self.winfo_pointery())
+
+    def _change_style(self) -> None:
+        """Open a dialog to pick a new style for the current title.
+
+        Requires phrase mode (composed from a title); for file-loaded
+        songs the style is baked into the .sb so we just tell the
+        user to start a new song instead.
+        """
+        if self.app.player is None:
+            return
+        if self.app.player.current_phrase is None:
+            from tkinter import messagebox
+            messagebox.showinfo(
+                "Change style",
+                "Style can only be changed for songs composed from a title.\n"
+                "Use File → New from title… to start a fresh one.",
+            )
+            return
+        from tkinter import simpledialog
+        from slackbeatz.ui.new_song_dialog import _EXPLICIT_STYLES
+        current = self.app.player.style_override or "(auto)"
+        # Cheap picker via the OS dialog rather than building our own.
+        choices = "  ".join(("(auto)",) + _EXPLICIT_STYLES)
+        new_style = simpledialog.askstring(
+            "Change style",
+            f"Current: {current}\n\nAvailable styles:\n  {choices}\n\n"
+            f"Enter new style (or '(auto)' to let the title decide):",
+            initialvalue=current,
+            parent=self,
+        )
+        if new_style is None:
+            return
+        new_style = new_style.strip()
+        if new_style in ("", "(auto)"):
+            self.app.player.style_override = None
+        elif new_style in _EXPLICIT_STYLES:
+            self.app.player.style_override = new_style
+        else:
+            from tkinter import messagebox
+            messagebox.showerror(
+                "Change style",
+                f"Unknown style {new_style!r}. Available: {choices}",
+            )
+            return
+        self._reresolve_and_refresh()
 
     def _show_view_menu(self) -> None:
         menu = tk.Menu(self, tearoff=0)
@@ -439,11 +643,44 @@ class ArrangementScreen(tk.Frame):
         self.app.transition_to(WelcomeScreen)
 
     def _reroll(self) -> None:
+        """Bump seed_offset and re-resolve.
+
+        Only meaningful in PHRASE mode (the song was composed from a
+        title) — file-loaded songs ignore seed_offset because
+        :meth:`Player._resolve_current` reads the frozen .sb from
+        disk instead of re-composing. Surface that limitation rather
+        than silently no-op.
+        """
         if self.app.player is None:
             return
+        if self.app.player.current_phrase is None:
+            from tkinter import messagebox
+            messagebox.showinfo(
+                "Re-roll",
+                "Re-roll only changes the seed for songs composed from a "
+                "title. For a file-loaded song, open Save As to copy then "
+                "edit the seed line, or start a fresh one via "
+                "File → New from title….",
+            )
+            return
         self.app.player.seed_offset = (self.app.player.seed_offset or 0) + 1
+        self._reresolve_and_refresh()
+
+    def _reresolve_and_refresh(self) -> None:
+        """Common path for reroll / style change.
+
+        If audio is playing, restart it (so the user immediately hears
+        the new seed / style); otherwise just refresh the grid so the
+        new arrangement / gens / parts show up. Caller is responsible
+        for having mutated the relevant Player attribute first.
+        """
+        p = self.app.player
+        was_playing = p.is_playing
         try:
-            self.app.player._resolve_current()
+            if was_playing:
+                p.play()  # implicit stop + re-resolve + restart
+            else:
+                p._resolve_current()
         except Exception:
             pass
         self._refresh_grid()
