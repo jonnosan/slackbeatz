@@ -736,24 +736,21 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def cmd_gui(_args) -> int:
-    """Launch the GUI with no song loaded — the Welcome screen.
+    """Launch the redesigned GUI — Welcome screen.
 
     Invoked when ``slackbeatz`` is called with no subcommand. The
-    Welcome screen offers "New from title" / "Open .sb…" / Recents.
-    """
-    from slackbeatz.gui import run_tweak_gui
+    Welcome screen offers "+ New from title" / "Open .sb…" / Recents.
+    Hands off to ``slackbeatz.ui.launcher.launch`` which owns the Tk
+    root and screen transitions (Welcome → Arrangement → Mixer /
+    Setup).
 
-    run_tweak_gui(
-        None,
-        initial_gain=0.6,
-        initial_reverb_room=0.8,
-        initial_programs={},
-        player=None,
-        show_surge_gui_routing_hint=False,
-        surge_instances=None,
-        on_close=None,
-    )
-    return 0
+    The old :mod:`slackbeatz.gui` notebook GUI still exists and is
+    the fallback for ``slackbeatz play --gui`` (live playback with
+    knob-twiddling Tk window). It is being retired — see redesign
+    plan Phase E.
+    """
+    from slackbeatz.ui.launcher import launch
+    return launch()
 
 
 def main(argv: list[str] | None = None) -> None:

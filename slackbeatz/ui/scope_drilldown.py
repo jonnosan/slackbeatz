@@ -1,0 +1,320 @@
+"""Three-tier Algorithm / Pattern / Feel drilldown widget.
+
+The detail pane the Arrangement screen mounts when the user selects a
+(voice, part) cell. Three tiers:
+
+* **Algorithm** — pick the generator class (single dropdown).
+* **Pattern** — algorithm-specific knobs (voicing, swing, progression,
+  density, octave, ...). Filtered to knobs the algorithm registers in
+  the per-(type, algorithm) defaults table.
+* **Feel** — universal knob set from :mod:`slackbeatz.generators.feel`
+  applied to every algorithm. Always the same 8 knobs in the same
+  order.
+
+Each knob row reads the effective cascaded value and shows a scope dot
+flagging where the override (if any) lives:
+
+    swing       [▬▬▬●▬▬]  0.58           ● voice                 [↺]
+
+The scope picker at the top of the screen decides which scope a *new*
+edit lands in.
+"""
+
+from __future__ import annotations
+
+import tkinter as tk
+from tkinter import ttk
+from typing import Callable, TYPE_CHECKING
+
+from slackbeatz.generators.feel import FEEL_KNOBS, FeelSpec
+from slackbeatz.generators.registry import REGISTRY
+
+if TYPE_CHECKING:
+    from slackbeatz.ui.launcher import GuiApp
+
+
+# Pattern-tier knobs we surface in the UI today, per generator type.
+# Algorithm-specific subsets get filtered in by looking at the gen's
+# current knob dict (a knob the algorithm actually reads is worth
+# showing). This list is the *upper bound* — we never offer a knob the
+# generator type doesn't know about.
+_PATTERN_KNOB_HINTS: dict[str, tuple[str, ...]] = {
+    "rhythm":  ("swing", "gate", "density", "accent", "drop_prob", "polyrhythm"),
+    "bass":    ("voicing", "progression", "bars_per_chord", "gate", "octave",
+                "walking", "pickup", "fifth_prob", "third_prob",
+                "burble_prob", "kick_env", "bend"),
+    "melody":  ("voicing", "progression", "bars_per_chord", "gate", "octave",
+                "arp_prob", "arp_period", "motif_memory", "pair"),
+    "chords":  ("voicing", "progression", "bars_per_chord", "inversion",
+                "arp_prob", "arp_period", "voice_lead"),
+    "candy":   ("density", "cycle", "cc", "resonance", "modwheel", "pan", "reverb"),
+    "subbass": ("octave", "gate"),
+    "speech":  ("phrase_interval", "voice", "velocity", "note_base"),
+    "sample":  ("bank", "pattern", "pulses", "steps", "velocity"),
+}
+
+
+class ScopeDrilldown(tk.Frame):
+    """Detail widget for one (voice, part) selection."""
+
+    def __init__(
+        self,
+        parent: tk.Misc,
+        *,
+        app: "GuiApp",
+        voice_handle: str,
+        part_name: str,
+        scope: str,
+        on_change: Callable[[], None],
+    ) -> None:
+        super().__init__(parent)
+        self.app = app
+        self.voice_handle = voice_handle
+        self.part_name = part_name
+        self.scope = scope  # "part" | "voice" | "song"
+        self.on_change = on_change
+        # Cache the resolved song so we don't re-resolve on every
+        # widget paint.
+        self.resolved = app.player.current_resolved
+        self.gen = self.resolved.gens[voice_handle]
+        self.part = self.resolved.parts[part_name]
+        # Scrollable surface — knob rows can overflow on small screens.
+        self._build()
+
+    def _build(self) -> None:
+        # Algorithm picker.
+        algo_row = tk.Frame(self)
+        algo_row.pack(fill="x", padx=8, pady=(6, 4))
+        tk.Label(algo_row, text="Algorithm:",
+                 font=("TkDefaultFont", 10, "bold")).pack(side="left")
+        current_algo = self.part.algorithm_overrides.get(
+            self.voice_handle, self.gen.style,
+        )
+        # Available algorithms for this voice type.
+        choices = sorted(a for (t, a) in REGISTRY if t == self.gen.type_)
+        self.algo_var = tk.StringVar(value=current_algo)
+        combo = ttk.Combobox(
+            algo_row, textvariable=self.algo_var, state="readonly",
+            values=choices, width=22,
+        )
+        combo.pack(side="left", padx=8)
+        combo.bind("<<ComboboxSelected>>", lambda _e: self._on_algo_change())
+        # Scope dot for algorithm override.
+        algo_dot = self._scope_dot_for(
+            song_value=self.gen.style,
+            voice_value=None,  # algorithm isn't a knob; voice-block doesn't carry it
+            part_value=self.part.algorithm_overrides.get(self.voice_handle),
+        )
+        tk.Label(algo_row, text=algo_dot, fg="orange",
+                 font=("TkDefaultFont", 10, "bold")).pack(side="left", padx=4)
+
+        # Pattern tier.
+        ttk.Separator(self, orient="horizontal").pack(fill="x", pady=4)
+        tk.Label(self, text="Pattern (algorithm-specific):", anchor="w",
+                 font=("TkDefaultFont", 10, "bold")).pack(fill="x", padx=8)
+        pattern_frame = tk.Frame(self)
+        pattern_frame.pack(fill="x", padx=16)
+        for knob_name in _PATTERN_KNOB_HINTS.get(self.gen.type_, ()):
+            self._build_knob_row(pattern_frame, knob_name, tier="pattern")
+
+        # Feel tier.
+        ttk.Separator(self, orient="horizontal").pack(fill="x", pady=4)
+        tk.Label(self, text="Feel (universal):", anchor="w",
+                 font=("TkDefaultFont", 10, "bold")).pack(fill="x", padx=8)
+        feel_frame = tk.Frame(self)
+        feel_frame.pack(fill="x", padx=16)
+        for spec in FEEL_KNOBS:
+            self._build_knob_row(feel_frame, spec.name, tier="feel", spec=spec)
+
+    # ----- knob rows ---------------------------------------------------
+
+    def _build_knob_row(
+        self,
+        parent: tk.Misc,
+        knob_name: str,
+        *,
+        tier: str,
+        spec: FeelSpec | None = None,
+    ) -> None:
+        """One row: label + slider (or read-only label) + value + scope dot + revert."""
+        row = tk.Frame(parent)
+        row.pack(fill="x", pady=1)
+        tk.Label(row, text=knob_name, width=16, anchor="w").pack(side="left")
+
+        # Determine effective value + scope.
+        song_val = self.gen.knobs.get(knob_name)
+        voice_val = self.resolved.voice_defaults.get(self.gen.type_, {}).get(knob_name)
+        part_val = self.part.knob_overrides.get(self.voice_handle, {}).get(knob_name)
+        effective = part_val if part_val is not None else (
+            voice_val if voice_val is not None else song_val
+        )
+
+        # Slider: Feel knobs have specs (low/high), pattern knobs we
+        # don't always know the range for — show a numeric entry as
+        # fallback. Boolean knobs (voice_lead, walking) get a
+        # checkbox-equivalent label.
+        ctrl_frame = tk.Frame(row)
+        ctrl_frame.pack(side="left", padx=4)
+        if spec is not None:
+            # Feel knob with a known range — render slider.
+            current = float(effective) if effective is not None else float(spec.default)
+            slider = tk.Scale(
+                ctrl_frame, from_=spec.low, to=spec.high,
+                resolution=0.01 if isinstance(spec.high, float) else 1,
+                orient="horizontal", length=180, showvalue=True,
+            )
+            slider.set(current)
+            slider.pack(side="left")
+            slider.bind(
+                "<ButtonRelease-1>",
+                lambda _e, n=knob_name, s=slider: self._on_knob_change(n, s.get()),
+            )
+        else:
+            # Pattern knob — read-only value display + an Edit button
+            # that opens a one-shot text-entry dialog. Keeps the row
+            # height predictable when we don't know the range.
+            val_label = tk.Label(
+                ctrl_frame, text=str(effective) if effective is not None else "(default)",
+                width=18, anchor="w", relief="sunken", bg="white",
+            )
+            val_label.pack(side="left")
+            ttk.Button(
+                ctrl_frame, text="Edit",
+                command=lambda n=knob_name, e=effective:
+                    self._open_knob_editor(n, e),
+            ).pack(side="left", padx=4)
+
+        # Scope dot.
+        dot_text, dot_color = self._scope_dot_string(part_val, voice_val, song_val)
+        tk.Label(row, text=dot_text, fg=dot_color, width=10, anchor="w").pack(
+            side="left", padx=8,
+        )
+
+        # Revert button.
+        ttk.Button(
+            row, text="↺", width=2,
+            command=lambda n=knob_name: self._on_revert(n),
+        ).pack(side="left")
+
+    # ----- effective-value + scope helpers ----------------------------
+
+    def _scope_dot_for(self, *, song_value, voice_value, part_value):
+        """Variant of _scope_dot_string for the algorithm tier.
+
+        Returns the dot-text for the most-specific scope that carries
+        a value. We don't bother colouring the algorithm dot — it sits
+        next to the algorithm picker and just flags "this is a per-
+        part override" vs "this is the song default".
+        """
+        if part_value is not None and part_value != song_value:
+            return "● part"
+        if voice_value is not None and voice_value != song_value:
+            return "● voice"
+        if song_value is not None:
+            return "● song"
+        return ""
+
+    def _scope_dot_string(self, part_val, voice_val, song_val):
+        if part_val is not None:
+            return ("● part", "orange")
+        if voice_val is not None:
+            return ("● voice", "blue")
+        if song_val is not None:
+            return ("● song", "gray")
+        return ("", "black")
+
+    # ----- knob/algorithm change handlers -----------------------------
+
+    def _on_algo_change(self) -> None:
+        """Algorithm picker selection. Always goes to part scope today
+        — voice-block algorithm overrides aren't supported by the
+        cascade (voice carries knobs, not algorithm names)."""
+        new_algo = self.algo_var.get()
+        # Mutate the resolved part in place (the Player.save_state
+        # path round-trips part.algorithm_overrides explicitly).
+        self.part.algorithm_overrides[self.voice_handle] = new_algo
+        # Track on Player so it survives re-resolves.
+        if self.voice_handle in self.app.player._part_algorithm_overrides.setdefault(
+            self.part_name, {},
+        ):
+            self.app.player._part_algorithm_overrides[self.part_name][
+                self.voice_handle
+            ] = new_algo
+        else:
+            self.app.player._part_algorithm_overrides[self.part_name][
+                self.voice_handle
+            ] = new_algo
+        self.on_change()
+
+    def _on_knob_change(self, knob_name: str, value) -> None:
+        """A slider moved. Apply the value at the current scope."""
+        # Coerce to int if the spec is integral so we don't store
+        # `4.0` where `4` is expected.
+        if isinstance(value, float) and value.is_integer():
+            spec = next((s for s in FEEL_KNOBS if s.name == knob_name), None)
+            if spec is not None and isinstance(spec.high, int):
+                value = int(value)
+
+        if self.scope == "part":
+            bucket = self.part.knob_overrides.setdefault(self.voice_handle, {})
+            bucket[knob_name] = value
+        elif self.scope == "voice":
+            bucket = self.resolved.voice_defaults.setdefault(self.gen.type_, {})
+            bucket[knob_name] = value
+        else:  # song
+            self.gen.knobs[knob_name] = value
+            # Also push to Player's runtime overrides so future re-
+            # resolves preserve the change.
+            self.app.player._knob_overrides.setdefault(
+                self.voice_handle, {},
+            )[knob_name] = value
+        self.on_change()
+
+    def _open_knob_editor(self, knob_name: str, current) -> None:
+        """Pattern-knob text entry dialog (used when we don't have a slider)."""
+        top = tk.Toplevel(self)
+        top.title(f"Edit {knob_name}")
+        top.transient(self.app.root)
+        top.grab_set()
+        tk.Label(top, text=f"{knob_name} =").grid(row=0, column=0, padx=8, pady=8)
+        var = tk.StringVar(value=str(current) if current is not None else "")
+        entry = ttk.Entry(top, textvariable=var)
+        entry.grid(row=0, column=1, padx=8, pady=8)
+        entry.focus_set()
+
+        def _apply() -> None:
+            raw = var.get().strip()
+            if raw == "":
+                self._on_revert(knob_name)
+            else:
+                # Coerce numeric strings to int / float; leave others as str.
+                value: object = raw
+                try:
+                    value = int(raw)
+                except ValueError:
+                    try:
+                        value = float(raw)
+                    except ValueError:
+                        pass
+                self._on_knob_change(knob_name, value)
+            top.destroy()
+
+        ttk.Button(top, text="Apply", command=_apply).grid(
+            row=1, column=0, columnspan=2, pady=8,
+        )
+        top.bind("<Return>", lambda _e: _apply())
+
+    def _on_revert(self, knob_name: str) -> None:
+        """Clear the override at the current scope and fall back."""
+        if self.scope == "part":
+            bucket = self.part.knob_overrides.get(self.voice_handle, {})
+            bucket.pop(knob_name, None)
+        elif self.scope == "voice":
+            bucket = self.resolved.voice_defaults.get(self.gen.type_, {})
+            bucket.pop(knob_name, None)
+        else:  # song
+            self.gen.knobs.pop(knob_name, None)
+            self.app.player._knob_overrides.get(self.voice_handle, {}).pop(
+                knob_name, None,
+            )
+        self.on_change()
