@@ -14,6 +14,10 @@ Knobs of interest:
   section).
 * ``resonance`` — CC 71 ceiling. Default 100 (high for that screech).
 * ``bend`` — pitchwheel wobble amount per note. Default 80 (≈ ±2 cents).
+* ``slide_prob`` — probability that a note slides from the previous
+  one. Implemented via CC 65 (portamento on) + CC 5 (portamento time)
+  toggled per-note. Default 0.0 (no slide; preserves prior behaviour
+  for any existing songs setting this gen explicitly).
 """
 
 from __future__ import annotations
@@ -75,6 +79,10 @@ class BassAcid303(Generator):
         lfo_cycles = self.knob_int("cycle", 2)
         resonance_ceiling = self.knob_int("resonance", 100)
         bend_amount = self.knob_int("bend", 80)
+        # 303-style slide: portamento toggled per-note via CC 65 (on/off
+        # latch) + CC 5 (glide time). Default 0.0 (off) keeps the
+        # existing render for any .sb that sets this gen explicitly.
+        slide_prob = self.knob_float("slide_prob", 0.0)
         macro = macro_knobs(self)
         direction = pick_evolution_direction(ctx.rng, macro["evolution"])
 
@@ -128,7 +136,17 @@ class BassAcid303(Generator):
                     value=max(0, min(127, resonance)),
                 )
 
+        # -------- Portamento latch ----------------------------------
+        # Enable portamento (CC 65) at part start when slide_prob > 0;
+        # per-note CC 5 toggles control whether each note actually
+        # slides. CC 5 = 0 → no glide; CC 5 = 30 → ~50 ms slide
+        # (Surge XT honours this; most software synths do).
+        if slide_prob > 0:
+            yield CC(tick=0, channel=inst.channel, controller=65, value=127)
+            yield CC(tick=0, channel=inst.channel, controller=5, value=0)
+
         # -------- Note pattern --------------------------------------
+        prev_pitch: int | None = None
         for bar in range(ctx.bars):
             if should_mute_bar(ctx.rng, macro["mute_prob"]):
                 continue
@@ -152,6 +170,21 @@ class BassAcid303(Generator):
                 vel_base = int(round(base_vel * intensity * evo_mult * ctx.tension)) + jitter + accent_boost
                 env = sidechain_envelope(tick - bar_start, ctx.ppq, duck=duck)
                 vel = max(1, min(127, int(round(vel_base * env))))
+                # Portamento toggle. Only fires on pitch changes (a
+                # slide from the same pitch to itself is inaudible);
+                # roll slide_prob then send glide-on / glide-off ahead
+                # of the note_on so the synth latches the time before
+                # receiving the note.
+                if (
+                    slide_prob > 0
+                    and prev_pitch is not None
+                    and prev_pitch != pitch
+                ):
+                    glide_time = 30 if ctx.rng.random() < slide_prob else 0
+                    yield CC(
+                        tick=max(0, tick - 2), channel=inst.channel,
+                        controller=5, value=glide_time,
+                    )
                 # Pitch wobble per note for that analogue character.
                 if bend_amount > 0:
                     yield PitchBend(
@@ -165,3 +198,4 @@ class BassAcid303(Generator):
                 )
                 if bend_amount > 0:
                     yield PitchBend(tick=tick + note_dur, channel=inst.channel, value=0)
+                prev_pitch = pitch

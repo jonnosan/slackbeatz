@@ -26,6 +26,7 @@ inst lead   ch=1
 inst bass   ch=2
 inst pad    ch=3
 inst candy  ch=4
+inst riser  ch=4   # alias for `candy` — matches handle conventions in bundled .sb examples
 inst sub    ch=6
 
 # Full kit reference for `drums`-type gens.

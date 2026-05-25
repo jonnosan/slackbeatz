@@ -225,6 +225,14 @@ _STYLE_PROFILES: dict[str, StyleProfile] = {
         ],
     ),
     "acid": StyleProfile(
+        # Authenticity-tuning iteration 1: amplify the 303 character
+        # via aggressive bass-filter modulation (cycle=6 = 3× faster
+        # sweeps), high resonance ceiling (120), expressive pitch-bend
+        # (120 units = ±3 cents), and 35% per-note portamento for
+        # slides. Replaces the sustained_dyad organ pad with the new
+        # acid_stab chord algorithm — sparse filter-enveloped hits
+        # rather than held organ. drop_intensity=0.7 + evolution=0.4
+        # give the build → drop transitions an automatic energy ramp.
         base_tempo=124, tempo_range=4,
         arrangement=[
             ("intro", 16), ("main", 32), ("build", 8), ("drop", 32),
@@ -234,8 +242,20 @@ _STYLE_PROFILES: dict[str, StyleProfile] = {
             GenSpec("kick",  "rhythm", "four_floor_house"),
             GenSpec("clap",  "rhythm", "four_floor_house"),
             GenSpec("hats",  "rhythm", "four_floor_house"),
-            GenSpec("bass",  "bass",   "acid_303"),
-            GenSpec("organ", "chords", "sustained_dyad"),
+            GenSpec("bass",  "bass",   "acid_303", knob_defaults={
+                "cycle": 6,
+                "resonance": 120,
+                "bend": 120,
+                "intensity": 1.0,
+                "slide_prob": 0.35,
+                "evolution": 0.4,
+            }),
+            GenSpec("stab",  "chords", "acid_stab", knob_defaults={
+                "drop_intensity": 0.7,
+                "evolution": 0.4,
+                "resonance": 110,
+                "fifth_prob": 0.4,
+            }),
             GenSpec("sweep", "candy",  "acid_sweep"),
         ],
     ),
@@ -334,6 +354,37 @@ _ROLE_GEN_TYPES: dict[str, frozenset[str]] = {
 
 
 _NOTE_NAMES = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "G#", "A", "Bb", "B"]
+
+
+# --------------------------------------------------------------------------
+# Style-driven LFO + apply emission (issue #65 wiring into the composer)
+# --------------------------------------------------------------------------
+
+def _emit_style_lfos(lines: list[str], style: str) -> None:
+    """Append top-level ``lfo NAME ...`` declarations the style needs.
+
+    Today only ``acid`` carries LFO usage — a sawtooth ramp on the
+    bass filter cutoff during drop sections, combined with the
+    built-in sine sweep inside the ``acid_303`` algorithm.
+    """
+    if style == "acid":
+        lines.append("lfo acid_filter shape=sawtooth bars=4 height=1.0")
+
+
+# Per-(style, role) `apply` lines — the part loop in render_sb()
+# inserts these as indented children of the part header. Keyed by
+# part-role so the same LFO can attach selectively (e.g. only in
+# `drop` parts, not `intro` or `break`).
+_STYLE_APPLY_LINES: dict[str, dict[str, tuple[str, ...]]] = {
+    "acid": {
+        "drop": ("apply acid_filter target=midi:ch:2/cc:74",),
+    },
+}
+
+
+def _apply_lines_per_role(style: str) -> dict[str, tuple[str, ...]]:
+    """Return per-role apply lines for *style*, or an empty dict."""
+    return _STYLE_APPLY_LINES.get(style, {})
 
 
 # --------------------------------------------------------------------------
@@ -638,6 +689,20 @@ def render_sb(
         lines.append(" ".join(parts))
     lines.append("")
 
+    # Style-driven LFO declarations — only acid has wired LFO usage
+    # today. The `apply` lines underneath each part hook the LFO to
+    # the bass filter cutoff during drops, so the sawtooth ramp
+    # combines with the built-in sine sweep in acid_303 for dramatic
+    # filter motion (sine continuously breathes; sawtooth ramps up
+    # then snaps back at the bar boundary).
+    _emit_style_lfos(lines, style)
+    lines.append("")
+
+    # Per-style map of `apply` lines to emit inside each part, keyed by
+    # role. Built once here so the part loop below can splice them in
+    # at the right indent.
+    apply_lines_per_role = _apply_lines_per_role(style)
+
     # Parts — names dedupe via suffixes; each part picks its active gens
     # by role.
     arrangement_names: list[str] = []
@@ -664,6 +729,10 @@ def render_sb(
         lines.append(f"part {part_name} {bars} role={role}")
         for spec in active:
             lines.append(f"  {spec.handle}")
+        # LFO applies for this role — sit alongside the gen handle
+        # lines at the same indent.
+        for apply_line in apply_lines_per_role.get(role, ()):
+            lines.append(f"  {apply_line}")
         lines.append("")
 
     lines.append(f"play {' '.join(arrangement_names)}")

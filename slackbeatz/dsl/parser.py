@@ -86,10 +86,12 @@ _GEN_KNOBS = frozenset(
      #   drop_intensity   automated drop sweep intensity (0..1)
      #   stutter          stutter-effect probability at section boundary
      #   mistakes         "live mistake" probability for humanity
+     #   slide_prob       portamento per-note probability (acid 303 only)
      "groove", "ghost", "ghost_vel", "hat_variant",
      "fill_every", "fill_style", "phrase_lift",
      "harmonize_with", "interval", "modulate_to",
      "tension_dyn", "drop_intensity", "stutter", "mistakes",
+     "slide_prob",
      # TTS list-of-strings (issue #26) + speech (#27) + sample
      # (#28) generator knobs.
      "phrases", "voice", "phrase_interval", "note_base", "velocity",

@@ -219,6 +219,11 @@ _STYLE_PATCH_FOR_ROLE: dict[tuple[str, str], str] = {
     ("pad", "atmos_pad"):  "Pads/Distant.fxp",
     ("pad", "wurli_chop"):         "Keys/EP 2.fxp",
     ("pad", "rhodes_chord"):           "Keys/EP 1.fxp",
+    # New for the authenticity-tuning pass: filter-enveloped stab on
+    # the pad channel mirrors the melody-side acid_stab's character —
+    # same resonant 303-style patch so the stab and the bass speak the
+    # same language.
+    ("pad", "acid_stab"):       "Leads/Acidofil.fxp",
 
     # ----- candy (sequences/FX) -----
     ("candy", "euclid_riser"):        "Sequences/Bell Seq.fxp",

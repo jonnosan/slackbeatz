@@ -7,15 +7,17 @@ song "Acid trax forever"
   key   F#m
   seed  214222990300064
 
-gen kick rhythm four_floor_house humanize=2
-gen clap rhythm four_floor_house humanize=2 drop_prob=0.08
-gen hats rhythm four_floor_house humanize=2 drop_prob=0.08
-gen bass bass acid_303 octave_jump=0.05
-gen organ chords sustained_dyad inst=pad
-gen sweep candy acid_sweep inst=riser
+gen kick   rhythm  four_floor_house humanize=2
+gen clap   rhythm  four_floor_house humanize=2 drop_prob=0.08
+gen hats   rhythm  four_floor_house humanize=2 drop_prob=0.08
+gen bass   bass    acid_303 cycle=6 resonance=120 bend=120 intensity=1.0 slide_prob=0.35 evolution=0.4 octave_jump=0.05
+gen stab   chords  acid_stab inst=pad drop_intensity=0.7 evolution=0.4 resonance=110 fifth_prob=0.4
+gen sweep  candy   acid_sweep inst=riser
+
+lfo acid_filter shape=sawtooth bars=4 height=1.0
 
 part intro 16 role=intro
-  organ
+  stab
   sweep
 
 part main 32 role=main
@@ -23,14 +25,14 @@ part main 32 role=main
   clap
   hats
   bass
-  organ
+  stab
   sweep
 
 part build 8 role=build
   kick
   clap
   hats
-  organ
+  stab
   sweep
 
 part drop 32 role=drop
@@ -38,22 +40,23 @@ part drop 32 role=drop
   clap
   hats
   bass
-  organ
+  stab
   sweep
+  apply acid_filter target=midi:ch:2/cc:74
 
 part main2 32 role=main
   kick
   clap
   hats
   bass
-  organ
+  stab
   sweep
 
 part build2 8 role=build
   kick
   clap
   hats
-  organ
+  stab
   sweep
 
 part drop2 32 role=drop
@@ -61,7 +64,8 @@ part drop2 32 role=drop
   clap
   hats
   bass
-  organ
+  stab
   sweep
+  apply acid_filter target=midi:ch:2/cc:74
 
 play intro main build drop main2 build2 drop2
