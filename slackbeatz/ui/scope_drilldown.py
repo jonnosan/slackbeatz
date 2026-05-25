@@ -39,48 +39,6 @@ if TYPE_CHECKING:
 # current knob dict (a knob the algorithm actually reads is worth
 # showing). This list is the *upper bound* — we never offer a knob the
 # generator type doesn't know about.
-# Human-readable labels for the indexed Surge preset variants in
-# audio_offline_presets.PRESET_VARIANTS. Lets the Patch dropdown show
-# "Patch 2 — Resonant mini-303 top (Ladder + chorus)" instead of just
-# "Patch 2". Keep in sync with the comment blocks in
-# audio_offline_presets.py — this is descriptive metadata for the UI,
-# not load-bearing for audio.
-_PATCH_DESCRIPTIONS: dict[tuple[str, str], tuple[str, ...]] = {
-    ("bass", "warm_sub"): (
-        "Smoothie K35 + tape",
-        "Ladder + soft drive",
-        "Sub-heavy K35 clean",
-        "K35 + chorus",
-        "Vintage Ladder + reverb",
-        "Ladder + tape (mid focus)",
-    ),
-    ("lead", "sh101_arp"): (
-        "K35 + tape (default)",
-        "Ladder + chorus (SH-101 edge)",
-        "K35 + phaser (Rephlex / IDM)",
-        "Vintage Ladder + delay (Aphex echo)",
-        "K35 + flanger (swooshy)",
-        "Ladder + tape (saturated)",
-    ),
-    ("candy", "sh101_top"): (
-        "Bell Seq sparkle (K35 + tape)",
-        "Clavinet pluck (short decay)",
-        "Resonant mini-303 (Ladder + chorus)",
-        "Echoey sparkle (K35 + delay)",
-        "Atmospheric (K35 + reverb)",
-        "Modulated (Vintage Ladder + phaser)",
-    ),
-    ("candy", "traditional_arp"): (
-        "Bell Seq sparkle (K35 + tape)",
-        "Clavinet pluck (short decay)",
-        "Resonant mini-303 (Ladder + chorus)",
-        "Echoey sparkle (K35 + delay)",
-        "Atmospheric (K35 + reverb)",
-        "Modulated (Vintage Ladder + phaser)",
-    ),
-}
-
-
 _PATTERN_KNOB_HINTS: dict[str, tuple[str, ...]] = {
     "rhythm":  ("swing", "gate", "density", "accent", "drop_prob", "polyrhythm"),
     "bass":    ("voicing", "progression", "bars_per_chord", "gate", "octave",
@@ -179,72 +137,139 @@ class ScopeDrilldown(tk.Frame):
     # ----- patch picker ------------------------------------------------
 
     def _build_patch_row(self, current_algo: str) -> None:
-        """Show a Patch dropdown when this voice's (role, algorithm)
-        has registered Surge preset variants.
+        """Surge factory-patch picker for this voice's channel.
 
-        The variant list is what
-        ``audio_offline_presets.PRESET_VARIANTS`` exposes for the
-        pair; the dropdown shows ``Patch 0 — short description``
-        rows so the user can pick a different Surge timbre per voice
-        / part / song. Selection writes the ``patch`` knob at the
-        current scope (re-using the existing knob-change cascade).
+        Lists every ``.fxp`` under the role's factory subdirectory
+        (Basses / Leads / Pads / Sequences). A ☰ button next to the
+        dropdown switches to "ALL CATEGORIES" mode so the user can
+        pick any patch regardless of category — handy when the
+        role's default category doesn't carry the sound they want
+        (e.g. picking a Lead patch for the candy channel).
+
+        Selecting a patch calls ``SurgeInstance.load_patch`` on the
+        running surge-xt-cli for this channel — change is audible
+        immediately in live mode. Offline render is a separate
+        path that uses ``audio_offline_presets`` and doesn't honor
+        this selection (dawdreamer's .fxp loader is broken).
         """
-        from slackbeatz.audio_offline_presets import PRESET_VARIANTS
-        from slackbeatz.surge_host import _GEN_TYPE_TO_ROLE
-
+        from slackbeatz.surge_host import (
+            _GEN_TYPE_TO_ROLE,
+            list_factory_patches, patch_category_for_role,
+            resolve_factory_patch,
+        )
         role = _GEN_TYPE_TO_ROLE.get(self.gen.type_)
         if role is None:
             return
-        variants = PRESET_VARIANTS.get((role, current_algo))
-        if not variants:
-            return
-
-        # Effective current patch value following the same cascade
-        # as other knobs (part > voice > song > 0).
-        song_val = self.gen.knobs.get("patch")
-        voice_val = self.resolved.voice_defaults.get(self.gen.type_, {}).get("patch")
-        part_val = self.part.knob_overrides.get(self.voice_handle, {}).get("patch")
-        effective = part_val if part_val is not None else (
-            voice_val if voice_val is not None else (song_val if song_val is not None else 0)
+        # Find the SurgeInstance for this voice's channel (if any).
+        # Without a runtime, the dropdown still shows the catalogue
+        # but selection no-ops (offline path doesn't honor live picks).
+        surge_inst = self._surge_instance_for_channel(
+            self.gen.instrument.channel if self.gen.instrument else None,
         )
-        try:
-            effective = int(effective) % len(variants)
-        except (TypeError, ValueError):
-            effective = 0
-
-        descs = _PATCH_DESCRIPTIONS.get((role, current_algo), ())
-        labels = []
-        for i in range(len(variants)):
-            desc = descs[i] if i < len(descs) else ""
-            labels.append(f"Patch {i}" + (f" — {desc}" if desc else ""))
+        category = patch_category_for_role(role)
 
         patch_row = tk.Frame(self)
         patch_row.pack(fill="x", padx=8, pady=(2, 4))
         tk.Label(patch_row, text="Patch:",
                  font=("TkDefaultFont", 10, "bold")).pack(side="left")
-        self.patch_var = tk.StringVar(value=labels[effective])
+
+        self._patch_mode = tk.StringVar(value="role")  # "role" | "all"
+
+        def _refresh_patch_choices(*_a):
+            mode = self._patch_mode.get()
+            chosen_cat = category if mode == "role" else None
+            patches = list_factory_patches(chosen_cat)
+            self._patches_by_display = {d: rel for d, rel in patches}
+            display_choices = list(self._patches_by_display.keys())
+            combo["values"] = display_choices
+            # Try to preserve the current selection across mode flips.
+            cur = self.patch_var.get()
+            if cur not in self._patches_by_display:
+                # Try matching the currently loaded patch
+                if surge_inst is not None:
+                    rel = surge_inst.current_patch_rel
+                    if rel:
+                        from pathlib import Path as _P
+                        stem = _P(rel).stem
+                        if stem in self._patches_by_display:
+                            self.patch_var.set(stem)
+                            return
+                        # All-categories shows full relpath; try that
+                        rel_no_ext = rel[:-4] if rel.endswith(".fxp") else rel
+                        if rel_no_ext in self._patches_by_display:
+                            self.patch_var.set(rel_no_ext)
+                            return
+                if display_choices:
+                    self.patch_var.set(display_choices[0])
+                else:
+                    self.patch_var.set("")
+
+        self.patch_var = tk.StringVar(value="")
         combo = ttk.Combobox(
             patch_row, textvariable=self.patch_var, state="readonly",
-            values=labels, width=40,
+            values=[], width=40,
         )
-        combo.pack(side="left", padx=8)
-        combo.bind(
-            "<<ComboboxSelected>>",
-            lambda _e: self._on_patch_change(
-                labels.index(self.patch_var.get()),
-            ),
-        )
-        # Scope dot — re-use the same cascade visual.
-        dot_text, dot_color = self._scope_dot_string(part_val, voice_val, song_val)
-        tk.Label(patch_row, text=dot_text, fg=dot_color, width=10, anchor="w",
-                 ).pack(side="left", padx=4)
-        ttk.Button(
-            patch_row, text="↺", width=2,
-            command=lambda: self._on_revert("patch"),
-        ).pack(side="left")
+        combo.pack(side="left", padx=(8, 4))
+        _refresh_patch_choices()
 
-    def _on_patch_change(self, idx: int) -> None:
-        self._on_knob_change("patch", int(idx))
+        def _on_select(_e=None):
+            display = self.patch_var.get()
+            rel = self._patches_by_display.get(display)
+            if rel is None:
+                return
+            path = resolve_factory_patch(rel)
+            if path is None or surge_inst is None:
+                return
+            try:
+                surge_inst.load_patch(path)
+            except Exception:
+                pass
+        combo.bind("<<ComboboxSelected>>", _on_select)
+
+        # Role / All-categories toggle.
+        def _toggle_mode():
+            self._patch_mode.set("all" if self._patch_mode.get() == "role" else "role")
+            mode_btn.config(text=("All" if self._patch_mode.get() == "all" else "Role"))
+            _refresh_patch_choices()
+        mode_label = "Role" if self._patch_mode.get() == "role" else "All"
+        mode_btn = ttk.Button(
+            patch_row, text=mode_label, width=4, command=_toggle_mode,
+        )
+        mode_btn.pack(side="left", padx=2)
+
+        # Status hint when no surge instance is running.
+        if surge_inst is None:
+            tk.Label(
+                patch_row,
+                text="(no live surge for this channel)",
+                fg="gray", font=("TkDefaultFont", 9, "italic"),
+            ).pack(side="left", padx=6)
+
+        # FX editor — separate button opens a window with full FX1/FX2
+        # type pickers + per-FX param sliders. Avoids cluttering the
+        # already-busy drilldown with two more multi-row controls.
+        if surge_inst is not None:
+            ttk.Button(
+                patch_row, text="FX…", width=5,
+                command=lambda: self._open_fx_editor(surge_inst),
+            ).pack(side="left", padx=6)
+
+    def _surge_instance_for_channel(self, channel_1idx: int | None):
+        """Return the live ``SurgeInstance`` running on *channel_1idx*,
+        or None when no live runtime is up (offline / no surge-xt-cli)."""
+        if channel_1idx is None:
+            return None
+        runtime = getattr(self.app, "live_runtime", None)
+        if runtime is None:
+            return None
+        for inst in getattr(runtime, "surge_instances", []) or []:
+            if getattr(inst.config, "channel_1idx", None) == channel_1idx:
+                return inst
+        return None
+
+    def _open_fx_editor(self, surge_inst) -> None:
+        from slackbeatz.ui.fx_editor import FxEditorDialog
+        FxEditorDialog(self.app, surge_inst)
 
     # ----- knob rows ---------------------------------------------------
 
