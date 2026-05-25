@@ -41,11 +41,17 @@ class KitDecl:
 
 @dataclass
 class SetupAST:
-    """A `setup "name"` block plus all `inst`/`kit` lines that belong to it."""
+    """A `setup "name"` block plus all `inst`/`kit` lines that belong to it.
+
+    ``backend`` carries the `backend NAME` directive (``"surge"`` or
+    ``"external"``); ``None`` when the directive is absent — the
+    loader picks the default in that case.
+    """
 
     name: str
     instruments: list[InstDecl] = field(default_factory=list)
     kits: list[KitDecl] = field(default_factory=list)
+    backend: str | None = None
     line: int = 0
 
 

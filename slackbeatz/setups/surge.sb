@@ -1,0 +1,35 @@
+# surge.sb — Surge XT for pitched voices, FluidSynth for ch10 drums.
+#
+# The default setup for new songs when the user picks the `surge` backend
+# in the Welcome dialog (or whenever `--setup surge` is passed). Channel
+# layout matches :data:`slackbeatz.surge_host.SYNTH_ROLES` so every
+# pitched voice gets its own headless surge-xt-cli instance.
+#
+#   ch 1 = lead       (melody)
+#   ch 2 = bass       (bass)
+#   ch 3 = pad        (chords)
+#   ch 4 = candy      (candy / FX / riser)
+#   ch 6 = sub        (subbass)
+#   ch 10 = drum kit  (rhythm; rendered via FluidSynth in surge backend)
+
+setup "Surge"
+
+backend surge
+
+# Pitched voices — Surge handles these.
+inst lead   ch=1
+inst bass   ch=2
+inst pad    ch=3
+inst candy  ch=4
+inst sub    ch=6
+
+# Drum voices on channel 10 at their GM notes (FluidSynth renders these
+# while the surge backend is active).
+inst kick   ch=10 note=36
+inst snare  ch=10 note=38
+inst clap   ch=10 note=39
+inst hats   ch=10 note=42
+inst ohats  ch=10 note=46
+
+# Full kit reference for `drums`-type gens.
+kit kit ch=10 preset=gm

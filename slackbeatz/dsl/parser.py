@@ -337,6 +337,8 @@ class _Parser:
             self._handle_inst(tail, ln.line_no)
         elif kw == "kit":
             self._handle_kit_header(tail, ln.line_no)
+        elif kw == "backend":
+            self._handle_backend(tail, ln.line_no)
         elif kw == "gen":
             self._handle_gen(tail, ln.line_no)
         elif kw == "part":
@@ -357,6 +359,21 @@ class _Parser:
             raise ParseError(line_no, 'expected: setup "name"')
         name = _unquote(tail[0], line_no)
         self.file.setup = SetupAST(name=name, line=line_no)
+
+    def _handle_backend(self, tail: list[str], line_no: int) -> None:
+        if self.file.setup is None:
+            raise ParseError(line_no, "backend outside of a setup block")
+        if len(tail) != 1:
+            raise ParseError(line_no, "expected: backend <surge|external>")
+        name = tail[0]
+        if name not in ("surge", "external"):
+            raise ParseError(
+                line_no,
+                f"unknown backend {name!r} (allowed: surge, external)",
+            )
+        if self.file.setup.backend is not None:
+            raise ParseError(line_no, "more than one backend directive in setup")
+        self.file.setup.backend = name
 
     def _handle_song_header(self, tail: list[str], line_no: int) -> None:
         if self.file.song is not None:

@@ -29,21 +29,19 @@ Pre-rendered audio for each bundled example lives under [`examples/rendered/`](e
 
 ## Compose from text
 
-`slackbeatz from-text "<phrase>"` takes an arbitrary input string and produces a complete `.sb` (or audio) deterministically:
+Start the GUI (`slackbeatz` with no arguments) and pick **+ New from title** on the Welcome screen. The dialog takes:
 
-1. The first phrase becomes the **song title**.
-2. The title's keywords + sentiment pick a **style + scale + key + tempo**.
-3. The **full input** is hashed (SHA-256) to seed every PRNG decision. A single character change — including capitalisation — produces a different song with the same overall shape.
+1. A **title** — the first phrase becomes the song title.
+2. A **style** — leave on "Auto" to derive from the title's keywords + sentiment, or pick one of the 9 explicit styles.
+3. A **setup** — picks the render backend (Surge XT for in-process synth, or external for bare-MIDI to a DAW or hardware).
+
+The **full input** is hashed (SHA-256) to seed every PRNG decision. A single character change — including capitalisation — produces a different song with the same overall shape.
+
+Or use `--text` to compose-and-play in one step from the command line:
 
 ```bash
-# Print the composed .sb to stdout
-slackbeatz from-text "Lonely night in Berlin"
-
-# Write a .sb file
-slackbeatz from-text "Cosmic mushroom dance" -o /tmp/cosmic.sb
-
-# Compose + render audio in one step (writes both .sb and .mp3)
-slackbeatz from-text "Acid trax forever — take 2" -o /tmp/acid.mp3
+slackbeatz play --text "Lonely night in Berlin" --setup surge
+slackbeatz play --text "Cosmic mushroom dance" --setup external
 ```
 
 Style-picker keyword examples:
@@ -61,27 +59,44 @@ Style-picker keyword examples:
 
 Pre-composed demos live under [`examples/composed/`](examples/composed/) — one `.sb` + `.mp3` for each style.
 
-The MP3s are rendered through **FluidR3_GM** (Frank Wen's MIT-licensed 148 MB stereo GM soundfont, auto-downloaded to `~/.cache/slackbeatz/` on first use) with per-channel GM program selection — bass = Synth Bass, lead = Saw Lead / Square Lead, pad = Warm Pad, candy = FX patches — picked per `(type, style)` so each style sits in a recognisably different timbral space. It's still a GM rendering, not production audio: plug a real synth in for that.
+Under the `external` backend, MP3s are rendered through **FluidR3_GM** (Frank Wen's MIT-licensed 148 MB stereo GM soundfont, auto-downloaded to `~/.cache/slackbeatz/` on first use) with per-channel GM program selection — bass = Synth Bass, lead = Saw Lead / Square Lead, pad = Warm Pad, candy = FX patches — picked per `(type, style)` so each style sits in a recognisably different timbral space. It's still a GM rendering, not production audio. Under the `surge` backend, pitched channels render through Surge XT (offline VST3 in `slackbeatz audio`, headless `surge-xt-cli` instances in `slackbeatz play`) — proper subtractive synthesis with per-(role, style) factory patches.
 
 ## Quick start
 
+The render backend is a property of the **setup**, not a CLI flag. Bundled setups:
+
+| Setup | Backend | What it does |
+|---|---|---|
+| `surge` | Surge XT | Pitched channels through Surge; ch10 drums through FluidSynth. Best sound. |
+| `external` | bare MIDI | Sends all MIDI to a single output port (DAW / IAC bus / hardware). No in-process synth. |
+| `gm` / `808` / `909` / `multitimbral` | bare MIDI | Same channel layout as `external`, kept for backwards compatibility. |
+
 ```bash
+# Launch the GUI (Welcome screen → New from title / Open .sb / Recents)
+slackbeatz
+
+# Stream a song live — backend chosen by the song's embedded setup
+slackbeatz play examples/dark_sunday.sb
+
+# Play through Surge XT instead of whatever the song's setup specifies
+slackbeatz play examples/dark_sunday.sb --setup surge
+
+# Send raw MIDI to an external rig (every drum on its own channel)
+slackbeatz play examples/dark_sunday.sb --setup multitimbral
+
 # List available MIDI output ports
 slackbeatz list-ports
 
-# Render a song to the first available port
-slackbeatz play examples/dark_sunday.sb
-
-# Same song on a different rig (every drum on its own channel)
-slackbeatz play examples/dark_sunday.sb --setup multitimbral
-
-# Render to an .mp3 you can play in any audio player
+# Render to an .mp3 (backend = setup's backend)
 slackbeatz audio examples/dark_sunday.sb -o /tmp/dark.mp3
+
+# Render through Surge XT VST3 (deterministic, faster than real-time)
+slackbeatz audio examples/dark_sunday.sb --setup surge -o /tmp/dark.mp3
 ```
 
 ### Audio rendering setup
 
-`slackbeatz audio` shells out to **FluidSynth** + **ffmpeg** and uses a General MIDI soundfont. Discovery order:
+Under the **external** backend, `slackbeatz audio` shells out to **FluidSynth** + **ffmpeg** and uses a General MIDI soundfont. Discovery order:
 
 1. `--soundfont <path>` flag if set
 2. `$SLACKBEATZ_SOUNDFONT` env var if set

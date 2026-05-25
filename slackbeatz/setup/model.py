@@ -10,6 +10,9 @@ The parser produces AST counterparts in :mod:`slackbeatz.dsl.ast`; the
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Literal
+
+Backend = Literal["surge", "external"]
 
 
 @dataclass(frozen=True)
@@ -46,11 +49,19 @@ class Kit:
 
 @dataclass(frozen=True)
 class Setup:
-    """A collection of named ``Instrument``s and ``Kit``s — the rig."""
+    """A collection of named ``Instrument``s and ``Kit``s — the rig.
+
+    ``backend`` selects the render path: ``"surge"`` spins up Surge XT
+    per pitched channel (with FluidSynth still handling ch10 drums for
+    now); ``"external"`` sends bare MIDI to an external port. Defaults
+    to ``"external"`` so existing setups with no explicit backend
+    directive keep their pre-redesign behaviour.
+    """
 
     name: str
     instruments: dict[str, Instrument] = field(default_factory=dict)
     kits: dict[str, Kit] = field(default_factory=dict)
+    backend: Backend = "external"
 
     def find(self, handle: str) -> Instrument | Kit | None:
         """Return the entry named *handle*, or ``None`` if not present.
