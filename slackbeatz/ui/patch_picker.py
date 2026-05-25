@@ -59,6 +59,36 @@ class PatchPickerDialog:
         )
         combo.pack(side="left", padx=4)
 
+        def _load_current(*_a):
+            display = self.patch_var.get()
+            rel = self._patches_by_display.get(display)
+            if rel is None:
+                return
+            path = resolve_factory_patch(rel)
+            if path is None:
+                return
+            try:
+                self.inst.load_patch(path)
+            except Exception:
+                pass
+
+        def _step(delta: int):
+            choices = list(self._patches_by_display.keys())
+            if not choices:
+                return
+            try:
+                idx = choices.index(self.patch_var.get())
+            except ValueError:
+                idx = 0
+            new_idx = (idx + delta) % len(choices)
+            self.patch_var.set(choices[new_idx])
+            _load_current()
+
+        ttk.Button(ctrl, text="↑", width=2,
+                   command=lambda: _step(-1)).pack(side="left", padx=0)
+        ttk.Button(ctrl, text="↓", width=2,
+                   command=lambda: _step(1)).pack(side="left", padx=0)
+
         def _refresh(*_a):
             chosen_cat = category if self._mode.get() == "role" else None
             patches = list_factory_patches(chosen_cat)
@@ -79,20 +109,7 @@ class PatchPickerDialog:
                     self.patch_var.set("")
 
         _refresh()
-
-        def _on_select(_e=None):
-            display = self.patch_var.get()
-            rel = self._patches_by_display.get(display)
-            if rel is None:
-                return
-            path = resolve_factory_patch(rel)
-            if path is None:
-                return
-            try:
-                self.inst.load_patch(path)
-            except Exception:
-                pass
-        combo.bind("<<ComboboxSelected>>", _on_select)
+        combo.bind("<<ComboboxSelected>>", _load_current)
 
         def _toggle_mode():
             self._mode.set("all" if self._mode.get() == "role" else "role")

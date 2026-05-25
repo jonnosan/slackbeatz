@@ -282,7 +282,7 @@ class ScopeDrilldown(tk.Frame):
         combo.pack(side="left", padx=(8, 4))
         _refresh_patch_choices()
 
-        def _on_select(_e=None):
+        def _load_current():
             display = self.patch_var.get()
             rel = self._patches_by_display.get(display)
             if rel is None:
@@ -294,7 +294,31 @@ class ScopeDrilldown(tk.Frame):
                 surge_inst.load_patch(path)
             except Exception:
                 pass
+
+        def _step(delta: int):
+            choices = list(self._patches_by_display.keys())
+            if not choices:
+                return
+            try:
+                idx = choices.index(self.patch_var.get())
+            except ValueError:
+                idx = 0
+            new_idx = (idx + delta) % len(choices)
+            self.patch_var.set(choices[new_idx])
+            _load_current()
+
+        def _on_select(_e=None):
+            _load_current()
         combo.bind("<<ComboboxSelected>>", _on_select)
+
+        # Prev / Next arrows to step through patches one at a time —
+        # easy A/B auditioning of adjacent patches without opening
+        # the full dropdown. Uses ↑/↓ rather than ▲/▼ so they don't
+        # visually collide with the collapsible-section arrows.
+        ttk.Button(patch_row, text="↑", width=2,
+                   command=lambda: _step(-1)).pack(side="left", padx=0)
+        ttk.Button(patch_row, text="↓", width=2,
+                   command=lambda: _step(1)).pack(side="left", padx=0)
 
         # Role / All-categories toggle.
         def _toggle_mode():
