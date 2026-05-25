@@ -155,14 +155,43 @@ class ArrangementScreen(tk.Frame):
             return
 
         # Header row: blank corner + one column per part + "+ Part".
+        # Each part column is a 2-row stack — part name on top, then
+        # a ▶ play-from-here + 🔁 loop-this-part button row, so the
+        # user can audition individual parts without scrubbing the
+        # transport (a recurring ask during the redesign).
         header = tk.Frame(wrap)
         header.pack(fill="x")
         tk.Label(header, text="VOICE", width=10, anchor="w",
                  font=("TkDefaultFont", 10, "bold")).pack(side="left")
+        arrangement = resolved.arrangement
+        loop_idx = self._current_loop_position()
         for part_name in self._arrangement_unique(resolved):
-            tk.Label(header, text=part_name, width=10, anchor="center",
-                     font=("TkDefaultFont", 10, "bold"),
-                     ).pack(side="left", padx=1)
+            col = tk.Frame(header)
+            col.pack(side="left", padx=1)
+            tk.Label(col, text=part_name, width=10, anchor="center",
+                     font=("TkDefaultFont", 10, "bold")).pack()
+            # Look up the FIRST arrangement position matching this part
+            # name. The Voice × Part grid dedupes; the Player's
+            # jump/loop APIs take a position INDEX into the full
+            # arrangement, so we resolve back here.
+            try:
+                pos = arrangement.index(part_name)
+            except ValueError:
+                pos = None
+            btn_row = tk.Frame(col)
+            btn_row.pack()
+            ttk.Button(
+                btn_row, text="▶", width=2,
+                command=lambda i=pos: self._on_part_play(i),
+                state=("normal" if pos is not None else "disabled"),
+            ).pack(side="left", padx=0)
+            loop_text = "🔁"
+            ttk.Button(
+                btn_row, text=loop_text, width=2,
+                command=lambda i=pos: self._on_part_loop_toggle(i),
+                state=("normal" if pos is not None else "disabled"),
+                style=("Accent.TButton" if pos == loop_idx else "TButton"),
+            ).pack(side="left", padx=0)
         ttk.Button(header, text="+ Part", width=8,
                    command=self._on_add_part).pack(side="left", padx=4)
 
@@ -433,6 +462,47 @@ class ArrangementScreen(tk.Frame):
         )
         self.app.player.load_file(path)
         self.app.remember_opened(path)
+        self._refresh_grid()
+
+    # ----- per-part transport -----------------------------------------
+
+    def _current_loop_position(self) -> int | None:
+        """Read the Player's current part-loop index (or None when off).
+
+        Returned value drives header-button highlighting so the active
+        loop-on part shows visually distinct from the others.
+        """
+        p = self.app.player
+        if p is None:
+            return None
+        return getattr(p, "loop_position", None)
+
+    def _on_part_play(self, position: int | None) -> None:
+        """Click handler for the ▶ button in a part column header."""
+        if position is None or self.app.player is None:
+            return
+        try:
+            self.app.player.jump_to_part_position(position)
+        except Exception:
+            pass
+
+    def _on_part_loop_toggle(self, position: int | None) -> None:
+        """Click handler for the 🔁 button in a part column header.
+
+        Toggle behaviour: if this part is currently looping, clear the
+        loop; otherwise set the loop to this part. Rebuilds the grid
+        after so the active 🔁 highlight refreshes.
+        """
+        if position is None or self.app.player is None:
+            return
+        current = getattr(self.app.player, "loop_position", None)
+        try:
+            if current == position:
+                self.app.player.set_loop_position(None)
+            else:
+                self.app.player.set_loop_position(position)
+        except Exception:
+            pass
         self._refresh_grid()
 
     # ----- helpers -----------------------------------------------------

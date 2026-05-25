@@ -39,6 +39,48 @@ if TYPE_CHECKING:
 # current knob dict (a knob the algorithm actually reads is worth
 # showing). This list is the *upper bound* — we never offer a knob the
 # generator type doesn't know about.
+# Human-readable labels for the indexed Surge preset variants in
+# audio_offline_presets.PRESET_VARIANTS. Lets the Patch dropdown show
+# "Patch 2 — Resonant mini-303 top (Ladder + chorus)" instead of just
+# "Patch 2". Keep in sync with the comment blocks in
+# audio_offline_presets.py — this is descriptive metadata for the UI,
+# not load-bearing for audio.
+_PATCH_DESCRIPTIONS: dict[tuple[str, str], tuple[str, ...]] = {
+    ("bass", "warm_sub"): (
+        "Smoothie K35 + tape",
+        "Ladder + soft drive",
+        "Sub-heavy K35 clean",
+        "K35 + chorus",
+        "Vintage Ladder + reverb",
+        "Ladder + tape (mid focus)",
+    ),
+    ("lead", "sh101_arp"): (
+        "K35 + tape (default)",
+        "Ladder + chorus (SH-101 edge)",
+        "K35 + phaser (Rephlex / IDM)",
+        "Vintage Ladder + delay (Aphex echo)",
+        "K35 + flanger (swooshy)",
+        "Ladder + tape (saturated)",
+    ),
+    ("candy", "sh101_top"): (
+        "Bell Seq sparkle (K35 + tape)",
+        "Clavinet pluck (short decay)",
+        "Resonant mini-303 (Ladder + chorus)",
+        "Echoey sparkle (K35 + delay)",
+        "Atmospheric (K35 + reverb)",
+        "Modulated (Vintage Ladder + phaser)",
+    ),
+    ("candy", "traditional_arp"): (
+        "Bell Seq sparkle (K35 + tape)",
+        "Clavinet pluck (short decay)",
+        "Resonant mini-303 (Ladder + chorus)",
+        "Echoey sparkle (K35 + delay)",
+        "Atmospheric (K35 + reverb)",
+        "Modulated (Vintage Ladder + phaser)",
+    ),
+}
+
+
 _PATTERN_KNOB_HINTS: dict[str, tuple[str, ...]] = {
     "rhythm":  ("swing", "gate", "density", "accent", "drop_prob", "polyrhythm"),
     "bass":    ("voicing", "progression", "bars_per_chord", "gate", "octave",
@@ -109,6 +151,13 @@ class ScopeDrilldown(tk.Frame):
         tk.Label(algo_row, text=algo_dot, fg="orange",
                  font=("TkDefaultFont", 10, "bold")).pack(side="left", padx=4)
 
+        # Patch picker. Surfaces the PRESET_VARIANTS dropdown for
+        # (role, algorithm) pairs that have hand-tuned Surge variants.
+        # The "patch" knob is just an int index — composer hash-drives
+        # it for warm_analogue but the user can override here. Silent
+        # no-op for voices without registered variants.
+        self._build_patch_row(current_algo)
+
         # Pattern tier.
         ttk.Separator(self, orient="horizontal").pack(fill="x", pady=4)
         tk.Label(self, text="Pattern (algorithm-specific):", anchor="w",
@@ -126,6 +175,76 @@ class ScopeDrilldown(tk.Frame):
         feel_frame.pack(fill="x", padx=16)
         for spec in FEEL_KNOBS:
             self._build_knob_row(feel_frame, spec.name, tier="feel", spec=spec)
+
+    # ----- patch picker ------------------------------------------------
+
+    def _build_patch_row(self, current_algo: str) -> None:
+        """Show a Patch dropdown when this voice's (role, algorithm)
+        has registered Surge preset variants.
+
+        The variant list is what
+        ``audio_offline_presets.PRESET_VARIANTS`` exposes for the
+        pair; the dropdown shows ``Patch 0 — short description``
+        rows so the user can pick a different Surge timbre per voice
+        / part / song. Selection writes the ``patch`` knob at the
+        current scope (re-using the existing knob-change cascade).
+        """
+        from slackbeatz.audio_offline_presets import PRESET_VARIANTS
+        from slackbeatz.surge_host import _GEN_TYPE_TO_ROLE
+
+        role = _GEN_TYPE_TO_ROLE.get(self.gen.type_)
+        if role is None:
+            return
+        variants = PRESET_VARIANTS.get((role, current_algo))
+        if not variants:
+            return
+
+        # Effective current patch value following the same cascade
+        # as other knobs (part > voice > song > 0).
+        song_val = self.gen.knobs.get("patch")
+        voice_val = self.resolved.voice_defaults.get(self.gen.type_, {}).get("patch")
+        part_val = self.part.knob_overrides.get(self.voice_handle, {}).get("patch")
+        effective = part_val if part_val is not None else (
+            voice_val if voice_val is not None else (song_val if song_val is not None else 0)
+        )
+        try:
+            effective = int(effective) % len(variants)
+        except (TypeError, ValueError):
+            effective = 0
+
+        descs = _PATCH_DESCRIPTIONS.get((role, current_algo), ())
+        labels = []
+        for i in range(len(variants)):
+            desc = descs[i] if i < len(descs) else ""
+            labels.append(f"Patch {i}" + (f" — {desc}" if desc else ""))
+
+        patch_row = tk.Frame(self)
+        patch_row.pack(fill="x", padx=8, pady=(2, 4))
+        tk.Label(patch_row, text="Patch:",
+                 font=("TkDefaultFont", 10, "bold")).pack(side="left")
+        self.patch_var = tk.StringVar(value=labels[effective])
+        combo = ttk.Combobox(
+            patch_row, textvariable=self.patch_var, state="readonly",
+            values=labels, width=40,
+        )
+        combo.pack(side="left", padx=8)
+        combo.bind(
+            "<<ComboboxSelected>>",
+            lambda _e: self._on_patch_change(
+                labels.index(self.patch_var.get()),
+            ),
+        )
+        # Scope dot — re-use the same cascade visual.
+        dot_text, dot_color = self._scope_dot_string(part_val, voice_val, song_val)
+        tk.Label(patch_row, text=dot_text, fg=dot_color, width=10, anchor="w",
+                 ).pack(side="left", padx=4)
+        ttk.Button(
+            patch_row, text="↺", width=2,
+            command=lambda: self._on_revert("patch"),
+        ).pack(side="left")
+
+    def _on_patch_change(self, idx: int) -> None:
+        self._on_knob_change("patch", int(idx))
 
     # ----- knob rows ---------------------------------------------------
 
