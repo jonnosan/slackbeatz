@@ -528,24 +528,44 @@ class _Parser:
 
     def _handle_part_gen(self, ln: Line) -> None:
         assert self._open_part is not None
-        # Phase 4: indented gen line is `<handle>` or
-        # `<handle> <algorithm>`. The second token is a per-part
-        # algorithm override for this handle.
-        if len(ln.tokens) == 1:
-            handle = ln.tokens[0]
-        elif len(ln.tokens) == 2:
-            handle, algorithm = ln.tokens
+        # Indented gen line is one of:
+        #   <handle>
+        #   <handle> <algorithm>
+        #   <handle> <k=v> [<k=v>...]
+        #   <handle> <algorithm> <k=v> [<k=v>...]
+        # Algorithm token (when present) is the first tail token that
+        # doesn't contain '='; everything after is parsed as knobs.
+        if not ln.tokens:
+            raise ParseError(ln.line_no, "empty part-gen line")
+        handle, *tail = ln.tokens
+        algorithm: str | None = None
+        kv_tokens: list[str] = []
+        for i, tok in enumerate(tail):
+            if "=" in tok:
+                kv_tokens = tail[i:]
+                break
+            if algorithm is not None:
+                raise ParseError(
+                    ln.line_no,
+                    f"unexpected token {tok!r} after algorithm — "
+                    "knob overrides must use k=v form",
+                )
+            algorithm = tok
+        if algorithm is not None:
             if handle in self._open_part.algorithm_overrides:
                 raise ParseError(
                     ln.line_no,
                     f"duplicate algorithm override for {handle!r}",
                 )
             self._open_part.algorithm_overrides[handle] = algorithm
-        else:
-            raise ParseError(
-                ln.line_no,
-                "expected '<handle>' or '<handle> <algorithm>' (one per line)",
-            )
+        if kv_tokens:
+            knobs = _parse_kv_pairs(kv_tokens, allowed=_GEN_KNOBS, line_no=ln.line_no)
+            if handle in self._open_part.knob_overrides:
+                raise ParseError(
+                    ln.line_no,
+                    f"duplicate knob overrides for {handle!r} in this part",
+                )
+            self._open_part.knob_overrides[handle] = knobs
         self._open_part.gens.append(handle)
 
 

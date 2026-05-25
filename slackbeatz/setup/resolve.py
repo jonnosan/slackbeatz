@@ -426,6 +426,19 @@ def _resolve_part(
             )
         overrides[handle] = algorithm
 
+    # Per-part knob overrides — copy each handle's dict so the resolved
+    # part owns its own data and validate the handle exists at song
+    # level (matches the algorithm-override validation above).
+    knob_overrides: dict[str, dict[str, object]] = {}
+    for handle, knobs in part.knob_overrides.items():
+        if handle not in song_gens:
+            raise ResolveError(
+                part.line,
+                f"part {part.name!r}: knob overrides target undeclared "
+                f"gen {handle!r}",
+            )
+        knob_overrides[handle] = dict(knobs)
+
     return ResolvedPart(
         name=part.name,
         bars=part.bars,
@@ -440,6 +453,7 @@ def _resolve_part(
         meter=meter,
         gen_handles=list(part.gens),
         algorithm_overrides=overrides,
+        knob_overrides=knob_overrides,
     )
 
 

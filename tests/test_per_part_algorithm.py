@@ -69,7 +69,9 @@ def test_parser_stashes_per_part_algorithm_override() -> None:
 
 
 def test_parser_rejects_three_tokens_on_part_gen_line() -> None:
-    with pytest.raises(ParseError, match="expected '<handle>'"):
+    # After algorithm token, further bare tokens (no '=') are not allowed —
+    # knob overrides must use k=v form.
+    with pytest.raises(ParseError, match="knob overrides must use k=v form"):
         parse(
             'song "S"\n'
             'gen bass bass rolling\n'
@@ -77,6 +79,34 @@ def test_parser_rejects_three_tokens_on_part_gen_line() -> None:
             '  bass gallop oops\n'
             'play p\n'
         )
+
+
+def test_parser_stashes_per_part_knob_overrides_without_algorithm() -> None:
+    fa = parse(
+        'song "S"\n'
+        'gen bass bass rolling\n'
+        'part p 1\n'
+        '  bass swing=0.6 humanize=4\n'
+        'play p\n'
+    )
+    part = fa.song.parts[0]
+    assert part.gens == ["bass"]
+    assert part.algorithm_overrides == {}
+    assert part.knob_overrides == {"bass": {"swing": 0.6, "humanize": 4}}
+
+
+def test_parser_stashes_per_part_knob_overrides_with_algorithm() -> None:
+    fa = parse(
+        'song "S"\n'
+        'gen bass bass rolling\n'
+        'part p 1\n'
+        '  bass gallop swing=0.4 humanize=3\n'
+        'play p\n'
+    )
+    part = fa.song.parts[0]
+    assert part.gens == ["bass"]
+    assert part.algorithm_overrides == {"bass": "gallop"}
+    assert part.knob_overrides == {"bass": {"swing": 0.4, "humanize": 3}}
 
 
 def test_parser_rejects_duplicate_override_for_same_handle() -> None:
@@ -135,6 +165,52 @@ def test_resolver_lists_available_algorithms_in_error() -> None:
             '  bass not_a_real_algorithm\n'
             'play p\n'
         )
+
+
+def test_resolver_propagates_knob_overrides_to_resolved_part() -> None:
+    r = _resolve(
+        'gen bass bass rolling\n'
+        'part p 1\n'
+        '  bass swing=0.6 humanize=4\n'
+        'play p\n'
+    )
+    assert r.parts["p"].knob_overrides == {"bass": {"swing": 0.6, "humanize": 4}}
+
+
+def test_resolver_rejects_knob_overrides_for_undeclared_handle() -> None:
+    # An undeclared handle that only appears via a knob-override line
+    # (no algorithm token) is still caught by the part.gens validation
+    # — the message comes from there rather than from the knob-override
+    # path, but the protection holds.
+    with pytest.raises(ResolveError, match="not declared at song level"):
+        _resolve(
+            'gen bass bass rolling\n'
+            'part p 1\n'
+            '  bass\n'
+            '  ghost swing=0.4\n'
+            'play p\n'
+        )
+
+
+def test_scheduler_merges_part_knob_overrides_over_song_gen_knobs() -> None:
+    # song-level gen sets humanize=2; part override raises it to 8.
+    # The algorithm gets the effective knobs at instantiation time.
+    song = parse(
+        'song "S"\n'
+        '  tempo 128\n'
+        '  key Am\n'
+        'gen bass bass rolling humanize=2\n'
+        'part p 1\n'
+        '  bass humanize=8\n'
+        'play p\n'
+    ).song
+    r = resolve_song(song, _setup())
+    gen = r.gens["bass"]
+    part = r.parts["p"]
+    algo = _instantiate_algorithm(
+        gen, knob_overrides=part.knob_overrides.get("bass"),
+    )
+    assert algo.knobs["humanize"] == 8
 
 
 def test_resolver_rejects_override_for_undeclared_handle() -> None:
