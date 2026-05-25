@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 # — so that downstream validation can complain with type-appropriate
 # messages. The tuple form covers list-valued knobs like
 # ``phrases=["breathe in", "and out"]`` on the speech generator.
-KnobValue = int | float | str | tuple[str, ...]
+KnobValue = bool | int | float | str | tuple[str, ...]
 Knobs = dict[str, KnobValue]
 
 
@@ -121,6 +121,44 @@ class PlayLine:
 
 
 @dataclass
+class SceneEntry:
+    """One entry in a ``scene`` block.
+
+    ``scope`` is the keyword identifying what the entry targets — today
+    just ``"ch"`` (per-channel mixer state), but the shape is recursive
+    so future kinds (``"surge"``, ``"sampler"``, ``"part"`` for the
+    automation direction in :doc:`/plans/i-want-to-redesign-glistening-spark.md`)
+    can land without parser churn.
+
+    For ``scope="ch"``, the positional integer in ``selector`` is the
+    1-based MIDI channel. Knobs cover mixer state (``vol``, ``pan``,
+    ``program``, ``mute``, ``solo``). Other scope kinds will encode
+    their selector as a knob (e.g. ``surge ch=2 patch=…``) — kept
+    homogeneous here.
+    """
+
+    scope: str
+    selector: int | None = None  # positional int (e.g. channel) when present
+    knobs: Knobs = field(default_factory=dict)
+    children: list["SceneEntry"] = field(default_factory=list)
+    line: int = 0
+
+
+@dataclass
+class SceneAST:
+    """A top-level ``scene`` block — mixer + future synth-patch state.
+
+    Persisted by the GUI's Save action so a loaded .sb restores mute /
+    solo / volume / pan / program-change per channel. Surge patch and
+    Sampler voice persistence land in a follow-up — they need Player
+    accumulators that aren't wired yet.
+    """
+
+    entries: list[SceneEntry] = field(default_factory=list)
+    line: int = 0
+
+
+@dataclass
 class SongAST:
     """A `song "name"` block plus its indented attributes and the gens /
     parts / play lines at indent 0 that follow it.
@@ -142,6 +180,10 @@ class SongAST:
     # knobs and part-scoped knob overrides.
     voice_defaults: dict[str, Knobs] = field(default_factory=dict)
     play: PlayLine | None = None
+    # Optional scene block — mixer / scene state for round-trip via the
+    # GUI's Save action. ``None`` when the source has no scene block;
+    # populated by the parser when a ``scene`` keyword appears.
+    scene: "SceneAST | None" = None
     line: int = 0
 
 
