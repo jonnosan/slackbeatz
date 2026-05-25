@@ -92,11 +92,8 @@ ROLE_STYLE_PRESETS: dict[tuple[str, str], tuple[tuple[str, float], ...]] = {
         ("A Filter 2 Type", 0.0),
     ),
     # ----- acid lead (iteration 1.6): sequenced melodic punctuation -----
-    # The 303-flavoured lead that interleaves with the bass. More open
-    # filter than the bass (lead sits higher in the mix) with a
-    # punchy filter envelope per note for that "blooming squeal"
-    # character. Slightly less resonance than the bass — the lead
-    # should sing, not screech.
+    # Superseded by sh101_arp in iteration 1.7 but kept for hand-
+    # written .sb compatibility.
     ("lead", "acid_lead"): (
         ("A Filter 1 Type", 0.1),            # LP Legacy Ladder
         ("A Filter 1 Cutoff", 0.50),         # ~600 Hz — more open than bass
@@ -107,6 +104,24 @@ ROLE_STYLE_PRESETS: dict[tuple[str, str], tuple[tuple[str, float], ...]] = {
         ("A Filter EG Decay", 0.25),
         ("A Filter EG Sustain", 0.30),       # some sustain so the note rings
         ("A Filter EG Release", 0.20),
+        ("A Filter 2 Type", 0.0),
+    ),
+    # ----- sh101_arp (iteration 1.7): pure SH-101 character -----
+    # Slightly brighter cutoff than acid_lead (the SH-101 was always
+    # a touch sharper than the 303's filter). Strong envelope mod so
+    # each note has the "blooming bleep" of an SH-101 fed by gated
+    # clock pulses. Long-ish release so notes with bigger trigger
+    # gaps ring out.
+    ("lead", "sh101_arp"): (
+        ("A Filter 1 Type", 0.1),            # LP Legacy Ladder
+        ("A Filter 1 Cutoff", 0.55),         # ~800 Hz — a bit brighter than acid_lead
+        ("A Filter 1 Resonance", 0.60),      # SH-101 characteristic edge
+        ("A Filter 1 FEG Mod Amount", 0.75), # very strong env per note
+        ("A Filter 1 Keytrack", 0.50),
+        ("A Filter EG Attack", 0.0),
+        ("A Filter EG Decay", 0.30),
+        ("A Filter EG Sustain", 0.25),
+        ("A Filter EG Release", 0.25),
         ("A Filter 2 Type", 0.0),
     ),
     # ----- acid candy/sweep: noise-y riser texture -----

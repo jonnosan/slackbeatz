@@ -10,11 +10,11 @@ song "Acid trax forever"
 gen kick   rhythm  four_floor_house humanize=2
 gen clap   rhythm  four_floor_house humanize=2 drop_prob=0.08
 gen hats   rhythm  four_floor_house humanize=2 drop_prob=0.08
-gen bass   bass    acid_303 cycle=6 resonance=120 bend=120 intensity=1.0 slide_prob=0.35 evolution=0.4 octave_jump=0.05
-gen lead   melody  acid_lead evolution=0.4 base_vel=85 intensity=0.85 seed=763
+gen bass   bass    acid_303 cycle=3 resonance=120 bend=120 intensity=1.0 slide_prob=0.35 evolution=0.4 octave_jump=0.05
+gen lead   melody  sh101_arp pitches=0,3,7,5 pulses=5 steps=16 gate=0.85 evolution=0.4 base_vel=85 intensity=0.85 seed=763
 gen sweep  candy   acid_sweep inst=riser
 
-lfo acid_filter shape=sawtooth bars=4 height=1.0
+lfo acid_filter shape=sawtooth bars=8 height=1.0
 
 part intro 16 role=intro
   kick

@@ -92,6 +92,9 @@ _GEN_KNOBS = frozenset(
      "harmonize_with", "interval", "modulate_to",
      "tension_dyn", "drop_intensity", "stutter", "mistakes",
      "slide_prob",
+     # SH-101-style arp (melody:sh101_arp): the pitch sequence the
+     # gen cycles through, comma-separated scale degrees.
+     "pitches",
      # TTS list-of-strings (issue #26) + speech (#27) + sample
      # (#28) generator knobs.
      "phrases", "voice", "phrase_interval", "note_base", "velocity",

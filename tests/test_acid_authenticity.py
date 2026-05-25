@@ -26,38 +26,47 @@ from slackbeatz.theory.meter import COMMON_TIME
 # Composer output for an acid phrase
 # --------------------------------------------------------------------------
 
-def test_acid_composition_uses_new_lead_algorithm() -> None:
-    """Iteration 1.6 replaced chords:acid_stab with melody:acid_lead —
-    the chord pad is gone entirely; bass + lead interplay carries the
-    harmony."""
+def test_acid_composition_uses_sh101_arp_algorithm() -> None:
+    """Iteration 1.7 replaced melody:acid_lead with melody:sh101_arp —
+    SH-101-style euclidean-clocked arpeggiator. Fixed pitch sequence
+    + rhythm from a euclidean trigger pattern."""
     sb = compose_from_text("Acid trax forever - take 2")
     assert "gen lead" in sb
-    assert "acid_lead" in sb
-    # The legacy organ pad and the chord-stab interim are both gone.
+    assert "sh101_arp" in sb
+    # The legacy organ pad / acid_lead / chord stab are all gone.
     assert "sustained_dyad" not in sb
     assert "gen stab" not in sb
+    assert "acid_lead" not in sb
+
+
+def test_acid_composition_sets_sh101_arp_knobs() -> None:
+    """Pitch sequence + euclidean trigger params must reach the gen line."""
+    sb = compose_from_text("Acid trax forever - take 2")
+    lead_line = next(l for l in sb.splitlines() if l.startswith("gen lead"))
+    for knob in ("pitches=0,3,7,5", "pulses=5", "steps=16", "gate=0.85",
+                 "base_vel=85", "intensity=0.85"):
+        assert knob in lead_line, f"missing {knob} in: {lead_line}"
 
 
 def test_acid_composition_sets_new_bass_knobs() -> None:
+    """Iteration 1.7 slowed the bass filter LFO — cycle=3 (was 6)."""
     sb = compose_from_text("Acid trax forever - take 2")
     bass_line = next(l for l in sb.splitlines() if l.startswith("gen bass"))
-    for knob in ("cycle=6", "resonance=120", "bend=120",
+    for knob in ("cycle=3", "resonance=120", "bend=120",
                  "intensity=1.0", "slide_prob=0.35", "evolution=0.4"):
         assert knob in bass_line, f"missing {knob} in: {bass_line}"
 
 
-def test_acid_composition_sets_lead_intensity() -> None:
-    """The lead's velocity/intensity defaults so it accents the bass
-    rather than dominating it — base_vel 85, intensity 0.85."""
+def test_acid_composition_lfo_period_slowed_to_8_bars() -> None:
+    """Iteration 1.7 slowed the top-level acid_filter LFO — bars=8 (was 4)."""
     sb = compose_from_text("Acid trax forever - take 2")
-    lead_line = next(l for l in sb.splitlines() if l.startswith("gen lead"))
-    assert "base_vel=85" in lead_line
-    assert "intensity=0.85" in lead_line
+    assert "lfo acid_filter shape=sawtooth bars=8 height=1.0" in sb
 
 
 def test_acid_composition_declares_top_level_lfo() -> None:
+    """Iteration 1.7 slowed the LFO period to 8 bars."""
     sb = compose_from_text("Acid trax forever - take 2")
-    assert "lfo acid_filter shape=sawtooth bars=4 height=1.0" in sb
+    assert "lfo acid_filter shape=sawtooth bars=8 height=1.0" in sb
 
 
 def test_acid_composition_applies_lfo_in_drop_parts_only() -> None:

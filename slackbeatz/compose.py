@@ -247,17 +247,29 @@ _STYLE_PROFILES: dict[str, StyleProfile] = {
             GenSpec("clap",  "rhythm", "four_floor_house"),
             GenSpec("hats",  "rhythm", "four_floor_house"),
             GenSpec("bass",  "bass",   "acid_303", knob_defaults={
-                "cycle": 6,
+                # Iteration 1.7 — slow the built-in filter LFO (was
+                # cycle=6 → 6 sweeps per part, too fast). cycle=3 =
+                # 3 sweeps across a 32-bar drop ≈ one full
+                # breath every ~10 bars.
+                "cycle": 3,
                 "resonance": 120,
                 "bend": 120,
                 "intensity": 1.0,
                 "slide_prob": 0.35,
                 "evolution": 0.4,
             }),
-            GenSpec("lead",  "melody", "acid_lead", knob_defaults={
+            # Iteration 1.7 — SH-101-style sequencer-clocked arp.
+            # Fixed pitch sequence (root / min3 / P5 / P4 of minor
+            # pentatonic), euclidean trigger pattern of 5 pulses in
+            # 16 steps. Pitches always play in the same order; the
+            # rhythm comes from the euclidean spacing. Classic
+            # acid-techno lead character.
+            GenSpec("lead",  "melody", "sh101_arp", knob_defaults={
+                "pitches": "0,3,7,5",
+                "pulses": 5,
+                "steps": 16,
+                "gate": 0.85,
                 "evolution": 0.4,
-                # Lead sits above the bass; moderate velocity so it
-                # peeks through without overpowering the 303.
                 "base_vel": 85,
                 "intensity": 0.85,
             }),
@@ -385,9 +397,14 @@ def _emit_style_lfos(lines: list[str], style: str) -> None:
     Today only ``acid`` carries LFO usage — a sawtooth ramp on the
     bass filter cutoff during drop sections, combined with the
     built-in sine sweep inside the ``acid_303`` algorithm.
+
+    Iteration 1.7: bumped bars=4 → bars=8 (slower sawtooth ramp —
+    one ramp every 8 bars = every two 4-bar phrases). The bass also
+    slowed its built-in sine (cycle=3 vs 6), so the two filter
+    layers combine into a slower, more deliberate motion.
     """
     if style == "acid":
-        lines.append("lfo acid_filter shape=sawtooth bars=4 height=1.0")
+        lines.append("lfo acid_filter shape=sawtooth bars=8 height=1.0")
 
 
 # Per-(style, role) `apply` lines — the part loop in render_sb()
