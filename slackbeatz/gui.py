@@ -1,4 +1,4 @@
-"""Tiny Tk control window for ``slackbeatz live`` and ``slackbeatz repl``.
+"""Tiny Tk control window for ``slackbeatz live --gui``.
 
 FluidSynth itself is headless, so we open a small native window that
 sends shell commands (``gain N``, ``set synth.reverb.* N``,
@@ -14,8 +14,8 @@ runtime-settings syntax).
 Architecture:
 
 * Tk needs to run on the main thread. The caller runs the scheduler
-  (or REPL input loop) in a background thread (``daemon=True``) and
-  calls ``run_tweak_gui`` on the main thread.
+  in a background thread (``daemon=True``) and calls
+  ``run_tweak_gui`` on the main thread.
 * Closing the window calls ``on_close`` which signals the caller to
   shut down (terminate FluidSynth, kill the daemon thread implicitly).
 """
@@ -1640,7 +1640,7 @@ def _build_builder_tab(parent, *, player, _var, ttk, tk) -> None:
 
     def _refresh_status() -> None:
         # Called by the main_thread_callbacks poller on player state
-        # changes (Generate / Re-roll / REPL phrase load all fire it).
+        # changes (Generate / Re-roll / file load all fire it).
         if player.current_phrase:
             src = f'"{player.current_phrase}"'
         elif player.current_song_path is not None:
@@ -1674,8 +1674,8 @@ def _build_builder_tab(parent, *, player, _var, ttk, tk) -> None:
 
     def _reroll() -> None:
         # Bumps player.seed_offset + replays. Player.reroll_seed
-        # returns a status string for the REPL — we discard it and
-        # rely on _refresh_status / on_state_change to update the UI.
+        # returns a status string — we discard it and rely on
+        # _refresh_status / on_state_change to update the UI.
         player.reroll_seed()
         _refresh_status()
 
@@ -1761,7 +1761,7 @@ def _build_builder_tab(parent, *, player, _var, ttk, tk) -> None:
 
     def _refresh_parts() -> None:
         # Wipe + rebuild — cheap. Fires on every state change
-        # (Generate, Re-roll, REPL phrase load, reorder, skip-toggle, …).
+        # (Generate, Re-roll, file load, reorder, skip-toggle, …).
         for w in parts_body.winfo_children():
             w.destroy()
         for w in parts_footer.winfo_children():
@@ -2315,13 +2315,12 @@ def _do_render(player, mode: str, out_path, *, use_surge: bool) -> None:
 def _open_inspect_dialog(root, player, mode: str) -> None:
     """Pop up a read-only text view for *mode*.
 
-    Modes mirror the corresponding REPL / CLI commands:
+    Modes:
 
     * ``overrides``  — Player._knob_overrides + arrangement / skip /
-                       part overrides (same content as ``/knob`` with
-                       no args).
+                       part overrides.
     * ``status``     — current song name, tempo, key, arrangement,
-                       gen layout (same as REPL ``/status``).
+                       gen layout.
     * ``generators`` — every registered (type, style) pair.
     * ``setups``     — bundled setup names.
     * ``ports``      — available MIDI output ports.
@@ -2396,7 +2395,7 @@ def _inspect_body(player, mode: str) -> str:
         resolved = player.current_resolved
         if resolved is None:
             return ("(no song loaded — generate via the Builder tab "
-                    "or load a .sb from the REPL)")
+                    "or pass a .sb file to `slackbeatz live --gui`)")
         lines = [
             f"name:        {resolved.name}",
             f"tempo:       {resolved.tempo}",
@@ -2870,9 +2869,7 @@ def run_tweak_gui(
         raise RuntimeError(
             f"Tk is unavailable in this Python build ({e}). "
             f"On macOS, install Tk for your Python via:\n"
-            f"  brew install python-tk@{py_minor}\n"
-            f"Or use the REPL's inline /tweak commands instead "
-            f"(see /help in `slackbeatz repl`)."
+            f"  brew install python-tk@{py_minor}"
         ) from e
 
     def send(cmd: str) -> None:
@@ -2899,9 +2896,9 @@ def run_tweak_gui(
     #
     # CPython's cyclic garbage collector can run on *any* thread that
     # crosses an allocation threshold. If a tkinter.Variable (or any
-    # tk widget) gets reclaimed by cyclic-GC on the REPL daemon thread
-    # or the Player worker thread, its __del__ calls Tcl_UnsetVar /
-    # Tcl_DeleteCommand from the wrong thread and the process dies.
+    # tk widget) gets reclaimed by cyclic-GC on the Player worker
+    # thread, its __del__ calls Tcl_UnsetVar / Tcl_DeleteCommand from
+    # the wrong thread and the process dies.
     #
     # Mitigation strategy:
     #
@@ -2962,9 +2959,10 @@ def run_tweak_gui(
         )
         menubar.add_cascade(label="🎵 Render", menu=render_menu)
 
-        # 🔍 Inspect menu — surfaces the same info as the REPL's /knobs,
-        # /status, slackbeatz list-generators, list-setups, list-ports
-        # and the `check` validate command, but in a Tk popup.
+        # 🔍 Inspect menu — surfaces the same info as
+        # `slackbeatz list-generators`, `list-setups`, `list-ports`,
+        # the `check` validate command, plus a live view of the
+        # current song / active overrides — all in a Tk popup.
         inspect_menu = tk.Menu(menubar, tearoff=False)
         inspect_menu.add_command(
             label="Active overrides",
@@ -3004,16 +3002,16 @@ def run_tweak_gui(
     # safe (apartment-threaded with _tkinter raising RuntimeError on
     # cross-thread Tcl calls).
     #
-    # The empirical thread-safety probe now lives in cli.cmd_repl
+    # The empirical thread-safety probe now lives in cli.cmd_live
     # before any of this code is reached. If we get here, the
     # caller has already confirmed the GUI is safe to launch.
 
     notebook = ttk.Notebook(root)
     notebook.pack(fill="both", expand=True, padx=6, pady=6)
 
-    # Thread-safe state-change signalling. The Player runs on the REPL
-    # daemon thread (and on the GUI main thread when sliders are
-    # touched). Calling Tk methods (``root.after``, widget mutation,
+    # Thread-safe state-change signalling. The Player runs on its
+    # own worker thread; widget callbacks fire on the Tk main thread.
+    # Calling Tk methods (``root.after``, widget mutation,
     # etc.) from any thread other than the one that created the root
     # is unsafe — Tcl 9 enforces this strictly and aborts with
     # "Tcl_WaitForEvent: Notifier not initialized" when a foreign
@@ -3139,7 +3137,7 @@ def run_tweak_gui(
             )
             if path:
                 status = player.save_state(path)
-                print(status)  # also goes to the REPL terminal
+                print(status)  # also goes to the launching terminal
         ttk.Button(
             button_row, text="💾 Save", width=8, command=_on_save,
         ).pack(side="left", padx=2)
@@ -3354,7 +3352,7 @@ def run_tweak_gui(
 
         ttk.Label(
             transport,
-            text="Type a phrase at the REPL prompt to load a song. "
+            text="Use the Builder tab to compose a song. "
                  "Tempo / Style / Seed restart the current song with the "
                  "new value — by default at the current bar (uncheck "
                  "‘Preserve bar’ to restart from bar 1).",
@@ -3903,7 +3901,7 @@ def run_tweak_gui(
 
     # State-change refresh — re-sync each dropdown's selection to
     # what's currently live on its backend. Fires on player state
-    # change (e.g. REPL loads a new song with different gens). Only
+    # change (e.g. Builder generates a new song with different gens). Only
     # FluidSynth-backed dropdowns are tracked here; Surge patch
     # selection lives on the Sound tab and the Surge sub-tab handles
     # its own state.

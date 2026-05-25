@@ -636,8 +636,8 @@ class SurgeInstance:
         # safe to fire twice when the normal cleanup did run.
         #
         # Caveats — atexit does NOT fire on:
-        #   * os._exit() (used by cmd_repl's _stop_now → its own
-        #     manual cleanup already calls inst.shutdown())
+        #   * os._exit() — callers using that escape hatch must do
+        #     their own inst.shutdown() before exiting
         #   * `kill -9` or segfault (no signal handler can rescue
         #     those, would-be-orphans show up in Activity Monitor)
         atexit.register(self.shutdown)

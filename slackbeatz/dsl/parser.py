@@ -62,7 +62,7 @@ _GEN_KNOBS = frozenset(
      #   voicing          chord voicing shape (triad, seventh, sus2, …)
      #   inversion        which chord tone is in the bass (0-3)
      "progression", "bars_per_chord", "voicing", "inversion",
-     # Round 8 — bass variety knobs (also exposed as /knob in REPL):
+     # Round 8 — bass variety knobs (also exposed in the GUI knob panel):
      #   walking          chance of chromatic step-up at chord changes
      #   pickup           chance of 8th-note anticipation before changes
      #   fifth_prob       chance of playing chord 5th instead of root

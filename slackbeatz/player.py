@@ -1,12 +1,9 @@
-"""Live transport for ``slackbeatz repl`` (and ``live --gui``).
+"""Live transport for ``slackbeatz live --gui``.
 
 ``Player`` owns the currently-playing song and the worker thread that
-streams its MIDI events. The same instance is shared by:
-
-* the REPL's ``input()`` loop — which feeds it phrases and slash
-  commands (``/play``, ``/stop``, ``/tempo N``, ``/style X``, ...);
-* the Tk control window — whose widgets call ``player.set_tempo(120)``,
-  ``player.set_style("acid")``, ``player.toggle_play()``, etc.
+streams its MIDI events. The Tk control window's widgets call
+``player.set_tempo(120)``, ``player.set_style("acid")``,
+``player.toggle_play()``, etc.
 
 Parameter changes (``set_tempo``, ``set_style``, ``set_seed_offset``)
 re-compose the current phrase with the new value and restart playback
@@ -179,8 +176,8 @@ _STRING_KNOBS_EXTRA = ("pattern",)
 
 def knob_kind(knob_name: str) -> str:
     """Look up whether *knob_name* is conventionally int or float.
-    Used by /knob REPL parsing so '5' gets stored as int(5) for
-    humanize but float(0.5) for drop_prob."""
+    Used when parsing user-supplied knob values so '5' gets stored
+    as int(5) for humanize but float(0.5) for drop_prob."""
     for specs in KNOB_SPECS.values():
         for name, _lo, _hi, _def, kind in specs:
             if name == knob_name:
