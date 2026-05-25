@@ -329,6 +329,14 @@ class ScopeDrilldown(tk.Frame):
                    command=lambda: _step(-1)).pack(side="left", padx=0)
         ttk.Button(patch_row, text="↓", width=2,
                    command=lambda: _step(1)).pack(side="left", padx=0)
+        # Audition button — fire a single middle-C note through the
+        # surge instance so the user can hear the patch even when
+        # playback is stopped.
+        if surge_inst is not None:
+            ttk.Button(
+                patch_row, text="🔊", width=3,
+                command=lambda: surge_inst.audition_note(),
+            ).pack(side="left", padx=2)
 
         # Role / All-categories toggle.
         def _toggle_mode():

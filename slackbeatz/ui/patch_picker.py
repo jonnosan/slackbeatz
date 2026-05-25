@@ -98,6 +98,12 @@ class PatchPickerDialog:
                    command=lambda: _step(-1)).pack(side="left", padx=0)
         ttk.Button(ctrl, text="↓", width=2,
                    command=lambda: _step(1)).pack(side="left", padx=0)
+        # Audition — single middle-C note through the surge
+        # instance for current-patch preview when playback is off.
+        ttk.Button(
+            ctrl, text="🔊 Audition", width=12,
+            command=lambda: self.inst.audition_note(),
+        ).pack(side="left", padx=6)
 
         def _refresh(*_a):
             chosen_cat = category if self._mode.get() == "role" else None

@@ -165,17 +165,20 @@ class WelcomeScreen(tk.Frame):
         instances stacking up across loads.
         """
         from slackbeatz.live_runtime import build_live_runtime, LiveRuntimeError
-        # Tear down any previous runtime first (port owners + subprocs).
         prev = getattr(self.app, "live_runtime", None)
-        if prev is not None:
-            try:
-                prev.shutdown()
-            except Exception:
-                pass
         try:
+            # Pass the previous runtime so build_live_runtime can
+            # reuse its surge-xt-cli + FluidSynth + sampler when the
+            # new song uses the same setup (the common case for
+            # switching .sb files). Saves the multi-second surge
+            # spawn delay per song change. ``reuse_from`` marks the
+            # previous runtime as transferred on success so the
+            # subsequent prev.shutdown() below short-circuits the
+            # child-process teardown.
             runtime = build_live_runtime(
                 path,
                 setup_arg=setup_arg or self.app.session.last_setup,
+                reuse_from=prev,
             )
         except LiveRuntimeError as e:
             # Surface to the user via a dialog — but still attempt a
@@ -196,5 +199,14 @@ class WelcomeScreen(tk.Frame):
             self.app.player.load_file(path)
             self.app.live_runtime = None
             return
+        # Now tear down the previous runtime. If build_live_runtime
+        # reused it, ``_transferred`` is True so this only stops the
+        # OLD player thread (which build_live_runtime already did) —
+        # surge/fluidsynth/sampler stay alive under the new runtime.
+        if prev is not None and prev is not runtime:
+            try:
+                prev.shutdown()
+            except Exception:
+                pass
         self.app.player = runtime.player
         self.app.live_runtime = runtime

@@ -51,6 +51,11 @@ class LiveRuntime:
 
     Always construct via :func:`build_live_runtime`; :meth:`shutdown`
     is idempotent + safe to call from any thread.
+
+    When ``_transferred`` is True, :meth:`shutdown` short-circuits —
+    used by :func:`build_live_runtime` to mark a runtime whose
+    surge_instances + fs_proc + sampler + MultiPortSink have been
+    handed off to a successor runtime (song-switch reuse path).
     """
 
     player: object  # forward-declared (slackbeatz.player.Player)
@@ -60,15 +65,22 @@ class LiveRuntime:
     surge_instances: list = field(default_factory=list)
     sampler: object | None = None
     _down: bool = False
+    _transferred: bool = False
 
     def shutdown(self) -> None:
         if self._down:
             return
         self._down = True
+        # Always stop the player thread — it's per-runtime and never
+        # transferred. The surge/fluidsynth/sampler children may be
+        # owned by a successor runtime via _transferred, in which case
+        # we leave them alone.
         try:
             self.player.stop()
         except Exception:
             pass
+        if self._transferred:
+            return
         for inst in self.surge_instances:
             try:
                 inst.shutdown()
@@ -172,6 +184,7 @@ def build_live_runtime(
     setup_arg: Optional[str] = None,
     seed_offset: int = 0,
     on_progress: Callable[[str], None] = print,
+    reuse_from: Optional[LiveRuntime] = None,
 ) -> LiveRuntime:
     """Resolve *song_path*, spawn the backend processes, return a runtime.
 
@@ -205,6 +218,62 @@ def build_live_runtime(
     backend = setup.backend
     osc_routing_enabled = backend == "surge"
     need_fluidsynth = osc_routing_enabled and _setup_has_drum_channel(setup)
+
+    # Reuse path — skip the FluidSynth + surge-xt-cli spawn and
+    # transfer the previous runtime's children. Triggered when the
+    # caller hands us a compatible ``reuse_from`` (same setup name +
+    # same backend) — typical when the user opens a different .sb
+    # file with the same bundled ``surge`` setup. Saves ~5s of
+    # surge-xt-cli boot per song switch.
+    if (
+        reuse_from is not None
+        and not reuse_from._transferred
+        and not reuse_from._down
+        and getattr(reuse_from.setup, "name", None) == getattr(setup, "name", None)
+        and reuse_from.backend == backend
+    ):
+        on_progress(
+            f"slackbeatz: reusing existing surge instances "
+            f"(setup={setup.name!r}, {len(reuse_from.surge_instances)} surge + "
+            f"{'fluidsynth' if reuse_from.fs_proc else 'no-fluidsynth'} + "
+            f"{'sampler' if reuse_from.sampler else 'no-sampler'})"
+        )
+        from slackbeatz.player import Player
+
+        prev_player = reuse_from.player
+        prev_port = getattr(prev_player, "port_name", None)
+        prev_sink = getattr(prev_player, "_shared_routing_sink", None)
+        # Stop the OLD player's worker thread (audio dispatch). The
+        # surge / fluidsynth / sampler PROCESSES keep running because
+        # _transferred=True short-circuits their shutdown.
+        try:
+            prev_player.stop()
+        except Exception:
+            pass
+        reuse_from._transferred = True
+
+        player = Player(
+            port_name=prev_port,
+            setup_arg=setup_arg,
+            osc_routing=osc_routing_enabled,
+        )
+        player.seed_offset = seed_offset
+        # Inherit the shared MultiPortSink so the new Player writes to
+        # the SAME virtual MIDI ports the existing Surge instances are
+        # subscribed to. ensure_osc_routing_ready short-circuits when
+        # this is already set.
+        if prev_sink is not None:
+            player._shared_routing_sink = prev_sink
+        player.load_file(song_path)
+
+        return LiveRuntime(
+            player=player,
+            setup=setup,
+            backend=backend,
+            fs_proc=reuse_from.fs_proc,
+            surge_instances=list(reuse_from.surge_instances),
+            sampler=reuse_from.sampler,
+        )
 
     fs_proc: Optional[subprocess.Popen] = None
     port_name: Optional[str] = None

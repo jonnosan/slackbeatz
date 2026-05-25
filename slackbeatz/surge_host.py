@@ -888,6 +888,56 @@ class SurgeInstance:
         only mutated by the OSC server thread via :meth:`_on_osc`."""
         return self._docs.get(addr)
 
+    def audition_note(
+        self, *, pitch: int = 60, velocity: int = 100, duration_s: float = 0.6,
+    ) -> None:
+        """Play one note through this Surge instance for *duration_s*.
+
+        Used by the patch picker's Audition button so the user can
+        hear the currently-loaded patch even when the song isn't
+        playing. Opens a transient mido output on the instance's
+        :attr:`SynthRoleConfig.midi_port_name` (the virtual port the
+        surge-xt-cli is subscribed to), fires note_on, schedules
+        note_off in a background timer thread, then returns
+        immediately so the GUI stays responsive.
+
+        Channel is fixed to 0 (the surge instance listens on every
+        channel of its single MIDI input port, so any channel
+        works). Pitch defaults to middle C; velocity 100 is a
+        sensible mid-loudness default.
+        """
+        import threading
+        import time as _time
+        import mido
+
+        port_name = self.config.midi_port_name
+        try:
+            out = mido.open_output(port_name)
+        except Exception:
+            return
+        try:
+            out.send(mido.Message(
+                "note_on", channel=0, note=int(pitch), velocity=int(velocity),
+            ))
+        except Exception:
+            out.close()
+            return
+
+        def _release():
+            try:
+                _time.sleep(duration_s)
+                out.send(mido.Message(
+                    "note_off", channel=0, note=int(pitch), velocity=0,
+                ))
+            except Exception:
+                pass
+            finally:
+                try:
+                    out.close()
+                except Exception:
+                    pass
+        threading.Thread(target=_release, daemon=True).start()
+
     def load_patch(self, patch_path: Path) -> None:
         """Load *patch_path* (an .fxp file) in this instance.
 
