@@ -26,12 +26,16 @@ from slackbeatz.theory.meter import COMMON_TIME
 # Composer output for an acid phrase
 # --------------------------------------------------------------------------
 
-def test_acid_composition_uses_new_chord_algorithm() -> None:
+def test_acid_composition_uses_new_lead_algorithm() -> None:
+    """Iteration 1.6 replaced chords:acid_stab with melody:acid_lead —
+    the chord pad is gone entirely; bass + lead interplay carries the
+    harmony."""
     sb = compose_from_text("Acid trax forever - take 2")
-    assert "gen stab" in sb
-    assert "acid_stab" in sb
-    # The legacy organ pad should be gone.
+    assert "gen lead" in sb
+    assert "acid_lead" in sb
+    # The legacy organ pad and the chord-stab interim are both gone.
     assert "sustained_dyad" not in sb
+    assert "gen stab" not in sb
 
 
 def test_acid_composition_sets_new_bass_knobs() -> None:
@@ -42,10 +46,13 @@ def test_acid_composition_sets_new_bass_knobs() -> None:
         assert knob in bass_line, f"missing {knob} in: {bass_line}"
 
 
-def test_acid_composition_sets_chord_drop_intensity() -> None:
+def test_acid_composition_sets_lead_intensity() -> None:
+    """The lead's velocity/intensity defaults so it accents the bass
+    rather than dominating it — base_vel 85, intensity 0.85."""
     sb = compose_from_text("Acid trax forever - take 2")
-    chord_line = next(l for l in sb.splitlines() if l.startswith("gen stab"))
-    assert "drop_intensity=0.7" in chord_line
+    lead_line = next(l for l in sb.splitlines() if l.startswith("gen lead"))
+    assert "base_vel=85" in lead_line
+    assert "intensity=0.85" in lead_line
 
 
 def test_acid_composition_declares_top_level_lfo() -> None:

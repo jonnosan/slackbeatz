@@ -225,13 +225,17 @@ _STYLE_PROFILES: dict[str, StyleProfile] = {
         ],
     ),
     "acid": StyleProfile(
-        # Authenticity-tuning iteration 1: amplify the 303 character
-        # via aggressive bass-filter modulation (cycle=6 = 3× faster
-        # sweeps), high resonance ceiling (120), expressive pitch-bend
-        # (120 units = ±3 cents), and 35% per-note portamento for
-        # slides. Replaces the sustained_dyad organ pad with the new
-        # acid_stab chord algorithm — sparse filter-enveloped hits
-        # rather than held organ. drop_intensity=0.7 + evolution=0.4
+        # Iteration 1.6: dropped the chord stab entirely — user feedback
+        # was "stabs sound boring and out of place, maybe they shouldn't
+        # be there at all". Replaced with a sequenced lead that
+        # interleaves with the 303 bass (notes on the off-eighths /
+        # off-sixteenths where the bass doesn't fall). Real acid tracks
+        # carry harmony through the bass; the lead is melodic
+        # punctuation, not a chord pad.
+        #
+        # Bass character: aggressive filter LFO (cycle=6, resonance
+        # ceiling 120), pitch-bend wobble (120 units = ±3 cents), 35%
+        # per-note portamento for slides. drop_intensity + evolution
         # give the build → drop transitions an automatic energy ramp.
         base_tempo=124, tempo_range=4,
         arrangement=[
@@ -250,17 +254,12 @@ _STYLE_PROFILES: dict[str, StyleProfile] = {
                 "slide_prob": 0.35,
                 "evolution": 0.4,
             }),
-            GenSpec("stab",  "chords", "acid_stab", knob_defaults={
-                "drop_intensity": 0.7,
+            GenSpec("lead",  "melody", "acid_lead", knob_defaults={
                 "evolution": 0.4,
-                "resonance": 90,
-                "fifth_prob": 0.4,
-                # Iteration 1.5 — tone the stab down so it doesn't
-                # drown the bass riff. base_vel 70 (vs the default
-                # ~100) + intensity 0.55 cut the perceived loudness
-                # roughly in half without making it inaudible.
-                "base_vel": 70,
-                "intensity": 0.55,
+                # Lead sits above the bass; moderate velocity so it
+                # peeks through without overpowering the 303.
+                "base_vel": 85,
+                "intensity": 0.85,
             }),
             GenSpec("sweep", "candy",  "acid_sweep"),
         ],
@@ -349,19 +348,27 @@ _HANDLE_TO_INST: dict[str, str] = {
 
 # Which gens are active in each part-role.
 #
-# Intros now include rhythm so songs don't open with a bare chord pad
-# (the iteration-1 acid render had a 16-bar pure-stab intro that
-# sounded like a slow plod). Real techno / acid / house arrangements
-# typically have at least the kick + hats from bar 1; the chord pad
-# enters alongside, not alone.
+# Intros include rhythm + bass + chords + candy so the song opens with
+# substance — drums for the rhythmic anchor, bass for low-end weight,
+# chords/candy for harmonic colour. The lead/melody holds back until
+# the main section so its entry is a satisfying arrival rather than
+# just one more layer from bar 1.
+#
+# Earlier revisions:
+# - v1: only chords + candy → bare 16-bar pad intro ("slow plod" user
+#   complaint).
+# - v2: added rhythm but no bass → drums-only intro at 1/12 the main
+#   loudness, still felt empty.
+# - v3 (now): rhythm + bass + chords + candy → drums + bass from bar 1,
+#   lead enters in main.
 _ROLE_GEN_TYPES: dict[str, frozenset[str]] = {
-    "intro":   frozenset({"rhythm", "chords", "candy"}),
-    "build":   frozenset({"rhythm", "chords", "candy"}),
+    "intro":   frozenset({"rhythm", "bass", "chords", "candy"}),
+    "build":   frozenset({"rhythm", "bass", "chords", "candy"}),
     "drop":    frozenset({"rhythm", "bass", "melody", "chords", "candy"}),
     "main":    frozenset({"rhythm", "bass", "melody", "chords", "candy"}),
     "break":   frozenset({"chords", "melody", "candy"}),
     "bridge":  frozenset({"rhythm", "bass", "chords"}),
-    "outro":   frozenset({"rhythm", "chords", "candy"}),
+    "outro":   frozenset({"rhythm", "bass", "chords", "candy"}),
 }
 
 

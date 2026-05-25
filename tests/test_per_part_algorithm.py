@@ -401,13 +401,14 @@ def test_style_shorthand_rejects_unknown_style() -> None:
 
 
 def test_style_shorthand_rejects_gen_type_not_in_profile() -> None:
-    # acid's StyleProfile has no melody handle — `style=acid` on a
-    # part with a melody handle should error rather than silently
+    # dub_techno's StyleProfile has no melody handle — `style=dub_techno`
+    # on a part with a melody handle should error rather than silently
     # leaving that handle on its song-level algorithm.
-    with pytest.raises(ResolveError, match="style='acid' has no algorithm for 'melody'"):
+    # (acid used to lack melody too but iteration 1.6 added acid_lead.)
+    with pytest.raises(ResolveError, match="style='dub_techno' has no algorithm for 'melody'"):
         _resolve(
             'gen lead melody euclid_riff\n'
-            'part p 1 style=acid\n'
+            'part p 1 style=dub_techno\n'
             '  lead\n'
             'play p\n'
         )

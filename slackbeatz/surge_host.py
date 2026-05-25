@@ -201,6 +201,10 @@ _STYLE_PATCH_FOR_ROLE: dict[tuple[str, str], str] = {
     # ----- lead (melody) -----
     ("lead", "euclid_riff"):        "Leads/Classic Lead 1.fxp",
     ("lead", "acid_stab"):          "Leads/Acidofil.fxp",
+    # Iteration 1.6 — new sequenced acid lead. Uses the same Acidofil
+    # character as the legacy acid_stab so the patch lookup mirrors
+    # what the user heard described as "the acid lead sound".
+    ("lead", "acid_lead"):          "Leads/Acidofil.fxp",
     ("lead", "psy_lead"):     "Leads/Square.fxp",
     ("lead", "sparse_pad_lead"):   "Leads/Etwas.fxp",
     ("lead", "distant_lead"):    "Leads/Fluff.fxp",

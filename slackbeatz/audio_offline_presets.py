@@ -75,10 +75,10 @@ ROLE_STYLE_PRESETS: dict[tuple[str, str], tuple[tuple[str, float], ...]] = {
         # Filter 2 — off (single-filter character)
         ("A Filter 2 Type", 0.0),
     ),
-    # ----- acid chord stab: filter-enveloped short hits -----
-    # The pad channel renders the new `chords/acid_stab` algorithm —
-    # also wants a snappy resonant filter, but with a faster decay
-    # so the stab "blooms" then closes quickly.
+    # ----- acid chord stab (LEGACY): kept so manual .sb files using
+    # chords:acid_stab still render correctly. The acid style profile
+    # in compose.py dropped this gen in iteration 1.6 — bass + lead
+    # interplay carry the song now.
     ("pad", "acid_stab"): (
         ("A Filter 1 Type", 0.1),            # LP Legacy Ladder
         ("A Filter 1 Cutoff", 0.40),         # slightly more open than bass
@@ -89,6 +89,24 @@ ROLE_STYLE_PRESETS: dict[tuple[str, str], tuple[tuple[str, float], ...]] = {
         ("A Filter EG Decay", 0.20),         # quick decay → snappy stab
         ("A Filter EG Sustain", 0.05),       # near-zero sustain
         ("A Filter EG Release", 0.10),
+        ("A Filter 2 Type", 0.0),
+    ),
+    # ----- acid lead (iteration 1.6): sequenced melodic punctuation -----
+    # The 303-flavoured lead that interleaves with the bass. More open
+    # filter than the bass (lead sits higher in the mix) with a
+    # punchy filter envelope per note for that "blooming squeal"
+    # character. Slightly less resonance than the bass — the lead
+    # should sing, not screech.
+    ("lead", "acid_lead"): (
+        ("A Filter 1 Type", 0.1),            # LP Legacy Ladder
+        ("A Filter 1 Cutoff", 0.50),         # ~600 Hz — more open than bass
+        ("A Filter 1 Resonance", 0.55),      # mid resonance — sings
+        ("A Filter 1 FEG Mod Amount", 0.70), # strong env per note
+        ("A Filter 1 Keytrack", 0.45),
+        ("A Filter EG Attack", 0.0),
+        ("A Filter EG Decay", 0.25),
+        ("A Filter EG Sustain", 0.30),       # some sustain so the note rings
+        ("A Filter EG Release", 0.20),
         ("A Filter 2 Type", 0.0),
     ),
     # ----- acid candy/sweep: noise-y riser texture -----

@@ -114,10 +114,15 @@ def test_compose_single_char_change_differs() -> None:
 def test_algorithm_per_type_overrides_individual_gen_lines() -> None:
     """``algorithm_per_type={'chords': 'rhodes_chord'}`` rewrites
     only the chord gen line; bass / melody / candy stay on the
-    primary style's defaults."""
+    primary style's defaults.
+
+    Uses deep_techno here because the acid profile no longer carries
+    a chord gen (iteration 1.6: bass + lead interplay replaces the
+    chord stab). Any style with a chord gen would do.
+    """
     sb = compose_from_text(
-        "acid groove",
-        style_override="acid",
+        "deep warehouse berlin",
+        style_override="deep_techno",
         algorithm_per_type={"chords": "rhodes_chord"},
     )
     found = {}
@@ -139,10 +144,10 @@ def test_algorithm_per_type_overrides_individual_gen_lines() -> None:
 def test_algorithm_per_type_none_is_byte_identical() -> None:
     """Passing ``algorithm_per_type=None`` (or omitting it) must
     reproduce the byte-identical .sb the composer wrote pre-feature."""
-    a = compose_from_text("acid groove", style_override="acid")
-    b = compose_from_text("acid groove", style_override="acid",
+    a = compose_from_text("deep warehouse berlin", style_override="deep_techno")
+    b = compose_from_text("deep warehouse berlin", style_override="deep_techno",
                           algorithm_per_type=None)
-    c = compose_from_text("acid groove", style_override="acid",
+    c = compose_from_text("deep warehouse berlin", style_override="deep_techno",
                           algorithm_per_type={})
     assert a == b == c
 
