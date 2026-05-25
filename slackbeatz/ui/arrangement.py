@@ -45,6 +45,35 @@ def _fmt_time(seconds: float) -> str:
     return f"{m}:{s:02d}"
 
 
+def _tick_to_bar_beat(resolved, tick: int) -> tuple[int, float]:
+    """Walk the arrangement to convert *tick* into (bar_1indexed, beat).
+
+    Beat is 1-indexed float — so the start of bar 5 is (5, 1.0) and
+    midway through beat 2 of bar 5 is (5, 2.5). Uses per-part
+    ``meter`` so polymeter / mixed-meter songs report correctly
+    (most slackbeatz songs are 4/4 throughout, but the engine
+    supports per-part overrides via the ``meter=`` knob).
+    """
+    from slackbeatz.engine.clock import PPQ, bars_to_ticks
+
+    if tick < 0:
+        return (1, 1.0)
+    cursor = 0
+    bar_idx = 1
+    for part_name in resolved.arrangement:
+        part = resolved.parts.get(part_name)
+        if part is None:
+            continue
+        ticks_per_bar = bars_to_ticks(1, meter=part.meter)
+        for _ in range(part.bars):
+            if cursor + ticks_per_bar > tick:
+                beat = ((tick - cursor) / PPQ) + 1.0
+                return (bar_idx, beat)
+            cursor += ticks_per_bar
+            bar_idx += 1
+    return (bar_idx, 1.0)
+
+
 class ArrangementScreen(tk.Frame):
     """Top-level frame holding the arrangement surface.
 
@@ -402,11 +431,26 @@ class ArrangementScreen(tk.Frame):
         self._pos_scale.pack(side="left", padx=8, fill="x", expand=True)
         self._pos_scale.bind("<ButtonPress-1>", lambda _e: self._on_slider_press())
         self._pos_scale.bind("<ButtonRelease-1>", lambda _e: self._on_slider_release())
-        self._time_label = tk.Label(bar, text="0:00 / 0:00", width=12)
+        # Musical position readout — "bar 5.2 / 152" + 4/4 meter.
+        # Two labels (bars/beats + meter) so the meter stays static
+        # while bars/beats ticks live every 100ms.
+        self._bar_label = tk.Label(
+            bar, text="bar 1.0 / 1", width=16,
+            font=("TkFixedFont", 10),
+        )
+        self._bar_label.pack(side="left", padx=4)
+        self._time_label = tk.Label(bar, text="0:00 / 0:00", width=12,
+                                    fg="gray")
         self._time_label.pack(side="left", padx=4)
 
         resolved = self._resolved()
         if resolved is not None:
+            meter = resolved.meter
+            self._meter_label = tk.Label(
+                bar, text=f"{meter.numerator}/{meter.denominator}",
+                font=("TkDefaultFont", 10, "bold"),
+            )
+            self._meter_label.pack(side="left", padx=4)
             tk.Label(bar, text=f"BPM {resolved.tempo}").pack(side="left", padx=8)
             tk.Label(bar, text=f"Setup: {resolved.setup.name}",
                      fg="gray").pack(side="right", padx=8)
@@ -459,17 +503,24 @@ class ArrangementScreen(tk.Frame):
         if not self._slider_dragging:
             self._pos_scale.config(to=max(1, total))
             self._pos_scale.set(cur)
-        # Time readout — convert ticks → seconds via tempo.
+        # Time + bar/beat readout. Bar/beat walks the arrangement
+        # using the per-part meter so polymeter songs still report
+        # correctly; time is a straight tick → seconds conversion.
         try:
             resolved = p.current_resolved
             if resolved is not None:
-                tpb = 96  # standard ticks-per-beat used by scheduler
+                tpb = 96
                 bps = resolved.tempo / 60.0
                 tps = tpb * bps
                 cur_s = cur / tps if tps else 0
                 tot_s = total / tps if tps else 0
                 self._time_label.config(
                     text=f"{_fmt_time(cur_s)} / {_fmt_time(tot_s)}",
+                )
+                cur_bar, cur_beat = _tick_to_bar_beat(resolved, cur)
+                total_bars = p.get_total_bars() or 1
+                self._bar_label.config(
+                    text=f"bar {cur_bar}.{cur_beat:.1f} / {total_bars}",
                 )
         except Exception:
             pass
