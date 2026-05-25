@@ -542,11 +542,12 @@ class ArrangementScreen(tk.Frame):
         menu.tk_popup(self.winfo_pointerx(), self.winfo_pointery())
 
     def _change_style(self) -> None:
-        """Open a dialog to pick a new style for the current title.
+        """Open a modal dropdown dialog to pick a new style for the
+        current title.
 
         Requires phrase mode (composed from a title); for file-loaded
-        songs the style is baked into the .sb so we just tell the
-        user to start a new song instead.
+        songs the style is baked into the .sb so we tell the user to
+        start a new song instead.
         """
         if self.app.player is None:
             return
@@ -558,32 +559,57 @@ class ArrangementScreen(tk.Frame):
                 "Use File → New from title… to start a fresh one.",
             )
             return
-        from tkinter import simpledialog
         from slackbeatz.ui.new_song_dialog import _EXPLICIT_STYLES
+
         current = self.app.player.style_override or "(auto)"
-        # Cheap picker via the OS dialog rather than building our own.
-        choices = "  ".join(("(auto)",) + _EXPLICIT_STYLES)
-        new_style = simpledialog.askstring(
-            "Change style",
-            f"Current: {current}\n\nAvailable styles:\n  {choices}\n\n"
-            f"Enter new style (or '(auto)' to let the title decide):",
-            initialvalue=current,
-            parent=self,
+        choices = ("(auto)",) + _EXPLICIT_STYLES
+
+        dlg = tk.Toplevel(self)
+        dlg.title("Change style")
+        dlg.transient(self.app.root)
+        dlg.grab_set()
+        dlg.resizable(False, False)
+
+        tk.Label(
+            dlg,
+            text="Pick a style to re-compose the song with.",
+            wraplength=300, justify="left",
+        ).pack(padx=12, pady=(12, 6), anchor="w")
+
+        row = tk.Frame(dlg)
+        row.pack(padx=12, pady=4, fill="x")
+        tk.Label(row, text="Style:").pack(side="left")
+        style_var = tk.StringVar(value=current)
+        combo = ttk.Combobox(
+            row, textvariable=style_var, state="readonly",
+            values=choices, width=22,
         )
-        if new_style is None:
+        combo.pack(side="left", padx=8)
+        combo.focus_set()
+
+        chosen: dict[str, str | None] = {"value": None}
+
+        def _apply() -> None:
+            chosen["value"] = style_var.get()
+            dlg.destroy()
+
+        def _cancel() -> None:
+            dlg.destroy()
+
+        btns = tk.Frame(dlg)
+        btns.pack(padx=12, pady=(8, 12), fill="x")
+        ttk.Button(btns, text="Apply", command=_apply).pack(side="right", padx=2)
+        ttk.Button(btns, text="Cancel", command=_cancel).pack(side="right", padx=2)
+        # Enter applies, Esc cancels.
+        dlg.bind("<Return>", lambda _e: _apply())
+        dlg.bind("<Escape>", lambda _e: _cancel())
+
+        self.app.root.wait_window(dlg)
+
+        picked = chosen["value"]
+        if picked is None:
             return
-        new_style = new_style.strip()
-        if new_style in ("", "(auto)"):
-            self.app.player.style_override = None
-        elif new_style in _EXPLICIT_STYLES:
-            self.app.player.style_override = new_style
-        else:
-            from tkinter import messagebox
-            messagebox.showerror(
-                "Change style",
-                f"Unknown style {new_style!r}. Available: {choices}",
-            )
-            return
+        self.app.player.style_override = None if picked == "(auto)" else picked
         self._reresolve_and_refresh()
 
     def _show_view_menu(self) -> None:
