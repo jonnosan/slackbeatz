@@ -111,38 +111,39 @@ def test_compose_single_char_change_differs() -> None:
 
 # --- Composed song actually resolves ------------------------------------
 
-def test_style_per_type_overrides_individual_gen_lines() -> None:
-    """``style_per_type={'chords': 'lofi'}`` rewrites only the chord
-    gen line; bass / melody / candy stay on the primary style."""
+def test_algorithm_per_type_overrides_individual_gen_lines() -> None:
+    """``algorithm_per_type={'chords': 'rhodes_chord'}`` rewrites
+    only the chord gen line; bass / melody / candy stay on the
+    primary style's defaults."""
     sb = compose_from_text(
         "acid groove",
         style_override="acid",
-        style_per_type={"chords": "lofi"},
+        algorithm_per_type={"chords": "rhodes_chord"},
     )
     found = {}
     for line in sb.splitlines():
         stripped = line.strip()
         if not stripped.startswith("gen "):
             continue
-        # gen <handle> <type> <style> [knobs…]
+        # gen <handle> <type> <algorithm> [knobs…]
         bits = stripped.split()
         if len(bits) >= 4:
-            handle, type_, style = bits[1], bits[2], bits[3]
-            found[(handle, type_)] = style
-    chord_styles = {s for (_h, t), s in found.items() if t == "chords"}
-    other_styles = {s for (_h, t), s in found.items() if t != "chords"}
-    assert chord_styles == {"lofi"}, found
-    assert other_styles and "lofi" not in other_styles, found
+            handle, type_, algorithm = bits[1], bits[2], bits[3]
+            found[(handle, type_)] = algorithm
+    chord_algos = {s for (_h, t), s in found.items() if t == "chords"}
+    other_algos = {s for (_h, t), s in found.items() if t != "chords"}
+    assert chord_algos == {"rhodes_chord"}, found
+    assert other_algos and "rhodes_chord" not in other_algos, found
 
 
-def test_style_per_type_none_is_byte_identical() -> None:
-    """Passing ``style_per_type=None`` (or omitting it) must reproduce
-    the byte-identical .sb the composer wrote pre-feature."""
+def test_algorithm_per_type_none_is_byte_identical() -> None:
+    """Passing ``algorithm_per_type=None`` (or omitting it) must
+    reproduce the byte-identical .sb the composer wrote pre-feature."""
     a = compose_from_text("acid groove", style_override="acid")
     b = compose_from_text("acid groove", style_override="acid",
-                          style_per_type=None)
+                          algorithm_per_type=None)
     c = compose_from_text("acid groove", style_override="acid",
-                          style_per_type={})
+                          algorithm_per_type={})
     assert a == b == c
 
 
