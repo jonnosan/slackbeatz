@@ -404,7 +404,25 @@ _STYLE_PROFILES: dict[str, StyleProfile] = {
                 "base_vel": 80,
                 "intensity": 0.75,
             }),
-            GenSpec("sweep", "candy",  "slow_lfo"),
+            # Iteration 1.12 — fast top arp ("molten" propulsive layer).
+            # Same chord-following sequencer as the lead but at ~11
+            # hits per bar (vs lead's 2.5) and an octave higher,
+            # giving the track that DMX Krew "two analogue synths
+            # interlocking" feel without competing with the lead's
+            # melodic role. Different pitch sequence so it weaves
+            # against the lead rather than doubling it.
+            GenSpec("sweep", "candy",  "sh101_top", knob_defaults={
+                "pitches": "0,2,4,5,7",
+                "pulses": 11,
+                "steps": 16,
+                "gate": 0.55,
+                "progression": "i-VII-VI-V",
+                "bars_per_chord": 4,
+                "octave": 1,
+                "evolution": 0.3,
+                "base_vel": 55,
+                "intensity": 0.65,
+            }),
         ],
     ),
 }

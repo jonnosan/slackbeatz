@@ -245,6 +245,10 @@ _STYLE_PATCH_FOR_ROLE: dict[tuple[str, str], str] = {
     ("candy", "atmos_lfo"): "Sequences/Phase 2.fxp",
     ("candy", "minimal_lfo"):        "Sequences/Step Phaser.fxp",
     ("candy", "crackle_lfo"):          "Sequences/Sine Sequencer 1.fxp",
+    # Iteration 1.12 — fast top-arp layer for warm_analogue. Uses
+    # a brighter bell/seq patch so it adds sparkle above the lead
+    # rather than fighting it.
+    ("candy", "sh101_top"):     "Sequences/Bell Seq.fxp",
 
     # ----- sub (subbass) -----
     ("sub", "euclid"):          "Basses/Sub 1.fxp",

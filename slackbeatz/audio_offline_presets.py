@@ -159,6 +159,25 @@ ROLE_STYLE_PRESETS: dict[tuple[str, str], tuple[tuple[str, float], ...]] = {
         ("FX A1 FX Type", 0.7949),           # Tape
         ("FX A1 Output - Mix", 0.55),        # 55% wet — present but the dry stays dominant
     ),
+    # ----- sh101_top (iteration 1.12): bright top-arp layer -----
+    # The "molten" fast sequencer line above the lead. Brighter than
+    # the lead so it sparkles in the high-mid rather than competing
+    # for the same lead-cutting band. Tape FX for warmth coherence
+    # with the rest of the warm_analogue mix.
+    ("candy", "sh101_top"): (
+        ("A Filter 1 Type", 0.4),            # LP K35 (same family as lead)
+        ("A Filter 1 Cutoff", 0.65),         # brighter — sits above the lead
+        ("A Filter 1 Resonance", 0.30),
+        ("A Filter 1 FEG Mod Amount", 0.50),
+        ("A Filter 1 Keytrack", 0.40),
+        ("A Filter EG Attack", 0.0),
+        ("A Filter EG Decay", 0.25),
+        ("A Filter EG Sustain", 0.10),       # short decay — sparkle, not pad
+        ("A Filter EG Release", 0.15),
+        ("A Filter 2 Type", 0.0),
+        ("FX A1 FX Type", 0.7949),           # Tape (same as bass/lead)
+        ("FX A1 Output - Mix", 0.45),
+    ),
     # ----- sh101_arp (iteration 1.11): warm SH-101 character -----
     # 1.7: cutoff 0.55. 1.8: bumped to 0.70 (acid context — needed to
     # cut through). 1.11: pulled back to 0.50 + lower resonance + LP
