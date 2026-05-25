@@ -1,5 +1,5 @@
 {
-  "composed:Acid trax forever": "a42eabdb8b908f6a32099d211ada985e06034fb7235362857243caa4c6f03709",
+  "composed:Acid trax forever": "00d9cdb6efd71b4a2394a4fabae3ff3fd13ec9025338f9a00b32b3d9edb00517",
   "composed:Cosmic mushroom dance": "7d3b996a633393641453b510dd3734739e2ae884e5efa1ca1563b5682f48e0f1",
   "composed:Hello world": "ac632ddfc8a1cf01fd711a2b0463cb847679a6b5c8144c6cf20f6669c7dbc45b",
   "composed:Jungle rolling neurofunk": "429623562bd472db7f4f9bf1364c84a335a3f7787fcf32f3e06b7bc5b966357b",
@@ -9,7 +9,7 @@
   "composed:Sunset over Plaza": "e4e6bc0379a3601183a0bc7109649288f505bae1765fa6db6b1b4a6be7e847db",
   "composed:UK 2step london garage": "525537bc655a41c4666c6de205b4e9959f0ac655c22f0016b942e6714f38cadb",
   "file:examples/basic.sb": "cd5a4efcc842c5878dc804f95c52164fb269108f7e1a8cbf3b36eca7afc695e4",
-  "file:examples/composed/acid_trax_forever.sb": "1fac00fa40fbcfcf6d8cea3e74f98c6caf5d4fa707e149b9ad888e42bf9a12a7",
+  "file:examples/composed/acid_trax_forever.sb": "a42eabdb8b908f6a32099d211ada985e06034fb7235362857243caa4c6f03709",
   "file:examples/composed/cosmic_mushroom_dance.sb": "445d7c16a0b934b0ed736b3ea48710000d5ea22cfa894a1a76208247ef4838a4",
   "file:examples/composed/hello_world.sb": "55eae2a62badf53123ff5452cb07a2417226e60d2e91141b4c55a78d2094b427",
   "file:examples/composed/jungle_rolling_neurofunk.sb": "465cf1f733cf78e41e130694d5d165d28208e504db05c8a089ea9756a6d2490e",

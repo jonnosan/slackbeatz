@@ -26,26 +26,24 @@ from slackbeatz.theory.meter import COMMON_TIME
 # Composer output for an acid phrase
 # --------------------------------------------------------------------------
 
-def test_acid_composition_uses_sh101_arp_algorithm() -> None:
-    """Iteration 1.7 replaced melody:acid_lead with melody:sh101_arp —
-    SH-101-style euclidean-clocked arpeggiator. Fixed pitch sequence
-    + rhythm from a euclidean trigger pattern."""
+def test_acid_composition_is_pure_303_no_lead() -> None:
+    """Iteration 1.9: pure acid = 303 + drums + sweep candy. No lead
+    voice. Reference tracks (Phuture, Aphex, TB-303+808 jams) are all
+    single-303. Warm-analogue / SH-101-sequenced character belongs to
+    the separate `warm_analogue` style (issue #67)."""
     sb = compose_from_text("Acid trax forever - take 2")
-    assert "gen lead" in sb
-    assert "sh101_arp" in sb
-    # The legacy organ pad / acid_lead / chord stab are all gone.
-    assert "sustained_dyad" not in sb
+    # No lead / chord / stab voices at all.
+    assert "gen lead" not in sb
     assert "gen stab" not in sb
+    assert "sh101_arp" not in sb
     assert "acid_lead" not in sb
-
-
-def test_acid_composition_sets_sh101_arp_knobs() -> None:
-    """Pitch sequence + euclidean trigger params must reach the gen line."""
-    sb = compose_from_text("Acid trax forever - take 2")
-    lead_line = next(l for l in sb.splitlines() if l.startswith("gen lead"))
-    for knob in ("pitches=0,3,7,5", "pulses=5", "steps=16", "gate=0.85",
-                 "base_vel=85", "intensity=0.85"):
-        assert knob in lead_line, f"missing {knob} in: {lead_line}"
+    assert "acid_stab" not in sb
+    assert "sustained_dyad" not in sb
+    # 303 bass + four_floor_house drums + acid_sweep candy must all
+    # still be present.
+    assert "gen bass" in sb and "acid_303" in sb
+    assert "gen kick" in sb and "four_floor_house" in sb
+    assert "gen sweep" in sb and "acid_sweep" in sb
 
 
 def test_acid_composition_sets_new_bass_knobs() -> None:

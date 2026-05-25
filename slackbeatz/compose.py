@@ -225,18 +225,21 @@ _STYLE_PROFILES: dict[str, StyleProfile] = {
         ],
     ),
     "acid": StyleProfile(
-        # Iteration 1.6: dropped the chord stab entirely — user feedback
-        # was "stabs sound boring and out of place, maybe they shouldn't
-        # be there at all". Replaced with a sequenced lead that
-        # interleaves with the 303 bass (notes on the off-eighths /
-        # off-sixteenths where the bass doesn't fall). Real acid tracks
-        # carry harmony through the bass; the lead is melodic
-        # punctuation, not a chord pad.
+        # Iteration 1.9: stripped to pure acid — TB-303 + drums + the
+        # occasional candy sweep. The 303 IS the song. References:
+        # Phuture "Acid Tracks", Aphex Twin "Didgeridoo", the
+        # TB-303+808 jam tradition. All are single-303 tracks with
+        # no separate lead synth. Warm-analogue / SH-101-sequenced
+        # arrangements (DMX Krew "SH101 Triggers MS10" character)
+        # are the new `warm_analogue` style — separate profile,
+        # different genre intent.
         #
-        # Bass character: aggressive filter LFO (cycle=6, resonance
-        # ceiling 120), pitch-bend wobble (120 units = ±3 cents), 35%
-        # per-note portamento for slides. drop_intensity + evolution
-        # give the build → drop transitions an automatic energy ramp.
+        # Bass character: slide (35% per-note portamento), pitch-bend
+        # wobble, song-wide filter ramp via the top-level
+        # ``lfo acid_filter`` + apply lines on every part. The
+        # 303 preset (audio_offline_presets.py:("bass","acid_303"))
+        # carries the LP Ladder filter + delay FX that complete the
+        # character.
         base_tempo=124, tempo_range=4,
         arrangement=[
             ("intro", 16), ("main", 32), ("build", 8), ("drop", 32),
@@ -247,14 +250,11 @@ _STYLE_PROFILES: dict[str, StyleProfile] = {
             GenSpec("clap",  "rhythm", "four_floor_house"),
             GenSpec("hats",  "rhythm", "four_floor_house"),
             GenSpec("bass",  "bass",   "acid_303", knob_defaults={
-                # Iteration 1.8 — cycle=0 disables the bass's built-in
-                # CC74/CC71 sine LFO. Two LFO sources on the same CC
-                # was causing chaos (whichever event hit later won).
-                # The song-wide sawtooth (`apply acid_filter`) is now
-                # the sole CC74 driver — one slow ramp from filter-
-                # closed at song-start to filter-open at song-end.
-                # Per-note motion still comes from the Surge preset's
-                # filter envelope (FEG Mod Amount 0.65).
+                # cycle=0 disables the bass's built-in CC74/CC71
+                # sine LFO — the song-wide sawtooth via
+                # `apply acid_filter target=midi:ch:2/cc:74` is the
+                # sole CC74 driver. Per-note filter motion comes
+                # from the Surge preset's filter envelope.
                 "cycle": 0,
                 "resonance": 120,
                 "bend": 120,
@@ -262,21 +262,11 @@ _STYLE_PROFILES: dict[str, StyleProfile] = {
                 "slide_prob": 0.35,
                 "evolution": 0.4,
             }),
-            # Iteration 1.7 — SH-101-style sequencer-clocked arp.
-            # Fixed pitch sequence (root / min3 / P5 / P4 of minor
-            # pentatonic), euclidean trigger pattern of 5 pulses in
-            # 16 steps. Pitches always play in the same order; the
-            # rhythm comes from the euclidean spacing. Classic
-            # acid-techno lead character.
-            GenSpec("lead",  "melody", "sh101_arp", knob_defaults={
-                "pitches": "0,3,7,5",
-                "pulses": 5,
-                "steps": 16,
-                "gate": 0.85,
-                "evolution": 0.4,
-                "base_vel": 85,
-                "intensity": 0.85,
-            }),
+            # Candy sweep stays — it only fires during build sections
+            # (see is_build_part check in candy/acid_sweep.py) so
+            # it's a brief filter-rise into each drop. Authentic to
+            # the "drum machine + 303" jam tradition where the
+            # producer occasionally rides a manual filter sweep.
             GenSpec("sweep", "candy",  "acid_sweep"),
         ],
     ),
