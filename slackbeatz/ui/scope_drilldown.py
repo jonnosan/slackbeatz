@@ -589,28 +589,59 @@ class ScopeDrilldown(tk.Frame):
         self.on_change()
 
     def _on_knob_change(self, knob_name: str, value) -> None:
-        """A slider moved. Apply the value at the current scope."""
-        # Coerce to int if the spec is integral so we don't store
-        # `4.0` where `4` is expected.
+        """A control changed. Apply the value at the current scope.
+
+        Three-step write so the change is both visible and audible:
+
+        1. Mutate the live resolved structures — instant visual feedback
+           in the drilldown (effective-value badge updates on the next
+           grid-rebuild).
+        2. Persist the override on the Player at the right scope so it
+           survives the next ``_resolve_current``.
+        3. Schedule a bar-aligned re-play() so the new value actually
+           takes effect during live playback — at the next bar boundary
+           rather than mid-bar.
+        """
         if isinstance(value, float) and value.is_integer():
             spec = next((s for s in FEEL_KNOBS if s.name == knob_name), None)
             if spec is not None and isinstance(spec.high, int):
                 value = int(value)
 
+        player = self.app.player
         if self.scope == "part":
             bucket = self.part.knob_overrides.setdefault(self.voice_handle, {})
             bucket[knob_name] = value
+            if player is not None:
+                player.set_part_knob(
+                    self.part_name, self.voice_handle, knob_name, value,
+                )
         elif self.scope == "voice":
             bucket = self.resolved.voice_defaults.setdefault(self.gen.type_, {})
             bucket[knob_name] = value
+            if player is not None:
+                player.set_voice_knob(self.gen.type_, knob_name, value)
         else:  # song
             self.gen.knobs[knob_name] = value
-            # Also push to Player's runtime overrides so future re-
-            # resolves preserve the change.
-            self.app.player._knob_overrides.setdefault(
-                self.voice_handle, {},
-            )[knob_name] = value
+            if player is not None:
+                player._knob_overrides.setdefault(
+                    self.voice_handle, {},
+                )[knob_name] = value
+        self._request_bar_aligned_apply()
         self.on_change()
+
+    def _request_bar_aligned_apply(self) -> None:
+        """Ask the ArrangementScreen to re-play at the next bar.
+
+        Looks up the screen via the GuiApp's current frame so the
+        drilldown doesn't need a back-reference. The screen owns the
+        Tk.after debouncer + computes the ms-to-next-bar.
+        """
+        screen = getattr(self.app, "_current_frame", None)
+        if screen is None:
+            return
+        handler = getattr(screen, "schedule_bar_aligned_apply", None)
+        if callable(handler):
+            handler()
 
     def _open_knob_editor(self, knob_name: str, current) -> None:
         """Pattern-knob text entry dialog (used when we don't have a slider)."""
@@ -648,15 +679,24 @@ class ScopeDrilldown(tk.Frame):
 
     def _on_revert(self, knob_name: str) -> None:
         """Clear the override at the current scope and fall back."""
+        player = self.app.player
         if self.scope == "part":
             bucket = self.part.knob_overrides.get(self.voice_handle, {})
             bucket.pop(knob_name, None)
+            if player is not None:
+                player.unset_part_knob(
+                    self.part_name, self.voice_handle, knob_name,
+                )
         elif self.scope == "voice":
             bucket = self.resolved.voice_defaults.get(self.gen.type_, {})
             bucket.pop(knob_name, None)
+            if player is not None:
+                player.unset_voice_knob(self.gen.type_, knob_name)
         else:  # song
             self.gen.knobs.pop(knob_name, None)
-            self.app.player._knob_overrides.get(self.voice_handle, {}).pop(
-                knob_name, None,
-            )
+            if player is not None:
+                player._knob_overrides.get(self.voice_handle, {}).pop(
+                    knob_name, None,
+                )
+        self._request_bar_aligned_apply()
         self.on_change()

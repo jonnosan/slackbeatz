@@ -94,19 +94,44 @@ class MixerScreen(tk.Frame):
 
         # Volume slider — vertical, 0..127 like MIDI velocity range.
         # Defaults to 100 (Surge global default ~= 0.79 normalised).
+        # Uses Scale ``command`` callback (fires on every drag move)
+        # so user hears the level live while sliding — required for
+        # auditioning. The legacy bind-to-ButtonRelease was too
+        # coarse, gave no preview.
         surge_inst = self._surge_instance_for_channel(channel)
         vol_var = tk.IntVar(value=100)
+        # Throttle: only push to surge if value actually changed +
+        # at most every ~30ms to avoid OSC flooding on fast drags.
+        last_pushed = [-1]
+        def _live_volume_callback(value_str, ch=channel):
+            try:
+                v = int(float(value_str))
+            except (TypeError, ValueError):
+                return
+            if v == last_pushed[0]:
+                return
+            last_pushed[0] = v
+            self._on_volume_change(ch, v)
         vol_scale = tk.Scale(
             strip, from_=127, to=0, resolution=1, length=140,
             orient="vertical", showvalue=True, variable=vol_var,
+            command=_live_volume_callback if surge_inst is not None else None,
             state=("normal" if surge_inst is not None else "disabled"),
         )
         vol_scale.pack(pady=2)
+
+        # Patch + FX buttons — reach the same picker / editor the
+        # arranger drilldown uses, so the user can change sound
+        # design without leaving the Mixer.
         if surge_inst is not None:
-            vol_scale.bind(
-                "<ButtonRelease-1>",
-                lambda _e, ch=channel, var=vol_var: self._on_volume_change(ch, var.get()),
-            )
+            ttk.Button(
+                strip, text="Patch…", width=8,
+                command=lambda inst=surge_inst: self._open_patch_picker(inst),
+            ).pack(pady=1)
+            ttk.Button(
+                strip, text="FX…", width=8,
+                command=lambda inst=surge_inst: self._open_fx_editor(inst),
+            ).pack(pady=1)
 
         # Mute / Solo toggles.
         player = self.app.player
@@ -122,6 +147,14 @@ class MixerScreen(tk.Frame):
             strip, text="Solo", variable=solo_var,
             command=lambda c=channel, v=solo_var: self._on_solo(c, v),
         ).pack()
+
+    def _open_patch_picker(self, surge_inst) -> None:
+        from slackbeatz.ui.patch_picker import PatchPickerDialog
+        PatchPickerDialog(self.app, surge_inst)
+
+    def _open_fx_editor(self, surge_inst) -> None:
+        from slackbeatz.ui.fx_editor import FxEditorDialog
+        FxEditorDialog(self.app, surge_inst)
 
     def _surge_instance_for_channel(self, channel_1idx: int):
         runtime = getattr(self.app, "live_runtime", None)

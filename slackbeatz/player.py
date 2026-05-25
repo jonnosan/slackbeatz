@@ -435,6 +435,21 @@ class Player:
         # {gen_handle: {knob_name: value}}.
         self._knob_overrides: dict[str, dict[str, object]] = {}
 
+        # Per-(part, handle) knob overrides — populated by the GUI
+        # drilldown when the user edits a knob in part scope. Re-
+        # applied after every _resolve_current via
+        # :meth:`_apply_knob_overrides` so the change survives a
+        # bar-aligned restart. Schema:
+        #   {part_name: {gen_handle: {knob_name: value}}}
+        self._part_knob_overrides: dict[
+            str, dict[str, dict[str, object]]
+        ] = {}
+
+        # Per-gen-type knob overrides — voice scope. Survives re-
+        # resolve the same way _knob_overrides does. Schema:
+        #   {gen_type: {knob_name: value}}
+        self._voice_knob_overrides: dict[str, dict[str, object]] = {}
+
         # Phase D — track which loaded song we've already applied scene
         # state for, so re-resolves (triggered by knob tweaks, etc.) on
         # the same song don't keep stamping the saved mutes back over
@@ -935,6 +950,51 @@ class Player:
             return self._restart_after_change(
                 f"knob {handle}.{knob} → {value}",
             )
+
+    def set_voice_knob(self, gen_type: str, knob: str, value) -> None:
+        """Voice-scope knob override (cascades to every gen of *gen_type*).
+
+        Used by the GUI drilldown. Does NOT trigger an immediate
+        restart — the caller (GUI) schedules a bar-aligned re-play()
+        so changes drop in cleanly at musical boundaries.
+        """
+        with self._lock:
+            self._voice_knob_overrides.setdefault(gen_type, {})[knob] = value
+
+    def unset_voice_knob(self, gen_type: str, knob: str | None = None) -> None:
+        with self._lock:
+            if knob is None:
+                self._voice_knob_overrides.pop(gen_type, None)
+            else:
+                bucket = self._voice_knob_overrides.get(gen_type)
+                if bucket:
+                    bucket.pop(knob, None)
+
+    def set_part_knob(
+        self, part_name: str, handle: str, knob: str, value,
+    ) -> None:
+        """Part-scope knob override on a single gen handle.
+
+        Persists across re-resolve via :meth:`_apply_knob_overrides`.
+        Like :meth:`set_voice_knob`, does NOT auto-restart — caller
+        schedules the bar-aligned re-play.
+        """
+        with self._lock:
+            self._part_knob_overrides.setdefault(part_name, {}).setdefault(
+                handle, {},
+            )[knob] = value
+
+    def unset_part_knob(
+        self, part_name: str, handle: str, knob: str | None = None,
+    ) -> None:
+        with self._lock:
+            part_bucket = self._part_knob_overrides.get(part_name, {})
+            if knob is None:
+                part_bucket.pop(handle, None)
+            else:
+                handle_bucket = part_bucket.get(handle)
+                if handle_bucket:
+                    handle_bucket.pop(knob, None)
 
     def unset_knob(self, handle: str, knob: str | None = None) -> str:
         """Clear an override. ``knob=None`` clears all overrides on
@@ -1684,6 +1744,25 @@ class Player:
             # frozen dataclass guard isn't tripped.
             for name, value in knobs.items():
                 gen.knobs[name] = value
+        # Per-voice (gen-type-level) knob overrides. Lives in
+        # ``resolved.voice_defaults[gen_type]`` so generators read them
+        # via the same path as a .sb-declared voice block. Mutated by
+        # the GUI drilldown when scope=voice.
+        for gen_type, knobs in self._voice_knob_overrides.items():
+            bucket = resolved.voice_defaults.setdefault(gen_type, {})
+            for name, value in knobs.items():
+                bucket[name] = value
+        # Per-(part, handle) knob overrides — written by the GUI
+        # drilldown when scope=part. Survives re-resolve so a
+        # bar-aligned restart picks them up.
+        for part_name, handle_map in self._part_knob_overrides.items():
+            part = resolved.parts.get(part_name)
+            if part is None:
+                continue
+            for handle, knobs in handle_map.items():
+                bucket = part.knob_overrides.setdefault(handle, {})
+                for name, value in knobs.items():
+                    bucket[name] = value
 
     def _load_setup_for(self, song_path: Path, file_ast):
         """Mirror cli._load_setup_for_song — load the song's referenced

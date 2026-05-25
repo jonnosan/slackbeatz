@@ -281,6 +281,27 @@ class ArrangementScreen(tk.Frame):
                 lambda _e, h=handle, p=first_active_part:
                     self._select_cell(h, p, scope="voice"),
             )
+
+        # Per-voice mute / solo toggles. Wired to the same
+        # Player.toggle_mute / toggle_solo APIs the Mixer screen uses
+        # — channel-based, so muting "lead" mutes ch1 entirely (any
+        # other voice sharing the channel goes silent too, which is
+        # the right behaviour for the slackbeatz channel model).
+        if gen.instrument is not None:
+            player = self.app.player
+            channel = gen.instrument.channel
+            muted = player is not None and channel in player._user_mutes
+            soloed = player is not None and channel in player._solo
+            m_var = tk.BooleanVar(value=muted)
+            s_var = tk.BooleanVar(value=soloed)
+            tk.Checkbutton(
+                row, text="M", variable=m_var,
+                command=lambda c=channel, v=m_var: self._on_mute_voice(c, v),
+            ).pack(side="left")
+            tk.Checkbutton(
+                row, text="S", variable=s_var,
+                command=lambda c=channel, v=s_var: self._on_solo_voice(c, v),
+            ).pack(side="left")
         for part_name in self._arrangement_unique(resolved):
             part = resolved.parts[part_name]
             active = handle in part.gen_handles
@@ -820,6 +841,72 @@ class ArrangementScreen(tk.Frame):
             self.app.player.jump_to_part_position(position)
         except Exception:
             pass
+
+    # ----- bar-aligned knob apply -------------------------------------
+
+    def schedule_bar_aligned_apply(self) -> None:
+        """Debounced re-play at the next bar boundary.
+
+        Called by the drilldown after a knob edit. The mutation
+        already lives in the resolved + Player's per-scope override
+        storage; we just need to trigger a re-resolve + restart so
+        the new value takes effect in the audio thread. Doing this
+        at the bar boundary avoids mid-phrase jolts.
+
+        If already scheduled, the existing pending call wins —
+        multiple knob edits within one bar collapse into a single
+        re-play at the next bar boundary.
+        """
+        p = self.app.player
+        if p is None or not p.is_playing:
+            return
+        if getattr(self, "_pending_bar_apply_id", None) is not None:
+            return  # debounced — wait for the in-flight one
+        try:
+            cur_tick = p.get_current_tick()
+            resolved = p.current_resolved
+            if resolved is None:
+                return
+            # Assume 4/4 (the dominant slackbeatz default). For
+            # mixed-meter songs the bar boundary will still land at a
+            # musical-feeling moment; not worth the complexity of
+            # walking the arrangement for the exact part's meter
+            # at the current playhead.
+            tpb = 96
+            ticks_per_bar = tpb * 4
+            next_bar_tick = ((cur_tick // ticks_per_bar) + 1) * ticks_per_bar
+            ticks_until = next_bar_tick - cur_tick
+            bps = resolved.tempo / 60.0
+            ms_until = max(20, int((ticks_until / tpb) * (1000.0 / bps)))
+            self._pending_bar_apply_tick = next_bar_tick
+            self._pending_bar_apply_id = self.after(
+                ms_until, self._do_bar_aligned_apply,
+            )
+        except Exception:
+            pass
+
+    def _do_bar_aligned_apply(self) -> None:
+        self._pending_bar_apply_id = None
+        p = self.app.player
+        if p is None or not p.is_playing:
+            return
+        try:
+            from_tick = getattr(self, "_pending_bar_apply_tick", 0) or 0
+            p.play(from_tick=from_tick)
+        except Exception:
+            pass
+
+    def _on_mute_voice(self, channel: int, var: tk.BooleanVar) -> None:
+        if self.app.player is None:
+            return
+        self.app.player.toggle_mute(channel)
+        var.set(channel in self.app.player._user_mutes)
+
+    def _on_solo_voice(self, channel: int, var: tk.BooleanVar) -> None:
+        if self.app.player is None:
+            return
+        self.app.player.toggle_solo(channel)
+        var.set(channel in self.app.player._solo)
 
     def _on_part_loop_toggle(self, position: int | None) -> None:
         """Click handler for the 🔁 button in a part column header.
