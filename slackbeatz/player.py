@@ -1064,6 +1064,74 @@ class Player:
                 p: dict(a) for p, a in self._part_algorithm_overrides.items()
             }
 
+    def set_part_style_shorthand(
+        self, part_name: str, style_name: Optional[str],
+    ) -> str:
+        """Apply a part-level ``style=NAME`` shorthand (#57).
+
+        For each gen handle in *part_name*, looks up the algorithm
+        the named composer style would assign to that handle's gen
+        type (via ``compose._STYLE_PROFILES``) and installs it as a
+        per-(part, handle) algorithm override. The DSL has the same
+        shorthand on the part header; this method gives the GUI a
+        one-shot expansion of it.
+
+        ``style_name=None`` clears every per-handle override on the
+        part — same effect as "(no override)" in the dropdown.
+        """
+        with self._lock:
+            resolved = self.current_resolved
+            if resolved is None:
+                return "no song loaded — load one first"
+            part = resolved.parts.get(part_name)
+            if part is None:
+                return f"unknown part {part_name!r}"
+            if style_name is None:
+                self._part_algorithm_overrides.pop(part_name, None)
+                return self._restart_after_change(
+                    f"cleared {part_name} style shorthand",
+                )
+            from slackbeatz.compose import _STYLE_PROFILES
+            profile = _STYLE_PROFILES.get(style_name)
+            if profile is None:
+                known = sorted(_STYLE_PROFILES)
+                return (
+                    f"error: unknown style {style_name!r} "
+                    f"(known: {known})"
+                )
+            # Build a quick gen_type → algorithm lookup for the style.
+            type_to_algo: dict[str, str] = {}
+            for spec in profile.gens:
+                type_to_algo.setdefault(spec.type_, spec.algorithm)
+            from slackbeatz.generators.registry import REGISTRY
+            bucket: dict[str, str] = {}
+            missing: list[str] = []
+            for handle in part.gen_handles:
+                gen = resolved.gens.get(handle)
+                if gen is None:
+                    continue
+                algorithm = type_to_algo.get(gen.type_)
+                if algorithm is None:
+                    # Style doesn't cover this gen type — leave the
+                    # handle on its song-level algorithm rather than
+                    # forcing a guess. Collect for the status line.
+                    missing.append(f"{handle}({gen.type_})")
+                    continue
+                if (gen.type_, algorithm) not in REGISTRY:
+                    # Defensive — would only fire if the style profile
+                    # named an algorithm that isn't registered.
+                    missing.append(f"{handle}({gen.type_})")
+                    continue
+                bucket[handle] = algorithm
+            if bucket:
+                self._part_algorithm_overrides[part_name] = bucket
+            else:
+                self._part_algorithm_overrides.pop(part_name, None)
+            suffix = f"  (skipped: {', '.join(missing)})" if missing else ""
+            return self._restart_after_change(
+                f"{part_name} style → {style_name}{suffix}",
+            )
+
     def set_arrangement(self, atoms: Optional[list[str]]) -> str:
         """Override the song's arrangement with *atoms* (a flat list of
         part names). ``atoms=None`` clears the override and the

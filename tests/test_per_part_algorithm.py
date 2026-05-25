@@ -271,3 +271,59 @@ def test_song_with_per_part_override_renders_without_crashing() -> None:
         if msg.type == "note_on" and msg.channel == 1  # 0-indexed ch 2
     ]
     assert bass_notes
+
+
+# --------------------------------------------------------------------------
+# Player.set_part_style_shorthand (#57) — bulk per-handle expansion
+# --------------------------------------------------------------------------
+
+def test_player_set_part_style_shorthand_expands_to_per_handle_overrides() -> None:
+    from pathlib import Path
+    from slackbeatz.player import Player
+
+    p = Player(port_name="test", setup_arg="gm")
+    p.load_file(Path("examples/goa.sb"))
+    p._resolve_current()
+    part_name = next(iter(p.current_resolved.parts.values())).name
+    assert p.get_part_algorithm_overrides() == {}
+
+    p.set_part_style_shorthand(part_name, "psytrance")
+    overrides = p.get_part_algorithm_overrides().get(part_name, {})
+    # Psytrance maps rhythm → gallop_kick, chords → psy_swell. The
+    # goa.sb intro has at least one of those handle types.
+    assert overrides, "shorthand should install at least one override"
+    for handle, algorithm in overrides.items():
+        gen = p.current_resolved.gens[handle]
+        # The algorithm must be registered for the handle's gen type.
+        assert (gen.type_, algorithm) in REGISTRY
+
+
+def test_player_set_part_style_shorthand_clear_drops_all_overrides() -> None:
+    from pathlib import Path
+    from slackbeatz.player import Player
+
+    p = Player(port_name="test", setup_arg="gm")
+    p.load_file(Path("examples/goa.sb"))
+    p._resolve_current()
+    part_name = next(iter(p.current_resolved.parts.values())).name
+
+    p.set_part_style_shorthand(part_name, "psytrance")
+    assert p.get_part_algorithm_overrides().get(part_name)
+
+    p.set_part_style_shorthand(part_name, None)
+    assert part_name not in p.get_part_algorithm_overrides()
+
+
+def test_player_set_part_style_shorthand_unknown_style_errors() -> None:
+    from pathlib import Path
+    from slackbeatz.player import Player
+
+    p = Player(port_name="test", setup_arg="gm")
+    p.load_file(Path("examples/goa.sb"))
+    p._resolve_current()
+    part_name = next(iter(p.current_resolved.parts.values())).name
+
+    result = p.set_part_style_shorthand(part_name, "nonesuch")
+    assert "unknown style 'nonesuch'" in result
+    # Nothing should have been written to the override map.
+    assert part_name not in p.get_part_algorithm_overrides()
