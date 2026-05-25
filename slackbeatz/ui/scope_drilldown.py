@@ -28,6 +28,7 @@ from typing import Callable, TYPE_CHECKING
 
 from slackbeatz.generators.feel import FEEL_KNOBS, FeelSpec
 from slackbeatz.generators.registry import REGISTRY
+from slackbeatz.ui.knob_specs import KnobSpec, get_knob_spec
 from slackbeatz.ui.tooltip import Tooltip
 
 if TYPE_CHECKING:
@@ -83,15 +84,49 @@ class ScopeDrilldown(tk.Frame):
         self._build()
 
     def _build(self) -> None:
-        # Algorithm picker.
-        algo_row = tk.Frame(self)
+        """Build the drilldown UI.
+
+        Layout: scrollable Canvas with collapsible sections inside.
+        Each section starts collapsed except Algorithm + Patch (the
+        most-immediate touch-points). User clicks section headers to
+        expand / collapse — keeps the drilldown compact for a quick
+        scan even with dozens of knobs in scope.
+        """
+        # Scrollable surface — Canvas + vertical Scrollbar wrapping a
+        # content Frame. Knob lists can run to 30+ rows on busy
+        # voices (Feel × Pattern × Patch); without this the lower
+        # rows fall off the bottom of the detail host.
+        canvas = tk.Canvas(self, highlightthickness=0)
+        canvas.pack(side="left", fill="both", expand=True)
+        sb = ttk.Scrollbar(self, orient="vertical", command=canvas.yview)
+        sb.pack(side="right", fill="y")
+        canvas.config(yscrollcommand=sb.set)
+        content = tk.Frame(canvas)
+        canvas_win = canvas.create_window((0, 0), window=content, anchor="nw")
+
+        def _on_content_resize(_e=None):
+            canvas.config(scrollregion=canvas.bbox("all"))
+        content.bind("<Configure>", _on_content_resize)
+
+        def _on_canvas_resize(_e):
+            canvas.itemconfigure(canvas_win, width=_e.width)
+        canvas.bind("<Configure>", _on_canvas_resize)
+
+        # Mouse-wheel: route platform-specific wheel events to the
+        # canvas. Different OSes deliver different event names.
+        def _on_wheel(e):
+            delta = -1 if (getattr(e, "delta", 0) > 0 or getattr(e, "num", 0) == 4) else 1
+            canvas.yview_scroll(delta, "units")
+        for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            canvas.bind_all(seq, _on_wheel, add="+")
+
+        # ---- Algorithm section (always-expanded; primary control) ----
+        algo_sec = self._make_section(content, "Algorithm", expanded=True)
+        algo_row = tk.Frame(algo_sec)
         algo_row.pack(fill="x", padx=8, pady=(6, 4))
-        tk.Label(algo_row, text="Algorithm:",
-                 font=("TkDefaultFont", 10, "bold")).pack(side="left")
         current_algo = self.part.algorithm_overrides.get(
             self.voice_handle, self.gen.style,
         )
-        # Available algorithms for this voice type.
         choices = sorted(a for (t, a) in REGISTRY if t == self.gen.type_)
         self.algo_var = tk.StringVar(value=current_algo)
         combo = ttk.Combobox(
@@ -100,43 +135,77 @@ class ScopeDrilldown(tk.Frame):
         )
         combo.pack(side="left", padx=8)
         combo.bind("<<ComboboxSelected>>", lambda _e: self._on_algo_change())
-        # Scope dot for algorithm override.
         algo_dot = self._scope_dot_for(
             song_value=self.gen.style,
-            voice_value=None,  # algorithm isn't a knob; voice-block doesn't carry it
+            voice_value=None,
             part_value=self.part.algorithm_overrides.get(self.voice_handle),
         )
         tk.Label(algo_row, text=algo_dot, fg="orange",
                  font=("TkDefaultFont", 10, "bold")).pack(side="left", padx=4)
 
-        # Patch picker. Surfaces the PRESET_VARIANTS dropdown for
-        # (role, algorithm) pairs that have hand-tuned Surge variants.
-        # The "patch" knob is just an int index — composer hash-drives
-        # it for warm_analogue but the user can override here. Silent
-        # no-op for voices without registered variants.
-        self._build_patch_row(current_algo)
+        # ---- Patch section (expanded — high-touch sound design) ----
+        patch_sec = self._make_section(content, "Patch + FX", expanded=True)
+        self._build_patch_row(current_algo, parent=patch_sec)
 
-        # Pattern tier.
-        ttk.Separator(self, orient="horizontal").pack(fill="x", pady=4)
-        tk.Label(self, text="Pattern (algorithm-specific):", anchor="w",
-                 font=("TkDefaultFont", 10, "bold")).pack(fill="x", padx=8)
-        pattern_frame = tk.Frame(self)
+        # ---- Pattern section (collapsed by default — gen-specific knobs) ----
+        pattern_sec = self._make_section(content, "Pattern (gen-specific)", expanded=False)
+        pattern_frame = tk.Frame(pattern_sec)
         pattern_frame.pack(fill="x", padx=16)
         for knob_name in _PATTERN_KNOB_HINTS.get(self.gen.type_, ()):
             self._build_knob_row(pattern_frame, knob_name, tier="pattern")
 
-        # Feel tier.
-        ttk.Separator(self, orient="horizontal").pack(fill="x", pady=4)
-        tk.Label(self, text="Feel (universal):", anchor="w",
-                 font=("TkDefaultFont", 10, "bold")).pack(fill="x", padx=8)
-        feel_frame = tk.Frame(self)
+        # ---- Feel section (collapsed by default — universal knobs) ----
+        feel_sec = self._make_section(content, "Feel (universal)", expanded=False)
+        feel_frame = tk.Frame(feel_sec)
         feel_frame.pack(fill="x", padx=16)
         for spec in FEEL_KNOBS:
-            self._build_knob_row(feel_frame, spec.name, tier="feel", spec=spec)
+            self._build_knob_row(feel_frame, spec.name, tier="feel", feel_spec=spec)
+
+    # ----- collapsible section helper ---------------------------------
+
+    def _make_section(self, parent: tk.Misc, title: str, *, expanded: bool) -> tk.Frame:
+        """Build a collapsible section + return its body Frame.
+
+        Header row shows ``▼ title`` when expanded, ``▶ title`` when
+        collapsed. Clicking the header toggles. Body Frame is what
+        the caller packs widgets into; it's hidden when collapsed by
+        ``pack_forget`` (and re-packed on expand).
+        """
+        wrap = tk.Frame(parent, relief="ridge", borderwidth=1)
+        wrap.pack(fill="x", padx=8, pady=2)
+        header = tk.Frame(wrap, bg="#e8e8e8")
+        header.pack(fill="x")
+        arrow_var = tk.StringVar(value="▼" if expanded else "▶")
+        label = tk.Label(
+            header, textvariable=arrow_var,
+            font=("TkDefaultFont", 10, "bold"), bg="#e8e8e8",
+            cursor="hand2", width=2,
+        )
+        label.pack(side="left", padx=4)
+        title_label = tk.Label(
+            header, text=title, font=("TkDefaultFont", 10, "bold"),
+            bg="#e8e8e8", cursor="hand2",
+        )
+        title_label.pack(side="left", padx=2)
+
+        body = tk.Frame(wrap)
+        if expanded:
+            body.pack(fill="x")
+
+        def _toggle(_e=None):
+            if body.winfo_ismapped():
+                body.pack_forget()
+                arrow_var.set("▶")
+            else:
+                body.pack(fill="x")
+                arrow_var.set("▼")
+        for w in (label, title_label, header):
+            w.bind("<Button-1>", _toggle)
+        return body
 
     # ----- patch picker ------------------------------------------------
 
-    def _build_patch_row(self, current_algo: str) -> None:
+    def _build_patch_row(self, current_algo: str, *, parent: tk.Misc | None = None) -> None:
         """Surge factory-patch picker for this voice's channel.
 
         Lists every ``.fxp`` under the role's factory subdirectory
@@ -168,7 +237,8 @@ class ScopeDrilldown(tk.Frame):
         )
         category = patch_category_for_role(role)
 
-        patch_row = tk.Frame(self)
+        patch_parent = parent if parent is not None else self
+        patch_row = tk.Frame(patch_parent)
         patch_row.pack(fill="x", padx=8, pady=(2, 4))
         tk.Label(patch_row, text="Patch:",
                  font=("TkDefaultFont", 10, "bold")).pack(side="left")
@@ -279,14 +349,27 @@ class ScopeDrilldown(tk.Frame):
         knob_name: str,
         *,
         tier: str,
-        spec: FeelSpec | None = None,
+        feel_spec: FeelSpec | None = None,
     ) -> None:
-        """One row: label + slider (or read-only label) + value + scope dot + revert."""
+        """One row: label + smart-controller + effective-value badge +
+        scope dot + revert.
+
+        Controller dispatch (per ``ui.knob_specs.get_knob_spec``):
+        * bool → ``Checkbutton``
+        * enum → readonly ``Combobox``
+        * float / int → ``Scale`` slider
+        * unknown → small effective-value Label + Edit dialog
+
+        The effective value is always rendered as a badge to the right
+        of the controller. Inherited values render italic-gray;
+        set-at-current-scope values render bold-black — so the user
+        can see at a glance whether a knob is locally overridden vs
+        cascading down from voice / song / engine default.
+        """
         row = tk.Frame(parent)
         row.pack(fill="x", pady=1)
         tk.Label(row, text=knob_name, width=16, anchor="w").pack(side="left")
 
-        # Determine effective value + scope.
         song_val = self.gen.knobs.get(knob_name)
         voice_val = self.resolved.voice_defaults.get(self.gen.type_, {}).get(knob_name)
         part_val = self.part.knob_overrides.get(self.voice_handle, {}).get(knob_name)
@@ -294,32 +377,21 @@ class ScopeDrilldown(tk.Frame):
             voice_val if voice_val is not None else song_val
         )
 
-        # Slider: Feel knobs have specs (low/high), pattern knobs we
-        # don't always know the range for — show a numeric entry as
-        # fallback. Boolean knobs (voice_lead, walking) get a
-        # checkbox-equivalent label.
+        # Resolve the spec — feel knobs come pre-specced; pattern
+        # knobs go through the central KNOB_SPECS table.
+        spec = self._unified_spec(knob_name, feel_spec)
         ctrl_frame = tk.Frame(row)
         ctrl_frame.pack(side="left", padx=4)
+
         if spec is not None:
-            # Feel knob with a known range — render slider.
-            current = float(effective) if effective is not None else float(spec.default)
-            slider = tk.Scale(
-                ctrl_frame, from_=spec.low, to=spec.high,
-                resolution=0.01 if isinstance(spec.high, float) else 1,
-                orient="horizontal", length=180, showvalue=True,
-            )
-            slider.set(current)
-            slider.pack(side="left")
-            slider.bind(
-                "<ButtonRelease-1>",
-                lambda _e, n=knob_name, s=slider: self._on_knob_change(n, s.get()),
+            self._build_controller(
+                ctrl_frame, knob_name, spec, effective,
             )
         else:
-            # Pattern knob — read-only value display + an Edit button
-            # that opens a one-shot text-entry dialog. Keeps the row
-            # height predictable when we don't know the range.
+            # Unknown spec — fall back to read-only Label + Edit button.
             val_label = tk.Label(
-                ctrl_frame, text=str(effective) if effective is not None else "(default)",
+                ctrl_frame,
+                text=str(effective) if effective is not None else "(default)",
                 width=18, anchor="w", relief="sunken", bg="white",
             )
             val_label.pack(side="left")
@@ -329,21 +401,118 @@ class ScopeDrilldown(tk.Frame):
                     self._open_knob_editor(n, e),
             ).pack(side="left", padx=4)
 
-        # Scope dot with hover tooltip showing the cascade chain.
+        # Effective-value badge — always visible, distinguishes
+        # set-at-current-scope (bold black) vs inherited (italic gray).
+        set_here = self._is_set_at_current_scope(part_val, voice_val, song_val)
+        eff_text = "(default)" if effective is None else str(effective)
+        if set_here:
+            badge = tk.Label(
+                row, text=f"= {eff_text}", fg="black",
+                font=("TkDefaultFont", 9, "bold"), width=14, anchor="w",
+            )
+        else:
+            badge = tk.Label(
+                row, text=f"= {eff_text}", fg="gray",
+                font=("TkDefaultFont", 9, "italic"), width=14, anchor="w",
+            )
+        badge.pack(side="left", padx=4)
+
         dot_text, dot_color = self._scope_dot_string(part_val, voice_val, song_val)
         dot_label = tk.Label(row, text=dot_text, fg=dot_color, width=10, anchor="w")
-        dot_label.pack(side="left", padx=8)
+        dot_label.pack(side="left", padx=4)
         tooltip_text = self._cascade_tooltip(
             knob_name, part_val, voice_val, song_val,
         )
         if tooltip_text:
             Tooltip(dot_label, tooltip_text)
 
-        # Revert button.
         ttk.Button(
             row, text="↺", width=2,
             command=lambda n=knob_name: self._on_revert(n),
         ).pack(side="left")
+
+    # ----- spec unification + controller dispatch ---------------------
+
+    def _unified_spec(self, knob_name: str, feel_spec: FeelSpec | None):
+        """Return a uniform spec dict for *knob_name*.
+
+        Feel knobs come with their own FeelSpec; pattern knobs go
+        through KNOB_SPECS. Returns None when no spec is registered
+        (caller falls back to the text-entry dialog).
+
+        Output shape: a :class:`KnobSpec` so the dispatcher only
+        needs to handle one type.
+        """
+        if feel_spec is not None:
+            kind = "float" if isinstance(feel_spec.high, float) else "int"
+            return KnobSpec(
+                kind=kind,
+                low=feel_spec.low, high=feel_spec.high,
+                step=0.01 if kind == "float" else 1,
+                default=feel_spec.default,
+            )
+        return get_knob_spec(knob_name, self.gen.type_)
+
+    def _build_controller(
+        self, parent: tk.Misc, knob_name: str, spec: KnobSpec, current,
+    ) -> None:
+        """Render the right Tk widget for *spec.kind*."""
+        if spec.kind == "bool":
+            var = tk.BooleanVar(value=bool(current) if current is not None else bool(spec.default))
+            tk.Checkbutton(
+                parent, variable=var,
+                command=lambda n=knob_name, v=var: self._on_knob_change(n, bool(v.get())),
+            ).pack(side="left")
+            return
+        if spec.kind == "enum":
+            choices = list(spec.choices or ())
+            cur_str = str(current) if current is not None else str(spec.default)
+            if cur_str not in choices and "(none)" in choices:
+                cur_str = "(none)"
+            elif cur_str not in choices and choices:
+                cur_str = choices[0]
+            var = tk.StringVar(value=cur_str)
+            combo = ttk.Combobox(
+                parent, textvariable=var, state="readonly",
+                values=choices, width=18,
+            )
+            combo.pack(side="left")
+            def _on_pick(_e, n=knob_name, v=var):
+                picked = v.get()
+                # "(none)" sentinel → revert (clear override).
+                if picked == "(none)":
+                    self._on_revert(n)
+                else:
+                    self._on_knob_change(n, picked)
+            combo.bind("<<ComboboxSelected>>", _on_pick)
+            return
+        # Numeric — Scale slider.
+        is_float = spec.kind == "float"
+        try:
+            cur_val = float(current) if current is not None else float(spec.default or 0)
+        except (TypeError, ValueError):
+            cur_val = float(spec.default or 0)
+        slider = tk.Scale(
+            parent, from_=spec.low, to=spec.high,
+            resolution=spec.step or (0.01 if is_float else 1),
+            orient="horizontal", length=180, showvalue=True,
+        )
+        slider.set(cur_val)
+        slider.pack(side="left")
+        slider.bind(
+            "<ButtonRelease-1>",
+            lambda _e, n=knob_name, s=slider, f=is_float:
+                self._on_knob_change(n, float(s.get()) if f else int(s.get())),
+        )
+
+    def _is_set_at_current_scope(self, part_val, voice_val, song_val) -> bool:
+        """True iff the EFFECTIVE value at the user's current scope
+        is set at THAT scope (vs cascading down from a wider scope)."""
+        if self.scope == "part":
+            return part_val is not None
+        if self.scope == "voice":
+            return voice_val is not None
+        return song_val is not None
 
     # ----- effective-value + scope helpers ----------------------------
 
