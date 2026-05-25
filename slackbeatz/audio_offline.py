@@ -718,7 +718,7 @@ def render_song_with_surge(
     #            (was inaudible).
     role_gain: dict[str, float] = {
         "drums": 2.0,
-        "bass": 1.0,
+        "bass": 1.6,
         "lead": 1.5,
         "pad": 0.75,
         "candy": 0.55,
