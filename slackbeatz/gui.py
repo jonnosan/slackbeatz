@@ -2061,6 +2061,41 @@ def _build_builder_tab(parent, *, player, _var, ttk, tk) -> None:
                 ttk.Separator(container, orient="horizontal").pack(
                     fill="x", pady=(6, 2),
                 )
+                # #57 — per-part `style=NAME` shorthand. Picking one
+                # of the composer styles bulk-sets per-handle overrides
+                # for every gen in the part. "(no override)" clears
+                # the whole bucket and the per-voice rows revert to
+                # the song-level algorithm for each handle. The
+                # per-voice dropdowns below can still individually
+                # override any handle after a style is applied.
+                from slackbeatz.compose import _STYLE_PROFILES
+                style_row = ttk.Frame(container)
+                style_row.pack(fill="x", pady=(2, 1))
+                ttk.Label(
+                    style_row, text="style", width=14, anchor="w",
+                    foreground="#666",
+                ).pack(side="left")
+                style_choices = ["(no override)"] + sorted(_STYLE_PROFILES)
+                sv = tk.StringVar(value="(no override)")
+                style_cb = ttk.Combobox(
+                    style_row, textvariable=sv, values=style_choices,
+                    state="readonly", width=18,
+                )
+                style_cb.pack(side="left")
+
+                def _on_style_shorthand(_event, sv=sv):
+                    chosen = sv.get()
+                    if chosen == "(no override)":
+                        player.set_part_style_shorthand(part_name, None)
+                    else:
+                        player.set_part_style_shorthand(part_name, chosen)
+                    # Re-render this attribute editor in-place so the
+                    # per-voice dropdowns below reflect the new
+                    # selections the shorthand just installed.
+                    _populate_attrs(container, part, part_name, overrides)
+
+                style_cb.bind("<<ComboboxSelected>>", _on_style_shorthand)
+
                 ttk.Label(
                     container, text="per-voice algorithm",
                     foreground="#666",
