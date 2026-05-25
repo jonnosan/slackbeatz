@@ -584,6 +584,44 @@ def test_inject_part_algorithm_overrides_empty_is_noop() -> None:
     assert _inject_part_algorithm_overrides(src, {}) == src
 
 
+def test_save_state_round_trip_preserves_part_knob_overrides(tmp_path) -> None:
+    """Per-part knob overrides come from the .sb source text. The
+    file-loaded save_state path copies the source verbatim, so
+    handwritten or GUI-emitted knob overrides round-trip naturally.
+    Confirms via parse → resolve → save → reparse → resolve.
+    """
+    from pathlib import Path
+    from slackbeatz.dsl.parser import parse_file
+    from slackbeatz.player import Player
+    from slackbeatz.setup.loader import load_setup
+    from slackbeatz.setup.resolve import resolve_song
+
+    src_path = tmp_path / "src.sb"
+    src_path.write_text(
+        'song "S"\n'
+        '  tempo 128\n'
+        '  key Am\n'
+        'gen bass bass rolling\n'
+        'voice bass\n'
+        '  swing=0.6\n'
+        'part p 1\n'
+        '  bass humanize=4\n'
+        'play p\n'
+    )
+
+    p = Player(port_name="test", setup_arg="gm")
+    p.load_file(src_path)
+
+    out_path = tmp_path / "round_trip.sb"
+    status = p.save_state(out_path)
+    assert "wrote" in status
+
+    fa = parse_file(out_path)
+    resolved = resolve_song(fa.song, load_setup("gm"))
+    assert resolved.voice_defaults == {"bass": {"swing": 0.6}}
+    assert resolved.parts["p"].knob_overrides == {"bass": {"humanize": 4}}
+
+
 def test_save_state_round_trip_re_loads_with_overrides_intact(tmp_path) -> None:
     """End-to-end: set overrides via the Player, save_state, reload
     from disk, confirm the resolved song carries the same overrides."""
