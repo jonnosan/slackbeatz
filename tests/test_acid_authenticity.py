@@ -49,31 +49,40 @@ def test_acid_composition_sets_sh101_arp_knobs() -> None:
 
 
 def test_acid_composition_sets_new_bass_knobs() -> None:
-    """Iteration 1.7 slowed the bass filter LFO — cycle=3 (was 6)."""
+    """Iteration 1.8: cycle=0 disables the bass's built-in CC74 LFO
+    so the song-wide sawtooth apply-LFO is the sole CC74 driver
+    (two sources fighting on the same CC was causing chaos)."""
     sb = compose_from_text("Acid trax forever - take 2")
     bass_line = next(l for l in sb.splitlines() if l.startswith("gen bass"))
-    for knob in ("cycle=3", "resonance=120", "bend=120",
+    for knob in ("cycle=0", "resonance=120", "bend=120",
                  "intensity=1.0", "slide_prob=0.35", "evolution=0.4"):
         assert knob in bass_line, f"missing {knob} in: {bass_line}"
 
 
-def test_acid_composition_lfo_period_slowed_to_8_bars() -> None:
-    """Iteration 1.7 slowed the top-level acid_filter LFO — bars=8 (was 4)."""
+def test_acid_composition_lfo_period_is_song_length() -> None:
+    """Iteration 1.8: LFO period = 160 bars = whole song length =
+    one continuous filter ramp from start to end."""
     sb = compose_from_text("Acid trax forever - take 2")
-    assert "lfo acid_filter shape=sawtooth bars=8 height=1.0" in sb
+    assert "lfo acid_filter shape=sawtooth bars=160 height=0.7" in sb
 
 
 def test_acid_composition_declares_top_level_lfo() -> None:
-    """Iteration 1.7 slowed the LFO period to 8 bars."""
+    """Iteration 1.8: LFO is a whole-song sawtooth (bars=160) so the
+    filter ramps continuously from closed at song-start to open at
+    song-end. height=0.7 keeps bass audible during the intro
+    (CC74 minimum ~19, not 0)."""
     sb = compose_from_text("Acid trax forever - take 2")
-    assert "lfo acid_filter shape=sawtooth bars=8 height=1.0" in sb
+    assert "lfo acid_filter shape=sawtooth bars=160 height=0.7" in sb
 
 
-def test_acid_composition_applies_lfo_in_drop_parts_only() -> None:
+def test_acid_composition_applies_lfo_in_every_rendered_part() -> None:
+    """Iteration 1.8: apply line on every rendered part (intro / main
+    / build / drop / outro) so the song-wide ramp is continuous.
+    The acid arrangement renders 7 parts (intro main build drop
+    main2 build2 drop2) — expect 7 apply lines."""
     sb = compose_from_text("Acid trax forever - take 2")
-    # The acid arrangement has 2 drops; expect 2 apply lines.
     apply_count = sb.count("apply acid_filter target=midi:ch:2/cc:74")
-    assert apply_count == 2
+    assert apply_count == 7
 
 
 def test_acid_composition_parses_and_resolves_cleanly() -> None:

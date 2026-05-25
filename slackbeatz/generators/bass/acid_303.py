@@ -76,6 +76,13 @@ class BassAcid303(Generator):
         # Filter LFO cycles across the part. 2 = filter opens once and
         # closes once per part-instance, the classic "303 evolves over
         # the bar count" feel.
+        # ``cycle=0`` disables the built-in CC74/CC71 LFO emission
+        # entirely — use when an external `apply lfo target=midi:ch:N/cc:74`
+        # is driving the cutoff instead and we don't want the two
+        # sources fighting in the rendered MIDI stream (whichever
+        # event hits later wins, giving chaotic values). Default 2
+        # preserves the historical sine-LFO character for hand-written
+        # .sb files that set this gen explicitly.
         lfo_cycles = self.knob_int("cycle", 2)
         resonance_ceiling = self.knob_int("resonance", 100)
         bend_amount = self.knob_int("bend", 80)
@@ -109,9 +116,12 @@ class BassAcid303(Generator):
 
         # -------- CC modulation across the whole part ---------------
         # CC 74 cutoff + CC 71 resonance LFO. Step every quarter beat
-        # for smooth filter motion.
+        # for smooth filter motion. Skip entirely when ``cycle=0`` —
+        # the song-wide LFO from a top-level ``lfo`` + part ``apply``
+        # is driving the cutoff and we don't want this built-in
+        # source competing.
         cc_step_ticks = ctx.ppq  # one CC event per quarter note
-        n_cc = ctx.bars * 4
+        n_cc = ctx.bars * 4 if lfo_cycles > 0 else 0
         cycle_ticks = max(1, total_ticks // max(1, lfo_cycles))
         phase = ctx.rng.random() * math.tau
         for i in range(n_cc):

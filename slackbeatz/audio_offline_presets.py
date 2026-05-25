@@ -59,7 +59,7 @@ from __future__ import annotations
 # silently fails and yields Surge's init state — same as before this
 # module landed).
 ROLE_STYLE_PRESETS: dict[tuple[str, str], tuple[tuple[str, float], ...]] = {
-    # ----- acid bass: classic 303 squelch -----
+    # ----- acid bass: classic 303 squelch + dotted-1/8 delay -----
     ("bass", "acid_303"): (
         # Filter — classic ladder, high resonance, env opens it on each note
         ("A Filter 1 Type", 0.1),            # LP Legacy Ladder
@@ -74,6 +74,17 @@ ROLE_STYLE_PRESETS: dict[tuple[str, str], tuple[tuple[str, float], ...]] = {
         ("A Filter EG Release", 0.15),
         # Filter 2 — off (single-filter character)
         ("A Filter 2 Type", 0.0),
+        # Iteration 1.8 — add a dotted-1/8-flavoured delay on FX A1.
+        # Classic acid-house move: the 303 line ghosts onto its own
+        # offbeat, creating perceived complexity without changing the
+        # generator output.
+        ("FX A1 FX Type", 0.0251),            # Delay
+        ("FX A1 Delay Time - Left", 0.5),     # ~350 ms ≈ dotted 1/8 at 124 BPM
+        ("FX A1 Delay Time - Right", 0.5),
+        ("FX A1 Feedback/EQ - Feedback", 0.45),  # 45% — a few audible echoes
+        ("FX A1 Feedback/EQ - Crossfeed", 0.20), # subtle stereo bounce
+        ("FX A1 Feedback/EQ - High Cut", 0.65),  # roll off the echoes' top
+        ("FX A1 Output - Mix", 0.30),            # 30% wet — present but the dry stays focal
     ),
     # ----- acid chord stab (LEGACY): kept so manual .sb files using
     # chords:acid_stab still render correctly. The acid style profile
@@ -107,22 +118,29 @@ ROLE_STYLE_PRESETS: dict[tuple[str, str], tuple[tuple[str, float], ...]] = {
         ("A Filter 2 Type", 0.0),
     ),
     # ----- sh101_arp (iteration 1.7): pure SH-101 character -----
-    # Slightly brighter cutoff than acid_lead (the SH-101 was always
-    # a touch sharper than the 303's filter). Strong envelope mod so
-    # each note has the "blooming bleep" of an SH-101 fed by gated
-    # clock pulses. Long-ish release so notes with bigger trigger
-    # gaps ring out.
+    # 1.7 → 1.8: brightened cutoff (was 0.55, now 0.70 ≈ 2.5 kHz) so
+    # the lead actually cuts through the bass + drums mix.
+    # Added a short Delay on FX A1 to give the lead some space + width
+    # (helps the line stand out without raising velocity further).
     ("lead", "sh101_arp"): (
         ("A Filter 1 Type", 0.1),            # LP Legacy Ladder
-        ("A Filter 1 Cutoff", 0.55),         # ~800 Hz — a bit brighter than acid_lead
-        ("A Filter 1 Resonance", 0.60),      # SH-101 characteristic edge
-        ("A Filter 1 FEG Mod Amount", 0.75), # very strong env per note
+        ("A Filter 1 Cutoff", 0.70),         # brighter — sits above the bass
+        ("A Filter 1 Resonance", 0.55),      # less res than bass (less screech)
+        ("A Filter 1 FEG Mod Amount", 0.75), # strong env per note
         ("A Filter 1 Keytrack", 0.50),
         ("A Filter EG Attack", 0.0),
         ("A Filter EG Decay", 0.30),
-        ("A Filter EG Sustain", 0.25),
+        ("A Filter EG Sustain", 0.30),
         ("A Filter EG Release", 0.25),
         ("A Filter 2 Type", 0.0),
+        # Short delay — 1/16 note at 124 BPM ~ 120 ms. Subtle, just
+        # spreads the lead into stereo space.
+        ("FX A1 FX Type", 0.0251),
+        ("FX A1 Delay Time - Left", 0.32),    # ~120 ms
+        ("FX A1 Delay Time - Right", 0.35),   # slightly different = stereo spread
+        ("FX A1 Feedback/EQ - Feedback", 0.30),
+        ("FX A1 Feedback/EQ - High Cut", 0.55),
+        ("FX A1 Output - Mix", 0.22),
     ),
     # ----- acid candy/sweep: noise-y riser texture -----
     # The candy channel runs `acid_sweep` which emits a short noise

@@ -326,10 +326,18 @@ def render_events(song: ResolvedSong) -> list[tuple[int, mido.Message]]:
                 ))
                 local_tick = 0
                 while local_tick < part_ticks:
-                    phase = (local_tick % period_ticks) / period_ticks
+                    # Iteration 1.8 — phase computed from ABSOLUTE
+                    # song position (cursor + local_tick) instead of
+                    # part-local time. This lets a long-period LFO
+                    # (e.g. bars=160 for a whole-song ramp) progress
+                    # continuously across part boundaries instead of
+                    # resetting every part. Short-period LFOs still
+                    # behave identically because their cycle is much
+                    # shorter than any single part.
+                    abs_tick = cursor + local_tick
+                    phase = (abs_tick % period_ticks) / period_ticks
                     from slackbeatz.model.lfo import lfo_value_at
                     value = lfo_value_at(spec, phase, lfo_rng)
-                    abs_tick = cursor + local_tick
                     msg = _lfo_event_for_target(app.target, value)
                     if msg is not None:
                         bucket.append((abs_tick, 0, msg))

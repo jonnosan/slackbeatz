@@ -247,11 +247,15 @@ _STYLE_PROFILES: dict[str, StyleProfile] = {
             GenSpec("clap",  "rhythm", "four_floor_house"),
             GenSpec("hats",  "rhythm", "four_floor_house"),
             GenSpec("bass",  "bass",   "acid_303", knob_defaults={
-                # Iteration 1.7 — slow the built-in filter LFO (was
-                # cycle=6 → 6 sweeps per part, too fast). cycle=3 =
-                # 3 sweeps across a 32-bar drop ≈ one full
-                # breath every ~10 bars.
-                "cycle": 3,
+                # Iteration 1.8 — cycle=0 disables the bass's built-in
+                # CC74/CC71 sine LFO. Two LFO sources on the same CC
+                # was causing chaos (whichever event hit later won).
+                # The song-wide sawtooth (`apply acid_filter`) is now
+                # the sole CC74 driver — one slow ramp from filter-
+                # closed at song-start to filter-open at song-end.
+                # Per-note motion still comes from the Surge preset's
+                # filter envelope (FEG Mod Amount 0.65).
+                "cycle": 0,
                 "resonance": 120,
                 "bend": 120,
                 "intensity": 1.0,
@@ -394,26 +398,36 @@ _NOTE_NAMES = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "G#", "A", "Bb", "B"]
 def _emit_style_lfos(lines: list[str], style: str) -> None:
     """Append top-level ``lfo NAME ...`` declarations the style needs.
 
-    Today only ``acid`` carries LFO usage — a sawtooth ramp on the
-    bass filter cutoff during drop sections, combined with the
-    built-in sine sweep inside the ``acid_303`` algorithm.
-
-    Iteration 1.7: bumped bars=4 → bars=8 (slower sawtooth ramp —
-    one ramp every 8 bars = every two 4-bar phrases). The bass also
-    slowed its built-in sine (cycle=3 vs 6), so the two filter
-    layers combine into a slower, more deliberate motion.
+    Iteration 1.8 — replaced the per-drop sawtooth (bars=8) with a
+    much longer sawtooth (bars=160 ≈ whole song at the acid arrangement's
+    160 bars). Combined with the scheduler's new absolute-song
+    phase calculation, this gives ONE continuous ramp from filter-
+    closed at song-start to filter-open at song-end — the "starts low
+    and opens up gradually" character classic acid tracks have.
+    Applied to every part role (not just drops) so the ramp is
+    continuous.
     """
     if style == "acid":
-        lines.append("lfo acid_filter shape=sawtooth bars=8 height=1.0")
+        # 160 bars matches the acid arrangement's total length;
+        # phase wraps cleanly at the end. height=0.7 (not 1.0) so
+        # CC74 ramps 0.15→0.85 (≈19→108) — bass stays audible
+        # during the intro (closed-but-not-silent filter) and
+        # never hits the brightest extreme even at song end.
+        lines.append("lfo acid_filter shape=sawtooth bars=160 height=0.7")
 
 
 # Per-(style, role) `apply` lines — the part loop in render_sb()
 # inserts these as indented children of the part header. Keyed by
-# part-role so the same LFO can attach selectively (e.g. only in
-# `drop` parts, not `intro` or `break`).
+# part-role so the same LFO can attach selectively to certain
+# section types if desired. For the acid whole-song ramp, every
+# rendered role gets the apply so the ramp progresses throughout.
 _STYLE_APPLY_LINES: dict[str, dict[str, tuple[str, ...]]] = {
     "acid": {
-        "drop": ("apply acid_filter target=midi:ch:2/cc:74",),
+        "intro": ("apply acid_filter target=midi:ch:2/cc:74",),
+        "main":  ("apply acid_filter target=midi:ch:2/cc:74",),
+        "build": ("apply acid_filter target=midi:ch:2/cc:74",),
+        "drop":  ("apply acid_filter target=midi:ch:2/cc:74",),
+        "outro": ("apply acid_filter target=midi:ch:2/cc:74",),
     },
 }
 

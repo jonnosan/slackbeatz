@@ -47,13 +47,33 @@ def test_sine_lfo_centres_on_offset() -> None:
 
 
 def test_sawtooth_ramps_linearly() -> None:
+    """Sawtooth at height=1.0 should ramp the full [0, 1] range
+    (iteration 1.8 fix — pre-fix sawtooth was clamped to [0, 0.5]
+    because default offset was 0.0 not 0.5)."""
     spec = LfoSpec(name="x", shape="sawtooth", period_bars=4, height=1.0)
-    assert lfo_value_at(spec, 0.0) == 0.0  # offset default 0 for sawtooth
-    # height=1.0 swing around centre 0 means at phase 1 raw=1 → 0 + 0.5*1 = 0.5
-    # The exact value isn't important; just sanity that the ramp moves.
-    early = lfo_value_at(spec, 0.1)
-    late = lfo_value_at(spec, 0.9)
-    assert late > early
+    # Phase 0 → 0, phase 0.5 → 0.5, phase 1 → 1 (within rounding).
+    assert abs(lfo_value_at(spec, 0.0) - 0.0) < 1e-6
+    assert abs(lfo_value_at(spec, 0.5) - 0.5) < 1e-6
+    # Phase ~0.999 should be near 1; exactly 1 wraps back to 0 per spec.
+    assert lfo_value_at(spec, 0.999) > 0.99
+
+
+def test_sawtooth_height_half_centres_around_offset() -> None:
+    """Sawtooth at offset=0.5 height=0.5 should ramp [0.25, 0.75] —
+    a half-range sweep centred on the middle."""
+    spec = LfoSpec(name="x", shape="sawtooth", period_bars=4,
+                   height=0.5, offset=0.5)
+    assert abs(lfo_value_at(spec, 0.0) - 0.25) < 1e-6
+    assert abs(lfo_value_at(spec, 0.5) - 0.50) < 1e-6
+    assert lfo_value_at(spec, 0.999) > 0.74
+
+
+def test_sawtooth_offset_shifts_range() -> None:
+    """Sawtooth at offset=0.3 height=0.4 should ramp [0.1, 0.5]."""
+    spec = LfoSpec(name="x", shape="sawtooth", period_bars=4,
+                   height=0.4, offset=0.3)
+    assert abs(lfo_value_at(spec, 0.0) - 0.1) < 1e-6
+    assert lfo_value_at(spec, 0.999) > 0.49
 
 
 def test_square_uses_width_as_duty_cycle() -> None:

@@ -55,9 +55,13 @@ class LfoSpec:
     def effective_offset(self) -> float:
         if self.offset is not None:
             return self.offset
-        if self.shape in ("sine", "square", "pulse"):
-            return 0.5
-        return 0.0
+        # All shapes default to 0.5 centre so a height=1.0 LFO maps
+        # to the full [0,1] target range without clamping. (Pre-1.8
+        # sawtooth + noise defaulted to 0.0 which combined with the
+        # `centre + (raw-0.5)*height` formula clamped the first half
+        # of the ramp to 0 — i.e. a "0→1 sawtooth" actually emitted
+        # 0,0,0,0,0,0.1,0.2,0.3,0.4,0.5 across phase 0→1.)
+        return 0.5
 
 
 @dataclass(frozen=True)
@@ -114,15 +118,15 @@ def lfo_value_at(spec: LfoSpec, phase: float, rng: random.Random | None = None) 
     else:  # pragma: no cover — keeps mypy quiet
         raw = 0.0
 
-    # Apply height around the shape's natural centre.
+    # Apply height around the shape's natural centre. All shapes use
+    # the same swing-around-centre formula now that every shape
+    # defaults to centre=0.5 — for `raw` in [0,1], output is
+    # `centre + (raw - 0.5) * height` which maps to [centre-h/2,
+    # centre+h/2]. A height=1.0 LFO with offset=0.5 spans the full
+    # [0,1] target range; height=0.5 spans [0.25, 0.75]; offset=0.3
+    # height=0.4 spans [0.1, 0.5].
     centre = spec.effective_offset()
-    swing = raw - 0.5 if spec.shape in ("sine",) else raw
-    if spec.shape in ("sine",):
-        value = centre + swing * spec.height
-    else:
-        # For sawtooth/pulse/square/noise, raw is already 0..1; scale
-        # it by height around the offset.
-        value = centre + (raw - 0.5) * spec.height
+    value = centre + (raw - 0.5) * spec.height
     return max(0.0, min(1.0, value))
 
 

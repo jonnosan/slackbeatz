@@ -691,17 +691,17 @@ def render_song_with_surge(
     if not stems:
         raise OfflineRenderError("song produced no audible events on any channel")
 
-    # Per-role mix gain — FluidSynth drums historically render
-    # quieter than Surge VST3 stems, and even with matched levels
-    # techno-style mixes want the drums up-front (kick + hats are the
-    # rhythmic anchor). Surge stems are at unity; drums boosted; the
-    # chord/pad stab is attenuated slightly so it accents the bass
-    # rather than dominating it. Tunable per (iteration, listening
-    # feedback).
+    # Per-role mix gain. Tuned per listening iteration.
+    # 1.6 → 1.8: drums × 1.6 (was unity), pad × 0.75 (stab attenuation).
+    # 1.7 → 1.8: drums × 2.0 (still too low at 1.6 but 2.5 caused
+    #            the soft-clip protection to crush the intro — 2.0
+    #            is a balance that keeps drums up without blowing
+    #            past unity on the loudest section). lead × 1.5
+    #            (was inaudible).
     role_gain: dict[str, float] = {
-        "drums": 1.6,
+        "drums": 2.0,
         "bass": 1.0,
-        "lead": 1.0,
+        "lead": 1.5,
         "pad": 0.75,
         "candy": 0.85,
         "sub": 1.0,

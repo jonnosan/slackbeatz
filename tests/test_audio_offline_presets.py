@@ -56,9 +56,13 @@ def test_all_preset_param_names_are_strings() -> None:
     for key, preset in ROLE_STYLE_PRESETS.items():
         for name, _value in preset:
             assert isinstance(name, str) and name
-            # Surge uses "A " / "B " prefixes for scenes; we expect
-            # scene A for everything today.
-            assert name.startswith(("A ", "B "))
+            # Surge uses "A " / "B " prefixes for scenes (per-voice
+            # params) and "FX A1 " / "FX A2 " / "FX B1 " / "FX B2 "
+            # for the four send-FX slots. All other prefixes would
+            # be a typo.
+            assert name.startswith(("A ", "B ", "FX A", "FX B")), (
+                f"unexpected param prefix in {key}: {name!r}"
+            )
 
 
 # --------------------------------------------------------------------------
@@ -86,12 +90,19 @@ class _StubSynth:
 
 
 def test_apply_preset_returns_true_when_preset_exists() -> None:
+    # Stub carries every param the bass-acid preset references —
+    # including FX A1 params (iteration 1.8 added a delay).
     synth = _StubSynth([
         "A Filter 1 Type", "A Filter 1 Cutoff", "A Filter 1 Resonance",
         "A Filter 1 FEG Mod Amount", "A Filter 1 Keytrack",
         "A Filter EG Attack", "A Filter EG Decay",
         "A Filter EG Sustain", "A Filter EG Release",
         "A Filter 2 Type",
+        "FX A1 FX Type",
+        "FX A1 Delay Time - Left", "FX A1 Delay Time - Right",
+        "FX A1 Feedback/EQ - Feedback", "FX A1 Feedback/EQ - Crossfeed",
+        "FX A1 Feedback/EQ - High Cut",
+        "FX A1 Output - Mix",
     ])
     assert apply_preset(synth, "bass", "acid_303") is True
     # Every preset param maps to one set_parameter call.
