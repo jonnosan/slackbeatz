@@ -167,6 +167,128 @@ def test_resolver_lists_available_algorithms_in_error() -> None:
         )
 
 
+# --------------------------------------------------------------------------
+# Voice blocks — song-level defaults keyed by gen type
+# --------------------------------------------------------------------------
+
+def test_parser_stashes_voice_block_knobs() -> None:
+    fa = parse(
+        'song "S"\n'
+        'gen bass bass rolling\n'
+        'voice bass\n'
+        '  swing=0.6\n'
+        '  humanize=4\n'
+        'part p 1\n'
+        '  bass\n'
+        'play p\n'
+    )
+    assert fa.song.voice_defaults == {"bass": {"swing": 0.6, "humanize": 4}}
+
+
+def test_parser_rejects_duplicate_voice_block_for_same_type() -> None:
+    with pytest.raises(ParseError, match="more than one voice block"):
+        parse(
+            'song "S"\n'
+            'gen bass bass rolling\n'
+            'voice bass\n'
+            '  swing=0.6\n'
+            'voice bass\n'
+            '  humanize=4\n'
+            'part p 1\n'
+            '  bass\n'
+            'play p\n'
+        )
+
+
+def test_parser_rejects_duplicate_knob_inside_voice_block() -> None:
+    with pytest.raises(ParseError, match="duplicate knob 'swing'"):
+        parse(
+            'song "S"\n'
+            'gen bass bass rolling\n'
+            'voice bass\n'
+            '  swing=0.6\n'
+            '  swing=0.7\n'
+            'part p 1\n'
+            '  bass\n'
+            'play p\n'
+        )
+
+
+def test_resolver_propagates_voice_defaults() -> None:
+    r = _resolve(
+        'gen bass bass rolling\n'
+        'voice bass\n'
+        '  swing=0.6\n'
+        'part p 1\n'
+        '  bass\n'
+        'play p\n'
+    )
+    assert r.voice_defaults == {"bass": {"swing": 0.6}}
+
+
+def test_resolver_rejects_voice_block_with_unknown_type() -> None:
+    with pytest.raises(ResolveError, match="unknown type 'bas'"):
+        _resolve(
+            'gen bass bass rolling\n'
+            'voice bas\n'
+            '  swing=0.6\n'
+            'part p 1\n'
+            '  bass\n'
+            'play p\n'
+        )
+
+
+def test_voice_default_applied_when_no_part_override() -> None:
+    # Voice-scoped swing=0.6 should reach the algorithm when no part
+    # override is set for this handle.
+    song = parse(
+        'song "S"\n'
+        '  tempo 128\n'
+        '  key Am\n'
+        'gen bass bass rolling humanize=2\n'
+        'voice bass\n'
+        '  swing=0.6\n'
+        'part p 1\n'
+        '  bass\n'
+        'play p\n'
+    ).song
+    r = resolve_song(song, _setup())
+    gen = r.gens["bass"]
+    part = r.parts["p"]
+    voice_knobs = r.voice_defaults.get(gen.type_, {})
+    part_knobs = part.knob_overrides.get("bass", {})
+    algo = _instantiate_algorithm(
+        gen, knob_overrides={**voice_knobs, **part_knobs} or None,
+    )
+    assert algo.knobs["swing"] == 0.6
+    # song-level humanize=2 still wins where voice didn't override
+    assert algo.knobs["humanize"] == 2
+
+
+def test_part_override_beats_voice_default() -> None:
+    # voice sets swing=0.6, part overrides to swing=0.9 — part wins.
+    song = parse(
+        'song "S"\n'
+        '  tempo 128\n'
+        '  key Am\n'
+        'gen bass bass rolling\n'
+        'voice bass\n'
+        '  swing=0.6\n'
+        'part p 1\n'
+        '  bass swing=0.9\n'
+        'play p\n'
+    ).song
+    r = resolve_song(song, _setup())
+    gen = r.gens["bass"]
+    part = r.parts["p"]
+    voice_knobs = r.voice_defaults.get(gen.type_, {})
+    part_knobs = part.knob_overrides.get("bass", {})
+    algo = _instantiate_algorithm(
+        gen, knob_overrides={**voice_knobs, **part_knobs} or None,
+    )
+    assert algo.knobs["swing"] == 0.9
+
+
 def test_resolver_propagates_knob_overrides_to_resolved_part() -> None:
     r = _resolve(
         'gen bass bass rolling\n'

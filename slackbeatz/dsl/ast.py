@@ -129,6 +129,12 @@ class SongAST:
     meter: str | None = None  # time signature, e.g. "3/4"
     gens: list[GenDecl] = field(default_factory=list)
     parts: list[PartDecl] = field(default_factory=list)
+    # Voice-scoped knob defaults — populated by `voice <type>` top-level
+    # blocks. Keyed by gen type_ (rhythm / bass / melody / chords /
+    # candy / subbass / speech / sample); value is a knob dict applied
+    # to every gen of that type. Cascades between the song-level gen
+    # knobs and part-scoped knob overrides.
+    voice_defaults: dict[str, Knobs] = field(default_factory=dict)
     play: PlayLine | None = None
     line: int = 0
 

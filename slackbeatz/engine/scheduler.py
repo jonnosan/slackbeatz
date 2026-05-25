@@ -253,10 +253,20 @@ def render_events(song: ResolvedSong) -> list[tuple[int, mido.Message]]:
             algorithm = part.algorithm_overrides.get(
                 gen_handle, gen_resolved.style,
             )
+            # Effective knob overrides for (part, handle): cascade
+            # voice_defaults[type_] (lower precedence) then
+            # part.knob_overrides[handle] (higher precedence). A future
+            # phase will add Player runtime overrides between these.
+            voice_knobs = song.voice_defaults.get(gen_resolved.type_, {})
+            part_knobs = part.knob_overrides.get(gen_handle, {})
+            if voice_knobs or part_knobs:
+                effective_overrides = {**voice_knobs, **part_knobs}
+            else:
+                effective_overrides = None
             algo = _instantiate_algorithm(
                 gen_resolved,
                 algorithm=algorithm,
-                knob_overrides=part.knob_overrides.get(gen_handle),
+                knob_overrides=effective_overrides,
             )
             bucket = events_by_gen.setdefault(gen_handle, [])
             for event in algo.generate(ctx):

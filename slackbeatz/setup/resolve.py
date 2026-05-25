@@ -510,6 +510,21 @@ def resolve_song(
                 song.play.line, f"play references undeclared part {part_name!r}"
             )
 
+    # Voice-scoped knob defaults — validate the type appears in the
+    # registry so a typo (`voice bas` vs `voice bass`) doesn't silently
+    # apply to nothing. Empty knob dicts are allowed (the user opened
+    # the block but didn't add any overrides yet).
+    voice_defaults: dict[str, dict[str, object]] = {}
+    known_types = {t for (t, _algo) in REGISTRY}
+    for voice_type, knobs in song.voice_defaults.items():
+        if voice_type not in known_types:
+            raise ResolveError(
+                song.line,
+                f"voice block references unknown type {voice_type!r} "
+                f"(known: {sorted(known_types)})",
+            )
+        voice_defaults[voice_type] = dict(knobs)
+
     return ResolvedSong(
         name=song.name,
         setup=setup,
@@ -521,4 +536,5 @@ def resolve_song(
         arrangement=arrangement,
         scale_override=song.scale,
         meter=song_meter,
+        voice_defaults=voice_defaults,
     )

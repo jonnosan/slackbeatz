@@ -297,9 +297,10 @@ class _Parser:
 
         # Tracks the most recently opened block of each shape, so an
         # indented child line can be routed to the right one.
-        self._open_block: str | None = None  # "song" | "kit" | "part" | None
+        self._open_block: str | None = None  # "song" | "kit" | "part" | "voice" | None
         self._open_kit: KitDecl | None = None
         self._open_part: PartDecl | None = None
+        self._open_voice_type: str | None = None
 
     # ------------------------------------------------------------------
     # Top-level driver
@@ -313,10 +314,11 @@ class _Parser:
             # Indent 0 closes any block that only accepts indented children
             # (kit overrides, part gens). It does NOT close a song block —
             # gen/part/play lines at indent 0 still feed the song.
-            if self._open_block in ("kit", "part"):
+            if self._open_block in ("kit", "part", "voice"):
                 self._open_block = None
                 self._open_kit = None
                 self._open_part = None
+                self._open_voice_type = None
             self._handle_top(ln)
         return self.file
 
@@ -341,6 +343,8 @@ class _Parser:
             self._handle_gen(tail, ln.line_no)
         elif kw == "part":
             self._handle_part_header(tail, ln.line_no)
+        elif kw == "voice":
+            self._handle_voice_header(tail, ln.line_no)
         elif kw == "play":
             self._handle_play(tail, ln.line_no)
         else:
@@ -458,6 +462,23 @@ class _Parser:
         atoms = _parse_arrangement(tail, line_no)
         self.file.song.play = PlayLine(atoms=atoms, line=line_no)
 
+    def _handle_voice_header(self, tail: list[str], line_no: int) -> None:
+        if self.file.song is None:
+            raise ParseError(line_no, "voice block outside of a song block")
+        if len(tail) != 1:
+            raise ParseError(line_no, "expected: voice <type>")
+        voice_type = tail[0]
+        if voice_type in self.file.song.voice_defaults:
+            raise ParseError(
+                line_no, f"more than one voice block for type {voice_type!r}",
+            )
+        # Initialise to empty knob dict; indented lines fill it in.
+        # Type validity is checked at resolve time so the parser
+        # doesn't have to know which generator types are registered.
+        self.file.song.voice_defaults[voice_type] = {}
+        self._open_block = "voice"
+        self._open_voice_type = voice_type
+
     # ------------------------------------------------------------------
     # Indented (indent > 0) lines — children of the currently open block
     # ------------------------------------------------------------------
@@ -469,10 +490,31 @@ class _Parser:
             self._handle_kit_override(ln)
         elif self._open_block == "part":
             self._handle_part_gen(ln)
+        elif self._open_block == "voice":
+            self._handle_voice_attr(ln)
         else:
             raise ParseError(
                 ln.line_no, "indented line with no surrounding block"
             )
+
+    def _handle_voice_attr(self, ln: Line) -> None:
+        assert self._open_voice_type is not None
+        assert self.file.song is not None
+        if not ln.tokens:
+            return
+        # Voice block accepts the same knob set as a song-level gen
+        # line. Knob names are validated; values flow through
+        # ``_parse_kv_pairs`` so they pick up int / float / str coercion
+        # consistently with the rest of the DSL.
+        knobs = _parse_kv_pairs(ln.tokens, allowed=_GEN_KNOBS, line_no=ln.line_no)
+        existing = self.file.song.voice_defaults[self._open_voice_type]
+        for k, v in knobs.items():
+            if k in existing:
+                raise ParseError(
+                    ln.line_no,
+                    f"duplicate knob {k!r} in voice {self._open_voice_type!r}",
+                )
+            existing[k] = v
 
     def _handle_song_attr(self, ln: Line) -> None:
         assert self.file.song is not None
