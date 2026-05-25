@@ -1,0 +1,72 @@
+# Auto-composed from text — sentiment=+0, style=warm_analogue
+# Title derived from first phrase of the input.
+
+song "Molten Analogue Sequencer Vibes"
+  setup "gm"
+  tempo 120
+  key   Gm
+  seed  143080047647141
+
+gen kick   rhythm  four_floor_house humanize=3
+gen clap   rhythm  four_floor_house humanize=3 drop_prob=0.07
+gen hats   rhythm  four_floor_house humanize=3 drop_prob=0.07
+gen bass   bass    warm_sub intensity=0.85 gate=0.85 walking=0.3 pickup=0.2 fifth_prob=0.25 octave_jump=0.05
+gen lead   melody  sh101_arp pitches=0,3,7,5 pulses=5 steps=16 gate=0.85 evolution=0.3 base_vel=90 intensity=0.9 passing_tones=0.1 seed=390
+gen sweep  candy   slow_lfo inst=riser
+
+lfo lead_breath shape=sine bars=32 height=0.4 offset=0.55
+
+part intro 16 role=intro
+  kick
+  clap
+  hats
+  bass
+  sweep
+
+part main 32 role=main
+  kick
+  clap
+  hats
+  bass
+  lead
+  sweep
+  apply lead_breath target=midi:ch:1/cc:74
+
+part build 8 role=build
+  kick
+  clap
+  hats
+  bass
+  sweep
+
+part drop 32 role=drop
+  kick
+  clap
+  hats
+  bass
+  lead
+  sweep
+  apply lead_breath target=midi:ch:1/cc:74
+
+part break 16 role=break
+  lead
+  sweep
+  apply lead_breath target=midi:ch:1/cc:74
+
+part main2 32 role=main
+  kick
+  clap
+  hats
+  bass
+  lead
+  sweep
+  apply lead_breath target=midi:ch:1/cc:74
+
+part outro 16 role=outro
+  kick
+  clap
+  hats
+  bass
+  sweep
+
+play intro main build drop break main2 outro

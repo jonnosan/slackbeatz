@@ -189,6 +189,10 @@ def resolve_factory_patch(relpath: str) -> Optional[Path]:
 _STYLE_PATCH_FOR_ROLE: dict[tuple[str, str], str] = {
     # ----- bass -----
     ("bass", "rolling"):        "Basses/Bass 1.fxp",
+    # warm_analogue's bass — same algorithm as rolling but routed
+    # to the smoother "Smoothie" patch (warmer / less aggressive
+    # filter character) for the DMX Krew / Breakin Records sound.
+    ("bass", "warm_sub"):       "Basses/Smoothie.fxp",
     ("bass", "acid_303"):          "Basses/Mmm... Pointy!.fxp",
     ("bass", "gallop"):     "Basses/FM Bass 1.fxp",
     ("bass", "subdrone"):   "Basses/Sub 2.fxp",

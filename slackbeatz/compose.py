@@ -102,6 +102,20 @@ _STYLE_KEYWORDS: dict[str, dict[str, int]] = {
         "saturday": 2, "vibes":    2, "yume":     2, "japanese": 1,
         "tape":     1,
     },
+    "warm_analogue": {
+        # Reference artists: DMX Krew, Ceephax Acid Crew, Aleksi Perälä,
+        # Bochum Welt, anything on Rephlex / Breakin'. Hardware-only
+        # sequencer-driven analogue character.
+        "analogue":     5, "analog":      5, "sequencer":  4,
+        "ms10":         5, "ms20":        5, "sh101":      5,
+        "sh-101":       5, "ms-10":       5, "ms-20":      5,
+        "moog":         4, "juno":        4, "oberheim":   3,
+        "obxa":         4, "ob-xa":       4,
+        "rephlex":      5, "breakin":     4, "krew":       4, "dmx":  3,
+        "modular":      4, "vintage":     3, "saturated":  2,
+        "warm":         3, "molten":      4, "honeydew":   3,
+        "techno":       1,
+    },
 }
 
 # Sentiment: positive = bright/major-leaning; negative = dark/minor-leaning.
@@ -328,6 +342,55 @@ _STYLE_PROFILES: dict[str, StyleProfile] = {
             GenSpec("crackle", "candy",  "crackle_lfo"),
         ],
     ),
+    "warm_analogue": StyleProfile(
+        # Reference: DMX Krew (Ed Upton) on Breakin Records —
+        # "SH101 Triggers MS10", "Molten Analogue", "Honeydew".
+        # Hardware analogue mono-synths (MS-10 sub bass, SH-101
+        # sequenced lead), 808/909 drums, mid-tempo, warm
+        # saturation, sequenced melodic interplay between bass and
+        # lead. NOT acid — less aggressive, more melodic, sub-bass
+        # focused rather than mid-range squelch.
+        #
+        # Bass+lead duo (no chord pad) — the two mono synths carry
+        # all the harmonic/melodic content, like the DMX Krew
+        # "Honeydew" verse at ~25s.
+        base_tempo=122, tempo_range=3,
+        arrangement=[
+            ("intro", 16), ("main", 32), ("build", 8), ("drop", 32),
+            ("break", 16), ("main", 32), ("outro", 16),
+        ],
+        gens=[
+            GenSpec("kick",  "rhythm", "four_floor_house"),
+            GenSpec("clap",  "rhythm", "four_floor_house"),
+            GenSpec("hats",  "rhythm", "four_floor_house"),
+            # Warm MS-10-style sub bass — same algorithmic shape as
+            # rolling but with knob defaults tuned for sustain not
+            # punch, and routed to a warmer Surge preset.
+            GenSpec("bass",  "bass",   "warm_sub", knob_defaults={
+                "intensity": 0.85,
+                # Longer gate → notes ring out warmly, not staccato.
+                "gate": 0.85,
+                # Walking + pickup contribute melodic interest under
+                # the lead.
+                "walking": 0.3,
+                "pickup": 0.2,
+                "fifth_prob": 0.25,
+            }),
+            # SH-101-style sequenced lead — the algorithm we built
+            # in the acid arc but moved here where it actually
+            # belongs (per user direction iteration 1.9).
+            GenSpec("lead",  "melody", "sh101_arp", knob_defaults={
+                "pitches": "0,3,7,5",
+                "pulses": 5,
+                "steps": 16,
+                "gate": 0.85,
+                "evolution": 0.3,
+                "base_vel": 90,
+                "intensity": 0.9,
+            }),
+            GenSpec("sweep", "candy",  "slow_lfo"),
+        ],
+    ),
 }
 
 
@@ -404,6 +467,13 @@ def _emit_style_lfos(lines: list[str], style: str) -> None:
         # during the intro (closed-but-not-silent filter) and
         # never hits the brightest extreme even at song end.
         lines.append("lfo acid_filter shape=sawtooth bars=160 height=0.7")
+    elif style == "warm_analogue":
+        # Slow sine LFO on the lead's filter cutoff — gentle
+        # "breathing" character on the sequenced melody. Period
+        # 32 bars = one breath per main/drop section. Lower height
+        # than acid so the modulation is musical, not dramatic.
+        # warm_analogue arrangement is 152 bars total.
+        lines.append("lfo lead_breath shape=sine bars=32 height=0.4 offset=0.55")
 
 
 # Per-(style, role) `apply` lines — the part loop in render_sb()
@@ -418,6 +488,16 @@ _STYLE_APPLY_LINES: dict[str, dict[str, tuple[str, ...]]] = {
         "build": ("apply acid_filter target=midi:ch:2/cc:74",),
         "drop":  ("apply acid_filter target=midi:ch:2/cc:74",),
         "outro": ("apply acid_filter target=midi:ch:2/cc:74",),
+    },
+    "warm_analogue": {
+        # Lead breathes via a slow sine LFO on its filter cutoff.
+        # Applied to main / drop / break sections where the lead
+        # plays — not intro / outro (lead is absent there per the
+        # _ROLE_GEN_TYPES map's exclusion of melody from intro).
+        # ch1 = lead channel under the bundled `surge` setup.
+        "main":  ("apply lead_breath target=midi:ch:1/cc:74",),
+        "drop":  ("apply lead_breath target=midi:ch:1/cc:74",),
+        "break": ("apply lead_breath target=midi:ch:1/cc:74",),
     },
 }
 

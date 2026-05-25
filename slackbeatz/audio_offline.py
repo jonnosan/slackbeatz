@@ -243,10 +243,13 @@ def _render_surge_stem(
     engine = dd.RenderEngine(sample_rate, 512)
     synth = engine.make_plugin_processor("surge", str(vst3_path))
 
-    # Path 1: try the per-(role, style) preset.
+    # Path 1: try the per-(role, style) preset. ``engine`` is passed
+    # so apply_preset can do a warmup-render between setting FX
+    # types and setting FX inner params — Surge VST3 lazy-initialises
+    # FX param names on first render.
     preset_applied = False
     if role is not None and style is not None:
-        preset_applied = apply_preset(synth, role, style)
+        preset_applied = apply_preset(synth, role, style, engine=engine)
 
     # Path 2: fall back to .fxp (legacy, silently no-ops) only when no
     # preset was registered. Future: extend the preset table so every

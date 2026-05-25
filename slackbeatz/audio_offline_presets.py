@@ -133,6 +133,32 @@ ROLE_STYLE_PRESETS: dict[tuple[str, str], tuple[tuple[str, float], ...]] = {
         ("A Filter EG Release", 0.20),
         ("A Filter 2 Type", 0.0),
     ),
+    # ----- warm_sub (warm_analogue style): MS-10-style sub bass -----
+    # Reference: DMX Krew's MS-10 bass tone on the Breakin Records
+    # output. Sub-focused, smoother + warmer than the acid 303 —
+    # LP K35 filter (rounder than the ladder), much lower resonance
+    # (no squelch peaking), longer envelope (sustain rather than
+    # plucky), gentle saturation for that "valve" warmth without
+    # explicit distortion. No delay (the lead carries the wet
+    # effect in this style).
+    ("bass", "warm_sub"): (
+        ("A Filter 1 Type", 0.4),            # LP K35 — round / smooth
+        ("A Filter 1 Cutoff", 0.40),         # ~350 Hz — open enough to hear sub + lower mid
+        ("A Filter 1 Resonance", 0.25),      # very mild — no squelch
+        ("A Filter 1 FEG Mod Amount", 0.35), # gentle envelope motion
+        ("A Filter 1 Keytrack", 0.65),       # tracks pitch — keeps low notes warm
+        ("A Filter EG Attack", 0.0),
+        ("A Filter EG Decay", 0.50),         # longer decay — sustained warmth
+        ("A Filter EG Sustain", 0.50),
+        ("A Filter EG Release", 0.30),
+        ("A Filter 2 Type", 0.0),
+        # FX A1 — light tape saturation for analogue warmth.
+        # Tape FX (norm 0.7949) is Surge's analogue-modelled tape
+        # saturation — adds gentle harmonic content + slight
+        # compression without explicit distortion.
+        ("FX A1 FX Type", 0.7949),           # Tape
+        ("FX A1 Output - Mix", 0.55),        # 55% wet — present but the dry stays dominant
+    ),
     # ----- sh101_arp (iteration 1.7): pure SH-101 character -----
     # 1.7 → 1.8: brightened cutoff (was 0.55, now 0.70 ≈ 2.5 kHz) so
     # the lead actually cuts through the bass + drums mix.
@@ -177,7 +203,7 @@ ROLE_STYLE_PRESETS: dict[tuple[str, str], tuple[tuple[str, float], ...]] = {
 }
 
 
-def apply_preset(synth, role: str, style: str) -> bool:
+def apply_preset(synth, role: str, style: str, *, engine=None) -> bool:
     """Apply the (role, style) preset to *synth* if one exists.
 
     Returns True if a preset was applied; False if none is registered
@@ -185,23 +211,108 @@ def apply_preset(synth, role: str, style: str) -> bool:
     is broken but harmless).
 
     *synth* is a `dawdreamer.PluginProcessor` with the Surge XT VST3
-    loaded.
+    loaded. *engine* is the parent ``RenderEngine`` — required when
+    the preset uses FX slot params (see below).
+
+    Two-pass application is required because Surge's FX slot inner
+    params (delay time, distortion drive, reverb mix, etc.) only
+    expose their proper names once two conditions are met:
+
+    1. The corresponding ``FX <slot> FX Type`` parameter has been set
+       to a non-Off value.
+    2. The plugin has actually processed at least one audio buffer
+       (Surge initialises the FX module lazily on first render).
+
+    Before both, the inner params all show as ``FX A1 Param 1`` …
+    ``FX A1 Param 12`` so a single-pass name-to-index map wouldn't
+    find them — which is why ``slackbeatz audio --setup surge``
+    silently rendered without delay/distortion for iterations 1.8 +
+    1.10 before this fix landed.
+
+    Algorithm:
+
+    * **Pass 1**: set ``FX <slot> FX Type`` entries.
+    * **Warmup render** (if *engine* is provided + we set any FX
+      types): load an empty MIDI + ``load_graph`` + ``render(0.01)``
+      so Surge initialises the inner FX param namespace.
+    * **Pass 2**: re-read the descriptor (FX names now live) and set
+      everything else.
+
+    When *engine* is ``None``, the warmup is skipped — FX-inner
+    params will silently fail to apply but the rest still works.
+    This shape exists so the function stays callable from contexts
+    without an engine (e.g. the unit tests' stub-synth path).
     """
     key = (role, style)
     if key not in ROLE_STYLE_PRESETS:
         return False
+    preset = ROLE_STYLE_PRESETS[key]
+
+    fx_type_entries = [(n, v) for n, v in preset if n.endswith("FX Type")]
+    other_entries = [(n, v) for n, v in preset if not n.endswith("FX Type")]
+
     name_to_idx = {
         p["name"]: p["index"]
         for p in synth.get_plugin_parameters_description()
     }
-    for name, value in ROLE_STYLE_PRESETS[key]:
+
+    # Pass 1 — set FX types so the slot's inner params will become
+    # available once the warmup render fires.
+    for name, value in fx_type_entries:
         idx = name_to_idx.get(name)
         if idx is None:
-            # Surge param renamed / removed; skip silently — the rest
-            # of the preset still applies.
+            continue
+        synth.set_parameter(idx, value)
+
+    # Warmup render — exposes FX inner param names. Needs an engine.
+    if fx_type_entries and engine is not None:
+        _warmup_render_for_fx_init(synth, engine)
+        # Refresh descriptor — FX inner names are live now.
+        name_to_idx = {
+            p["name"]: p["index"]
+            for p in synth.get_plugin_parameters_description()
+        }
+
+    # Pass 2 — set everything else.
+    for name, value in other_entries:
+        idx = name_to_idx.get(name)
+        if idx is None:
             continue
         synth.set_parameter(idx, value)
     return True
+
+
+def _warmup_render_for_fx_init(synth, engine) -> None:
+    """Render ~0.5 s with a single note so Surge XT VST3 initialises
+    its FX inner parameter namespace. The actual audio is discarded
+    — this only exists for the side effect on the param descriptor.
+
+    Empirically: an empty-MIDI render or a sub-100-ms render isn't
+    enough — Surge needs to actually process audio for the FX
+    module to wake up + expose param names. 0.5 s with one note
+    reliably does it.
+
+    See :func:`apply_preset` for the why.
+    """
+    import mido
+    import tempfile
+    from pathlib import Path
+    # Real (silent-ish) MIDI: one quiet low note for one beat.
+    mid = mido.MidiFile(ticks_per_beat=96)
+    tr = mido.MidiTrack()
+    tr.append(mido.MetaMessage("set_tempo", tempo=mido.bpm2tempo(120), time=0))
+    tr.append(mido.Message("note_on", channel=0, note=36, velocity=1, time=0))
+    tr.append(mido.Message("note_off", channel=0, note=36, velocity=0, time=96))
+    mid.tracks.append(tr)
+    with tempfile.NamedTemporaryFile(suffix=".mid", delete=False) as tf:
+        mid.save(tf.name)
+        warmup_path = Path(tf.name)
+    try:
+        synth.load_midi(str(warmup_path))
+        engine.load_graph([(synth, [])])
+        engine.render(0.5)
+    finally:
+        warmup_path.unlink(missing_ok=True)
 
 
 # Parameter names that the per-CC automation layer drives. Only used
