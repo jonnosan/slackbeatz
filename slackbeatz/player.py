@@ -238,6 +238,42 @@ def _rewrite_song_tempo(sb_src: str, new_tempo: int) -> str:
     return "".join(out)
 
 
+def _strip_scene_block(sb_src: str) -> str:
+    """Remove any existing top-level `scene` block from .sb source.
+
+    Used by `_serialize_current_state` before re-emitting the scene
+    block from current Player state — avoids accumulating duplicate
+    scene blocks across Save → Open → Save cycles. The strip is
+    indent-aware: it consumes the `scene` line plus every following
+    indented line until an indent-0 line or EOF.
+    """
+    lines = sb_src.splitlines(keepends=True)
+    out: list[str] = []
+    skipping = False
+    for line in lines:
+        stripped = line.lstrip()
+        leading = len(line) - len(stripped)
+        if skipping:
+            # Stay in skip mode while we're inside the scene block's
+            # indented body (or on a blank/comment line at indent 0
+            # immediately after the header — preserves leading
+            # whitespace separation cleanly).
+            if leading > 0 or not stripped or stripped.startswith("#"):
+                continue
+            # Indent-0 non-blank line ends the scene block.
+            skipping = False
+        if leading == 0 and stripped.startswith("scene"):
+            # Match `scene` as a whole token, not as a prefix of
+            # something else (no other top-level keyword starts with
+            # "scene" today, but be defensive against future additions).
+            head = stripped.split(None, 1)[0]
+            if head == "scene":
+                skipping = True
+                continue
+        out.append(line)
+    return "".join(out)
+
+
 def _inject_part_algorithm_overrides(
     sb_src: str, overrides: dict[str, dict[str, str]],
 ) -> str:
@@ -398,6 +434,12 @@ class Player:
         # re-composition (style / seed / tempo changes). Schema:
         # {gen_handle: {knob_name: value}}.
         self._knob_overrides: dict[str, dict[str, object]] = {}
+
+        # Phase D — track which loaded song we've already applied scene
+        # state for, so re-resolves (triggered by knob tweaks, etc.) on
+        # the same song don't keep stamping the saved mutes back over
+        # any GUI-driven changes the user has made since load.
+        self._scene_applied_for: object = None
 
         # Cached most-recently-resolved song — saved on every
         # _resolve_current so the GUI doesn't have to re-resolve just
@@ -964,7 +1006,7 @@ class Player:
     def _serialize_current_state(self) -> str:
         """Build the ``.sb`` text reflecting the current source +
         compose overrides + tempo override + per-part algorithm
-        overrides (#55)."""
+        overrides (#55) + scene state (Phase D)."""
         if self.current_phrase is not None:
             sb = compose_from_text(
                 self.current_phrase,
@@ -986,7 +1028,37 @@ class Player:
             sb = _inject_part_algorithm_overrides(
                 sb, self._part_algorithm_overrides,
             )
+        # Phase D — strip any existing scene block from the source and
+        # re-emit one from the current Player state so mute / solo
+        # round-trip cleanly across Save / Open. Idempotent: a song
+        # with no muted / solo'd channels emits no scene block.
+        sb = _strip_scene_block(sb)
+        scene_text = self._emit_scene_block()
+        if scene_text:
+            if not sb.endswith("\n"):
+                sb += "\n"
+            sb += scene_text
         return self._with_state_header(sb)
+
+    def _emit_scene_block(self) -> str:
+        """Build a `scene` block reflecting current mute / solo state.
+
+        Returns an empty string when there's nothing to persist —
+        avoids writing an empty `scene` block to .sb files that don't
+        need one.
+        """
+        affected: set[int] = set(self._user_mutes) | set(self._solo)
+        if not affected:
+            return ""
+        lines = ["scene"]
+        for ch in sorted(affected):
+            knobs = []
+            if ch in self._user_mutes:
+                knobs.append("mute=true")
+            if ch in self._solo:
+                knobs.append("solo=true")
+            lines.append(f"  ch {ch} {' '.join(knobs)}")
+        return "\n".join(lines) + "\n"
 
     def _with_state_header(self, sb: str) -> str:
         """Prepend a comment header documenting the override chain so
@@ -1511,6 +1583,14 @@ class Player:
                         continue
                     part.algorithm_overrides[handle] = algorithm
 
+        # Phase D — apply persisted scene state. The .sb may carry a
+        # `scene` block with per-channel mute / solo entries; restore
+        # them into the Player's runtime mute / solo sets so the user
+        # sees the same mix they saved. Only applied for newly-loaded
+        # songs (we use `_scene_applied_for` to dedupe across the
+        # re-resolves that happen on every knob tweak).
+        self._maybe_apply_scene_state(resolved.scene)
+
         # Apply per-gen knob overrides (last so they win against
         # everything baked into the composed / loaded .sb).
         self._apply_knob_overrides(resolved)
@@ -1560,6 +1640,40 @@ class Player:
         self.current_resolved = resolved
         self.current_setup = setup
         return resolved
+
+    def _maybe_apply_scene_state(self, scene) -> None:
+        """Restore mute / solo from a saved scene block — once per load.
+
+        ``scene`` is a :class:`SceneState` from the resolved song. Only
+        applied on the first ``_resolve_current`` after a song change;
+        subsequent re-resolves (knob tweaks etc.) leave the user's
+        in-session mute changes intact.
+
+        Volume / pan / program persistence is reserved for a follow-up
+        commit — the Player doesn't currently track those as runtime
+        state, so emitting them on save would lose the values
+        round-trip-wise. The parser still accepts those knobs so the
+        format is forward-compatible.
+        """
+        if not scene or not scene.channels:
+            self._scene_applied_for = id(self.current_song_path or self.current_phrase)
+            return
+        # Identity-based dedupe — file path or phrase string. Reloading
+        # the same file is a fresh load and re-applies scene state.
+        load_id = id(self.current_song_path or self.current_phrase)
+        if self._scene_applied_for == load_id:
+            return
+        self._scene_applied_for = load_id
+        for ch, knobs in scene.channels.items():
+            if knobs.get("mute") is True:
+                self._user_mutes.add(int(ch))
+            elif knobs.get("mute") is False:
+                self._user_mutes.discard(int(ch))
+            if knobs.get("solo") is True:
+                self._solo.add(int(ch))
+            elif knobs.get("solo") is False:
+                self._solo.discard(int(ch))
+        self._recompute_mutes()
 
     def _apply_knob_overrides(self, resolved) -> None:
         for handle, knobs in self._knob_overrides.items():

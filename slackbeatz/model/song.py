@@ -61,6 +61,24 @@ class ResolvedPart:
 
 
 @dataclass(frozen=True)
+class SceneState:
+    """Per-channel mixer state loaded from a `scene` block, applied by
+    the Player when the song starts.
+
+    Empty when the source had no scene block; populated when the GUI
+    Save action emitted one. Future scope kinds (Surge patches, Sampler
+    voices, per-part automation lanes) get added as sibling fields here
+    without disturbing the channel-state path.
+    """
+
+    # 1-based channel → knob dict. Knobs cover persisted mixer state
+    # (``vol`` float, ``pan`` float, ``program`` int, ``mute`` bool,
+    # ``solo`` bool). Only keys present in the source appear here; the
+    # Player treats missing entries as "no override".
+    channels: dict[int, dict[str, object]] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class ResolvedSong:
     """A song with setup applied, ready for the scheduler."""
 
@@ -74,3 +92,6 @@ class ResolvedSong:
     arrangement: list[str]  # flat list of part names (groups + *N expanded)
     scale_override: str | None = None  # song-level `scale <name>`, optional
     meter: Meter = COMMON_TIME  # song-level default time signature
+    # Per-channel mixer state restored at load time. Empty when the
+    # source had no scene block.
+    scene: SceneState = field(default_factory=lambda: SceneState())

@@ -24,7 +24,7 @@ from __future__ import annotations
 from slackbeatz.dsl.ast import GenDecl, PartDecl, SongAST
 from slackbeatz.dsl.parser import expand_arrangement
 from slackbeatz.generators.registry import REGISTRY
-from slackbeatz.model.song import ResolvedGen, ResolvedPart, ResolvedSong
+from slackbeatz.model.song import ResolvedGen, ResolvedPart, ResolvedSong, SceneState
 from slackbeatz.theory.meter import COMMON_TIME, Meter
 
 from .model import Instrument, Setup
@@ -496,6 +496,25 @@ def resolve_song(
                 song.play.line, f"play references undeclared part {part_name!r}"
             )
 
+    # Scene state — collect per-channel knob overrides from any
+    # `ch <N>` entries inside the optional `scene` block. Other scene
+    # scopes (surge / sampler / part) are reserved for follow-up
+    # phases — the parser already rejects unknown scopes, so anything
+    # that lands here is a known shape.
+    scene_channels: dict[int, dict[str, object]] = {}
+    if song.scene is not None:
+        for entry in song.scene.entries:
+            if entry.scope == "ch":
+                # Parser guarantees selector is set + in 1..16 for ch entries.
+                assert entry.selector is not None
+                if entry.selector in scene_channels:
+                    raise ResolveError(
+                        entry.line,
+                        f"duplicate scene entry for channel {entry.selector}",
+                    )
+                scene_channels[entry.selector] = dict(entry.knobs)
+    scene = SceneState(channels=scene_channels)
+
     return ResolvedSong(
         name=song.name,
         setup=setup,
@@ -507,4 +526,5 @@ def resolve_song(
         arrangement=arrangement,
         scale_override=song.scale,
         meter=song_meter,
+        scene=scene,
     )

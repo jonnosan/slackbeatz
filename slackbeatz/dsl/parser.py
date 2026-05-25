@@ -21,6 +21,8 @@ from .ast import (
     KnobValue,
     PartDecl,
     PlayLine,
+    SceneAST,
+    SceneEntry,
     SetupAST,
     SongAST,
 )
@@ -116,6 +118,11 @@ _PART_KNOBS = frozenset(
 )
 _INST_KNOBS = frozenset({"ch", "note"})
 _KIT_KNOBS = frozenset({"ch", "preset"})
+# Scene-entry knobs accepted on a `ch <N> ...` line inside a `scene` block.
+# Persisted mixer state — booleans for mute / solo, floats for vol / pan,
+# int for the GM program-change. Future scope kinds (surge / sampler /
+# part) will define their own knob sets when wired.
+_SCENE_CH_KNOBS = frozenset({"vol", "pan", "program", "mute", "solo"})
 
 
 class ParseError(Exception):
@@ -147,7 +154,11 @@ def parse_file(path: str | Path) -> FileAST:
 # --------------------------------------------------------------------------
 
 def _parse_knob_value(raw: str) -> KnobValue:
-    """Coerce a knob RHS into int / float / str."""
+    """Coerce a knob RHS into bool / int / float / str."""
+    if raw == "true":
+        return True
+    if raw == "false":
+        return False
     try:
         return int(raw)
     except ValueError:
@@ -297,9 +308,10 @@ class _Parser:
 
         # Tracks the most recently opened block of each shape, so an
         # indented child line can be routed to the right one.
-        self._open_block: str | None = None  # "song" | "kit" | "part" | None
+        self._open_block: str | None = None  # "song" | "kit" | "part" | "scene" | None
         self._open_kit: KitDecl | None = None
         self._open_part: PartDecl | None = None
+        self._open_scene = None  # SceneAST
 
     # ------------------------------------------------------------------
     # Top-level driver
@@ -313,10 +325,11 @@ class _Parser:
             # Indent 0 closes any block that only accepts indented children
             # (kit overrides, part gens). It does NOT close a song block —
             # gen/part/play lines at indent 0 still feed the song.
-            if self._open_block in ("kit", "part"):
+            if self._open_block in ("kit", "part", "scene"):
                 self._open_block = None
                 self._open_kit = None
                 self._open_part = None
+                self._open_scene = None
             self._handle_top(ln)
         return self.file
 
@@ -341,6 +354,8 @@ class _Parser:
             self._handle_gen(tail, ln.line_no)
         elif kw == "part":
             self._handle_part_header(tail, ln.line_no)
+        elif kw == "scene":
+            self._handle_scene_header(tail, ln.line_no)
         elif kw == "play":
             self._handle_play(tail, ln.line_no)
         else:
@@ -450,6 +465,17 @@ class _Parser:
         self._open_block = "part"
         self._open_part = part
 
+    def _handle_scene_header(self, tail: list[str], line_no: int) -> None:
+        if self.file.song is None:
+            raise ParseError(line_no, "scene block outside of a song block")
+        if tail:
+            raise ParseError(line_no, "expected: scene (no arguments)")
+        if self.file.song.scene is not None:
+            raise ParseError(line_no, "more than one scene block in song")
+        self.file.song.scene = SceneAST(line=line_no)
+        self._open_block = "scene"
+        self._open_scene = self.file.song.scene
+
     def _handle_play(self, tail: list[str], line_no: int) -> None:
         if self.file.song is None:
             raise ParseError(line_no, "play outside of a song block")
@@ -469,9 +495,46 @@ class _Parser:
             self._handle_kit_override(ln)
         elif self._open_block == "part":
             self._handle_part_gen(ln)
+        elif self._open_block == "scene":
+            self._handle_scene_entry(ln)
         else:
             raise ParseError(
                 ln.line_no, "indented line with no surrounding block"
+            )
+
+    def _handle_scene_entry(self, ln: Line) -> None:
+        assert self._open_scene is not None
+        if not ln.tokens:
+            return
+        scope, *rest = ln.tokens
+        if scope == "ch":
+            # `ch <N> [k=v...]` — N is the 1-based MIDI channel.
+            if not rest:
+                raise ParseError(ln.line_no, "expected: ch <channel> [k=v...]")
+            ch_tok, *kv_tokens = rest
+            try:
+                channel = int(ch_tok)
+            except ValueError:
+                raise ParseError(
+                    ln.line_no, f"channel must be int, got {ch_tok!r}",
+                ) from None
+            if not 1 <= channel <= 16:
+                raise ParseError(
+                    ln.line_no, f"channel out of 1..16: {channel}",
+                )
+            knobs = _parse_kv_pairs(
+                kv_tokens, allowed=_SCENE_CH_KNOBS, line_no=ln.line_no,
+            )
+            self._open_scene.entries.append(SceneEntry(
+                scope="ch", selector=channel, knobs=knobs, line=ln.line_no,
+            ))
+        else:
+            # Reject unknown scope keywords loudly — scene format is
+            # forward-incompatible, and a typo on a future kind (e.g.
+            # `surge` once wired) should fail rather than silently no-op.
+            raise ParseError(
+                ln.line_no,
+                f"unknown scene scope {scope!r} (supported: ch)",
             )
 
     def _handle_song_attr(self, ln: Line) -> None:
