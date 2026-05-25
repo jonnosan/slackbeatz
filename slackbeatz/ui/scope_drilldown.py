@@ -28,6 +28,7 @@ from typing import Callable, TYPE_CHECKING
 
 from slackbeatz.generators.feel import FEEL_KNOBS, FeelSpec
 from slackbeatz.generators.registry import REGISTRY
+from slackbeatz.ui.tooltip import Tooltip
 
 if TYPE_CHECKING:
     from slackbeatz.ui.launcher import GuiApp
@@ -184,11 +185,15 @@ class ScopeDrilldown(tk.Frame):
                     self._open_knob_editor(n, e),
             ).pack(side="left", padx=4)
 
-        # Scope dot.
+        # Scope dot with hover tooltip showing the cascade chain.
         dot_text, dot_color = self._scope_dot_string(part_val, voice_val, song_val)
-        tk.Label(row, text=dot_text, fg=dot_color, width=10, anchor="w").pack(
-            side="left", padx=8,
+        dot_label = tk.Label(row, text=dot_text, fg=dot_color, width=10, anchor="w")
+        dot_label.pack(side="left", padx=8)
+        tooltip_text = self._cascade_tooltip(
+            knob_name, part_val, voice_val, song_val,
         )
+        if tooltip_text:
+            Tooltip(dot_label, tooltip_text)
 
         # Revert button.
         ttk.Button(
@@ -222,6 +227,30 @@ class ScopeDrilldown(tk.Frame):
         if song_val is not None:
             return ("● song", "gray")
         return ("", "black")
+
+    def _cascade_tooltip(
+        self, knob_name: str, part_val, voice_val, song_val,
+    ) -> str:
+        """Build the multi-line tooltip showing the cascade chain.
+
+        Example output:
+            Defined at part:verse = 0.6
+            Voice default 0.4
+            Song default 0.4 (style)
+        """
+        lines: list[str] = []
+        if part_val is not None:
+            lines.append(f"Defined at part:{self.part_name} = {part_val}")
+        if voice_val is not None:
+            lines.append(f"Voice default for {self.gen.type_} = {voice_val}")
+        if song_val is not None:
+            lines.append(f"Song default = {song_val}")
+        if not lines:
+            return f"{knob_name}: engine default (no override active)"
+        # Always show the engine-default fallback as the last line so
+        # the user knows where the chain bottoms out.
+        lines.append("(engine default below)")
+        return "\n".join(lines)
 
     # ----- knob/algorithm change handlers -----------------------------
 

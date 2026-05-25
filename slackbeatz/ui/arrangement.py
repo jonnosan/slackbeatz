@@ -58,10 +58,60 @@ class ArrangementScreen(tk.Frame):
 
     def _build(self) -> None:
         self._build_menubar()
+        self._build_warnings_banner()
         self._build_header()
         self._build_grid()
         self._build_detail_host()
         self._build_transport()
+
+    def _build_warnings_banner(self) -> None:
+        """Phase F — surface any non-fatal load warnings as a banner.
+
+        Uses :mod:`slackbeatz.ui.diagnostics` to walk the parsed AST
+        for known issues (unknown style / setup / algorithm; duplicate
+        handles). Banner is yellow-tinted, collapsible, and only
+        appears when there's something to show.
+        """
+        warnings = self._collect_warnings()
+        if not warnings:
+            return
+        from slackbeatz.ui.diagnostics import format_warning_summary
+        banner = tk.Frame(self, bg="#fff8c4", relief="solid", borderwidth=1)
+        banner.pack(fill="x", padx=4, pady=2)
+        summary = format_warning_summary(warnings)
+        tk.Label(
+            banner, text=f"⚠ {summary}",
+            bg="#fff8c4", anchor="w", font=("TkDefaultFont", 10, "bold"),
+        ).pack(side="left", padx=8, pady=4)
+        ttk.Button(
+            banner, text="Details…",
+            command=lambda ws=warnings: self._show_warning_details(ws),
+        ).pack(side="right", padx=4, pady=2)
+
+    def _collect_warnings(self) -> list:
+        from slackbeatz.dsl.parser import parse_file
+        from slackbeatz.ui.diagnostics import check_for_warnings
+        if self.app.player is None or self.app.player.current_song_path is None:
+            return []
+        try:
+            file_ast = parse_file(self.app.player.current_song_path)
+        except Exception:
+            return []
+        return check_for_warnings(file_ast)
+
+    def _show_warning_details(self, warnings: list) -> None:
+        from tkinter import scrolledtext
+        win = tk.Toplevel(self.app.root)
+        win.title("Session warnings")
+        win.transient(self.app.root)
+        body = scrolledtext.ScrolledText(
+            win, width=80, height=12, wrap="word", font=("TkFixedFont", 9),
+        )
+        for w in warnings:
+            body.insert("end", f"line {w.line}: [{w.kind}] {w.message}\n\n")
+        body.config(state="disabled")
+        body.pack(fill="both", expand=True, padx=8, pady=8)
+        ttk.Button(win, text="Close", command=win.destroy).pack(pady=4)
 
     def _build_menubar(self) -> None:
         bar = tk.Frame(self, relief="ridge", borderwidth=1)

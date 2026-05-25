@@ -1,6 +1,6 @@
 # slackbeatz
 
-A small CLI that turns a tiny text DSL into MIDI for techno-leaning music. Built for driving a collection of hardware synths over a virtual MIDI port — write the song structure once, twist sound on the devices.
+A small DAW-style music generator. Compose techno-leaning songs from a title phrase, edit per-part / per-voice in a GUI built around an Algorithm → Pattern → Feel drilldown, and play through Surge XT (in-process), an external DAW, or any MIDI rig. The CLI is still there for headless playback / batch render.
 
 > **Note**: the previous incarnation of this repo was an Arduino-based hardware sequencer (ATmega + 1602 LCD + 5-button shield). That code is preserved at the `arduino-v1` tag. The current `main` is a Python rewrite.
 
@@ -125,6 +125,25 @@ Each non-drum channel gets a default GM patch picked by the gen's `(type, style)
 gen lead melody psytrance program=87   # GM patch 87 (Bass + Lead)
 ```
 
+## The GUI
+
+`slackbeatz` with no arguments opens the Welcome screen. From there you either generate a new song from a title or open an existing `.sb`. The Arrangement view shows a voice × part grid with override markers; clicking a cell drops you into the **Algorithm / Pattern / Feel** drilldown:
+
+- **Algorithm** — picks the generator class for this (voice, part) pair (e.g. `rolling` / `acid_303` / `gallop` for bass).
+- **Pattern** — algorithm-specific knobs (swing, voicing, progression, gate, density, octave, …). Differs per algorithm.
+- **Feel** — a fixed universal knob set applied to every algorithm (humanize, vel_jitter, gate_jitter, mute_prob, octave_jump, passing_tones, evolution, mistakes).
+
+Knob edits land in one of three scopes you pick at the top of the detail pane:
+- **Song** — affects every part and every voice
+- **Voice** — affects this voice (e.g. bass) across every part
+- **Part** — affects this voice in this single part only
+
+A scope dot next to each knob shows which scope an override lives at; hovering reveals the full cascade chain (Part value / Voice default / Song default / engine default). The `↺` button reverts the override at the current scope.
+
+The arrangement header has buttons for **Mixer** (per-channel mute/solo, wired through Player), **Setup** (instruments + kits + backend picker), and **LFOs** (named time-varying sources — see below).
+
+Mixer state (mute / solo) round-trips through Save in a new `scene` block. Recents + last-used setup live in `~/.slackbeatz/state.json` so the next launch lands you back where you were.
+
 ## The DSL
 
 Two file types, both `.sb`:
@@ -172,6 +191,79 @@ slackbeatz list-setups                # show bundled setup names
 ```
 
 Full reference lives in [`examples/dark_sunday.sb`](examples/dark_sunday.sb) (every DSL feature) and [`examples/studio.sb`](examples/studio.sb) (standalone setup).
+
+### Per-part knob overrides
+
+Indented gen lines inside a part accept knob overrides — vary the swing in the verse without touching the song default:
+
+```text
+part verse 16
+  bass humanize=4              # part-scoped knob only
+  lead acid_stab gate=0.8      # per-part algorithm + knob
+  pad triad_sustain            # per-part algorithm only
+```
+
+### Voice block — defaults for a voice type
+
+`voice TYPE` declares knobs that apply to every gen of that type unless a specific part overrides:
+
+```text
+voice bass
+  swing=0.6
+  humanize=4
+
+voice melody
+  passing_tones=0.3
+```
+
+The cascade order is: engine default → style profile → song-level gen line → voice block → part override (last wins).
+
+### Setup backend directive
+
+Bundled setups (`surge` / `external` / `gm` / `808` / `909` / `multitimbral`) carry a backend choice:
+
+```text
+setup "Studio"
+backend surge          # or `backend external`
+inst lead ch=1
+inst bass ch=2
+...
+```
+
+`backend surge` spawns headless `surge-xt-cli` instances for pitched channels and routes ch10 drums through FluidSynth. `backend external` sends raw MIDI to an external port. Existing setups without a `backend` directive default to `external`.
+
+### Scene block — mixer state round-trip
+
+GUI Save emits a `scene` block reflecting current mute / solo state per channel:
+
+```text
+scene
+  ch 2 mute=true
+  ch 5 solo=true
+  ch 10 vol=0.65         # vol/pan/program are parsed but not yet emitted
+```
+
+The block is recursive (`SceneEntry` has `children`), reserved for future per-part Surge patch + LFO automation persistence.
+
+### LFOs — time-varying automation
+
+Declare named LFOs at the song level; bind them to targets per part:
+
+```text
+lfo slow_filter shape=sine bars=8 height=0.6
+lfo build_drop  shape=sawtooth bars=16 height=1.0
+
+part build 16
+  bass rolling
+  apply slow_filter target=midi:ch:2/cc:74
+  apply build_drop  target=midi:ch:2/cc:1
+```
+
+Shapes: `sine`, `sawtooth`, `square`, `pulse`, `noise`. Targets:
+
+- `midi:ch:N/cc:M` — MIDI CC stream on channel N, controller M
+- `surge:/param/...` — Surge XT OSC parameter (engine-level placeholder today)
+- `pattern:HANDLE:KNOB` / `feel:TYPE:KNOB` — accepted by the parser, engine support coming with knob-modulation per LFO tick
 
 ### Per-gen knobs
 
