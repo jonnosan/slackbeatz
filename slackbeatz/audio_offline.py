@@ -199,6 +199,8 @@ def _render_surge_stem(
     duration_s: float,
     sample_rate: int,
     vst3_path: Path,
+    role: Optional[str] = None,
+    style: Optional[str] = None,
 ):
     """Render one pitched channel via Surge XT VST3 + dawdreamer.
 
@@ -206,16 +208,51 @@ def _render_surge_stem(
     float32). The patch's release tail is included in *duration_s* —
     callers should add a small head-room (~2 s) so reverb tails don't
     clip.
+
+    Two paths for synth configuration, tried in order:
+
+    1. **(role, style) preset** from
+       :mod:`slackbeatz.audio_offline_presets` — hand-tuned parameter
+       set applied via ``set_parameter``. Used when ``role`` + ``style``
+       match a registered preset.
+    2. **``.fxp`` patch load** via ``synth.load_preset(patch_path)`` —
+       LEGACY PATH. dawdreamer's ``load_preset`` silently fails on
+       Surge's ``.fxp`` format (which is VST 2.x; VST3 wants
+       ``.vstpreset``). When this path runs, the synth stays at its
+       bare init state — every "audio --setup surge" render before
+       the preset table landed actually used Surge's init oscillator,
+       not the per-(role, style) patch the lookup intended.
+
+    The MIDI's CC74 / CC71 / etc. streams are extracted and applied as
+    per-sample parameter automation via ``synth.set_automation`` BEFORE
+    ``load_graph`` — Surge XT VST3 ignores incoming MIDI CCs in
+    offline mode, so direct parameter automation is the only way to
+    get the LFO / acid-303-built-in filter motion to actually move the
+    filter during render. (Empirically verified: ``set_automation``
+    with a per-buffer-length array OR after ``load_graph`` does
+    nothing; per-sample-length before ``load_graph`` works.)
     """
+    import mido
     import numpy as np
     import dawdreamer as dd  # caller has already passed _require_offline_deps
 
+    from slackbeatz.audio_offline_presets import (
+        CC_TO_PARAM_NAME, apply_preset,
+    )
+
     engine = dd.RenderEngine(sample_rate, 512)
     synth = engine.make_plugin_processor("surge", str(vst3_path))
-    # .fxp factory patches load via load_preset; .vstpreset would use
-    # load_vst3_preset. The dawdreamer error on the wrong call is loud,
-    # so we try the right one first.
-    if patch_path is not None and patch_path.is_file():
+
+    # Path 1: try the per-(role, style) preset.
+    preset_applied = False
+    if role is not None and style is not None:
+        preset_applied = apply_preset(synth, role, style)
+
+    # Path 2: fall back to .fxp (legacy, silently no-ops) only when no
+    # preset was registered. Future: extend the preset table so every
+    # (role, style) pair has a hand-tuned config and this branch is
+    # never hit.
+    if not preset_applied and patch_path is not None and patch_path.is_file():
         try:
             synth.load_preset(str(patch_path))
         except Exception as e:  # noqa: BLE001 — surface via stderr, keep going
@@ -224,6 +261,19 @@ def _render_surge_stem(
                 f"{patch_path.name} ({e}); using default Surge XT state",
                 file=sys.stderr,
             )
+
+    # Per-CC parameter automation. Build a sample-aligned array per
+    # CC→param mapping by reading CC events from the rendered MIDI
+    # and step-holding values between events.
+    automation_arrays = _build_cc_automation(
+        midi_path=midi_path,
+        duration_s=duration_s,
+        sample_rate=sample_rate,
+        synth=synth,
+        cc_to_param_name=CC_TO_PARAM_NAME,
+    )
+    for param_idx, arr in automation_arrays.items():
+        synth.set_automation(param_idx, arr)
 
     synth.load_midi(str(midi_path))
     engine.load_graph([(synth, [])])
@@ -244,6 +294,75 @@ def _render_surge_stem(
     elif audio.shape[0] > 2:
         audio = audio[:2]
     return audio
+
+
+def _build_cc_automation(
+    *,
+    midi_path: Path,
+    duration_s: float,
+    sample_rate: int,
+    synth,
+    cc_to_param_name: dict[int, str],
+) -> dict[int, "np.ndarray"]:
+    """Read CC events from *midi_path* + build per-sample automation arrays.
+
+    For each CC controller in *cc_to_param_name* that the MIDI file
+    actually carries events for, build a numpy array of length
+    ``duration_s * sample_rate`` where each sample's value is the most
+    recent CC value (normalised to [0, 1]) at that point in time. CC
+    events without a known mapping are ignored.
+
+    Returns ``{param_idx: numpy_array}``. Caller passes each array to
+    ``synth.set_automation``.
+
+    The implementation walks the MIDI with mido's seconds-based time
+    iteration so tempo changes in the tempo map are honoured.
+    """
+    import mido
+    import numpy as np
+
+    n_samples = int(round(duration_s * sample_rate))
+    name_to_idx = {
+        p["name"]: p["index"]
+        for p in synth.get_plugin_parameters_description()
+    }
+
+    # Per-controller: list of (sample_idx, normalised_value).
+    events_by_cc: dict[int, list[tuple[int, float]]] = {}
+    full_mid = mido.MidiFile(str(midi_path))
+    elapsed_s = 0.0
+    for msg in full_mid:
+        elapsed_s += msg.time
+        if getattr(msg, "type", None) != "control_change":
+            continue
+        ctrl = msg.control
+        if ctrl not in cc_to_param_name:
+            continue
+        sample_idx = min(n_samples - 1, int(round(elapsed_s * sample_rate)))
+        events_by_cc.setdefault(ctrl, []).append(
+            (sample_idx, msg.value / 127.0),
+        )
+
+    out: dict[int, np.ndarray] = {}
+    for ctrl, events in events_by_cc.items():
+        param_name = cc_to_param_name[ctrl]
+        idx = name_to_idx.get(param_name)
+        if idx is None:
+            continue
+        # Step-hold the CC events across the sample timeline.
+        arr = np.zeros(n_samples, dtype=np.float32)
+        # Initial value: the current static parameter value (so
+        # samples before the first CC event don't snap to 0).
+        current = float(synth.get_parameter(idx))
+        last_idx = 0
+        for sample_idx, value in events:
+            if sample_idx > last_idx:
+                arr[last_idx:sample_idx] = current
+            current = value
+            last_idx = sample_idx
+        arr[last_idx:] = current
+        out[idx] = arr
+    return out
 
 
 def _render_drum_stem(
@@ -545,6 +664,8 @@ def render_song_with_surge(
                     duration_s=song_seconds,
                     sample_rate=sample_rate,
                     vst3_path=vst3,
+                    role=role_info["role"],
+                    style=gen_style_by_channel.get(ch1),
                 )
             finally:
                 tmp_midi.unlink(missing_ok=True)
