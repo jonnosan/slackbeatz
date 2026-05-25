@@ -91,7 +91,8 @@ class _StubSynth:
 
 def test_apply_preset_returns_true_when_preset_exists() -> None:
     # Stub carries every param the bass-acid preset references —
-    # including FX A1 params (iteration 1.8 added a delay).
+    # including FX A1 delay params (iteration 1.8) + FX A2 distortion
+    # params (iteration 1.10).
     synth = _StubSynth([
         "A Filter 1 Type", "A Filter 1 Cutoff", "A Filter 1 Resonance",
         "A Filter 1 FEG Mod Amount", "A Filter 1 Keytrack",
@@ -103,6 +104,12 @@ def test_apply_preset_returns_true_when_preset_exists() -> None:
         "FX A1 Feedback/EQ - Feedback", "FX A1 Feedback/EQ - Crossfeed",
         "FX A1 Feedback/EQ - High Cut",
         "FX A1 Output - Mix",
+        "FX A2 FX Type",
+        "FX A2 Distortion - Drive", "FX A2 Distortion - Model",
+        "FX A2 Distortion - Feedback",
+        "FX A2 Pre-EQ - Frequency", "FX A2 Pre-EQ - High Cut",
+        "FX A2 Post-EQ - Frequency", "FX A2 Post-EQ - High Cut",
+        "FX A2 Output - Gain",
     ])
     assert apply_preset(synth, "bass", "acid_303") is True
     # Every preset param maps to one set_parameter call.

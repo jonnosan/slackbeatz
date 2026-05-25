@@ -59,32 +59,48 @@ from __future__ import annotations
 # silently fails and yields Surge's init state — same as before this
 # module landed).
 ROLE_STYLE_PRESETS: dict[tuple[str, str], tuple[tuple[str, float], ...]] = {
-    # ----- acid bass: classic 303 squelch + dotted-1/8 delay -----
+    # ----- acid bass: classic 303 squelch + delay + distortion -----
+    # Iteration 1.10 — pushed for more squelch (resonance 0.85, FEG mod
+    # 0.85, faster filter EG decay) and added Surge's Distortion FX in
+    # series on FX A2 (OJD tube-screamer model, +9 dB drive). Reference:
+    # the gnarly, saturated 303 sound on Aphex Twin's "Didgeridoo" +
+    # late-80s Phuture acid where the 303 was deliberately overdriven
+    # through pedals / mixer preamps.
     ("bass", "acid_303"): (
-        # Filter — classic ladder, high resonance, env opens it on each note
+        # Filter — classic ladder, very high resonance, env opens it
+        # dramatically on each note for that "squelchy bloom".
         ("A Filter 1 Type", 0.1),            # LP Legacy Ladder
-        ("A Filter 1 Cutoff", 0.30),         # ~130 Hz starting cutoff (mostly closed)
-        ("A Filter 1 Resonance", 0.75),      # squelchy
-        ("A Filter 1 FEG Mod Amount", 0.65), # envelope opens filter dramatically
+        ("A Filter 1 Cutoff", 0.20),         # ~50 Hz — start almost closed
+        ("A Filter 1 Resonance", 0.85),      # very squelchy / verging on self-osc
+        ("A Filter 1 FEG Mod Amount", 0.85), # envelope opens filter HARD
         ("A Filter 1 Keytrack", 0.55),       # cutoff tracks pitch
-        # Filter EG — snappy
+        # Filter EG — very snappy, classic acid envelope shape
         ("A Filter EG Attack", 0.0),
-        ("A Filter EG Decay", 0.30),
-        ("A Filter EG Sustain", 0.20),
-        ("A Filter EG Release", 0.15),
-        # Filter 2 — off (single-filter character)
-        ("A Filter 2 Type", 0.0),
-        # Iteration 1.8 — add a dotted-1/8-flavoured delay on FX A1.
-        # Classic acid-house move: the 303 line ghosts onto its own
-        # offbeat, creating perceived complexity without changing the
-        # generator output.
-        ("FX A1 FX Type", 0.0251),            # Delay
-        ("FX A1 Delay Time - Left", 0.5),     # ~350 ms ≈ dotted 1/8 at 124 BPM
+        ("A Filter EG Decay", 0.20),         # ~30 ms decay → sharp attack
+        ("A Filter EG Sustain", 0.15),       # quick fall-off
+        ("A Filter EG Release", 0.12),
+        ("A Filter 2 Type", 0.0),            # single-filter character
+        # FX A1 — dotted-1/8 delay (the 303 line ghosts onto its offbeat)
+        ("FX A1 FX Type", 0.0251),
+        ("FX A1 Delay Time - Left", 0.5),
         ("FX A1 Delay Time - Right", 0.5),
-        ("FX A1 Feedback/EQ - Feedback", 0.45),  # 45% — a few audible echoes
-        ("FX A1 Feedback/EQ - Crossfeed", 0.20), # subtle stereo bounce
-        ("FX A1 Feedback/EQ - High Cut", 0.65),  # roll off the echoes' top
-        ("FX A1 Output - Mix", 0.30),            # 30% wet — present but the dry stays focal
+        ("FX A1 Feedback/EQ - Feedback", 0.45),
+        ("FX A1 Feedback/EQ - Crossfeed", 0.20),
+        ("FX A1 Feedback/EQ - High Cut", 0.65),
+        ("FX A1 Output - Mix", 0.30),
+        # FX A2 — distortion (in series after delay). OJD tube-
+        # screamer model gives a warm acid-pedal flavour rather than
+        # harsh fuzz; Drive 0.7 ≈ +9 dB; Output gain -4 dB to keep
+        # the master sum in range.
+        ("FX A2 FX Type", 0.1590),                 # Distortion
+        ("FX A2 Distortion - Drive", 0.70),        # ~+9 dB drive
+        ("FX A2 Distortion - Model", 0.727),       # OJD (Tube Screamer)
+        ("FX A2 Distortion - Feedback", 0.10),     # subtle feedback edge
+        ("FX A2 Pre-EQ - Frequency", 0.55),        # let mids through
+        ("FX A2 Pre-EQ - High Cut", 1.0),          # don't pre-shave the high
+        ("FX A2 Post-EQ - Frequency", 0.55),
+        ("FX A2 Post-EQ - High Cut", 0.85),        # tame the harshest highs
+        ("FX A2 Output - Gain", 0.42),             # -4 dB make-up
     ),
     # ----- acid chord stab (LEGACY): kept so manual .sb files using
     # chords:acid_stab still render correctly. The acid style profile
