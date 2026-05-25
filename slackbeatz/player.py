@@ -2080,6 +2080,70 @@ class Player:
         # Reset the event so the next play() starts clean.
         self._stop_event.clear()
 
+    def retrigger_held_notes_on_channel(self, channel_1idx: int) -> None:
+        """Kill + immediately re-trigger every held note on *channel_1idx*.
+
+        Use case: after a patch change on a sustaining voice (pad, drone,
+        long lead) the previously-triggered note keeps playing the OLD
+        sound until its natural note_off arrives — which can be many
+        seconds away. Sending all-notes-off then re-issuing each held
+        pitch makes the user hear the new patch immediately.
+
+        Held velocities aren't tracked (the scheduler's
+        ``last_note_on_time`` / ``held_notes`` accounting only stores
+        pitches); we re-trigger at velocity 100 as a sensible mid-range
+        default. Caller is responsible for deciding WHEN to call this
+        — most patch-change paths want immediate retrigger; some may
+        prefer to wait for the next natural note boundary.
+
+        Safe to call when nothing's playing (no held notes → no-op)
+        or with no live sink (silent no-op).
+        """
+        import mido
+
+        ch0 = int(channel_1idx) - 1
+        if not (0 <= ch0 <= 15):
+            return
+        held = self.held_notes.get(ch0)
+        if not held:
+            return
+        pitches = sorted(held)
+
+        # Pick the sink to send through. Prefer the shared MultiPortSink
+        # (live osc_routing path — routes per-channel to the right
+        # virtual port for surge-xt-cli). Fall back to a transient
+        # mido open_output on self.port_name (FluidSynth path).
+        sink = self._shared_routing_sink
+        sender = None
+        ctx = None
+        if sink is not None:
+            sender = sink.send
+        else:
+            try:
+                ctx = mido.open_output(self.port_name)
+                sender = ctx.send
+            except Exception:
+                return
+
+        try:
+            # All-notes-off on THIS channel only — leaves other voices
+            # ringing. Surge / FluidSynth both honour CC 123.
+            sender(mido.Message(
+                "control_change", channel=ch0, control=123, value=0,
+            ))
+            # Re-issue each previously-held note so the user hears
+            # the new patch on the same pitches that were sounding.
+            for pitch in pitches:
+                sender(mido.Message(
+                    "note_on", channel=ch0, note=pitch, velocity=100,
+                ))
+        finally:
+            if ctx is not None:
+                try:
+                    ctx.close()
+                except Exception:
+                    pass
+
     def _send_all_sound_off(self) -> None:
         """Send CC 120 (All Sound Off — hard cut, ignore release) +
         CC 123 (All Notes Off — release-respecting) on every channel

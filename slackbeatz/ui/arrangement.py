@@ -609,13 +609,16 @@ class ArrangementScreen(tk.Frame):
             self._render_drilldown()
 
     def _on_drilldown_change(self) -> None:
-        # A knob / algorithm change happened — refresh ONLY the grid's
-        # override markers, not the entire screen. Doing a full
-        # _refresh_grid here would destroy the open drilldown widget
-        # (closing the sound-design surface mid-edit, which was the
-        # bug the user reported: "if I change a knob, the view
-        # shouldn't change").
+        # A knob / algorithm change happened — refresh the grid's
+        # override markers AND re-render the drilldown so the
+        # effective-value badges + scope dots reflect the change
+        # (otherwise revert / set / increment looks like a no-op).
+        # The DETAIL HOST + ScopeDrilldown instance stay alive
+        # across this — only their contents are rebuilt. That
+        # preserves the user's selected cell across the edit.
         self._rebuild_grid_only()
+        if self.detail_widget is not None:
+            self._render_drilldown()
 
     def _rebuild_grid_only(self) -> None:
         """Re-render just the Voice × Part marker grid in place.

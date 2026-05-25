@@ -294,6 +294,16 @@ class ScopeDrilldown(tk.Frame):
                 surge_inst.load_patch(path)
             except Exception:
                 pass
+            # Retrigger any held notes so long sustains (pads / drones)
+            # switch to the new patch immediately — otherwise the
+            # previously-sounding note keeps playing the OLD patch
+            # until its natural note_off arrives.
+            try:
+                ch = self.gen.instrument.channel if self.gen.instrument else None
+                if ch is not None and self.app.player is not None:
+                    self.app.player.retrigger_held_notes_on_channel(ch)
+            except Exception:
+                pass
 
         def _step(delta: int):
             choices = list(self._patches_by_display.keys())

@@ -71,6 +71,16 @@ class PatchPickerDialog:
                 self.inst.load_patch(path)
             except Exception:
                 pass
+            # Kill + re-trigger held notes so pad / drone voices
+            # switch to the new patch without waiting for the next
+            # natural note_off (which can be many bars away).
+            try:
+                ch = self.inst.config.channel_1idx
+                player = getattr(self.app, "player", None)
+                if player is not None:
+                    player.retrigger_held_notes_on_channel(ch)
+            except Exception:
+                pass
 
         def _step(delta: int):
             choices = list(self._patches_by_display.keys())
