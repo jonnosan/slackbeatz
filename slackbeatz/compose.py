@@ -253,8 +253,14 @@ _STYLE_PROFILES: dict[str, StyleProfile] = {
             GenSpec("stab",  "chords", "acid_stab", knob_defaults={
                 "drop_intensity": 0.7,
                 "evolution": 0.4,
-                "resonance": 110,
+                "resonance": 90,
                 "fifth_prob": 0.4,
+                # Iteration 1.5 — tone the stab down so it doesn't
+                # drown the bass riff. base_vel 70 (vs the default
+                # ~100) + intensity 0.55 cut the perceived loudness
+                # roughly in half without making it inaudible.
+                "base_vel": 70,
+                "intensity": 0.55,
             }),
             GenSpec("sweep", "candy",  "acid_sweep"),
         ],
@@ -342,14 +348,20 @@ _HANDLE_TO_INST: dict[str, str] = {
 
 
 # Which gens are active in each part-role.
+#
+# Intros now include rhythm so songs don't open with a bare chord pad
+# (the iteration-1 acid render had a 16-bar pure-stab intro that
+# sounded like a slow plod). Real techno / acid / house arrangements
+# typically have at least the kick + hats from bar 1; the chord pad
+# enters alongside, not alone.
 _ROLE_GEN_TYPES: dict[str, frozenset[str]] = {
-    "intro":   frozenset({"chords", "candy"}),
+    "intro":   frozenset({"rhythm", "chords", "candy"}),
     "build":   frozenset({"rhythm", "chords", "candy"}),
     "drop":    frozenset({"rhythm", "bass", "melody", "chords", "candy"}),
     "main":    frozenset({"rhythm", "bass", "melody", "chords", "candy"}),
     "break":   frozenset({"chords", "melody", "candy"}),
     "bridge":  frozenset({"rhythm", "bass", "chords"}),
-    "outro":   frozenset({"chords", "candy"}),
+    "outro":   frozenset({"rhythm", "chords", "candy"}),
 }
 
 
