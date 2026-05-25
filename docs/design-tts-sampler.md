@@ -239,7 +239,7 @@ virtual port (so the sampler can subscribe).
 
 ## CLI wiring
 
-`cmd_repl` and `cmd_live` need to:
+`cmd_live` needs to:
 
 1. Create the Sampler instance after `MultiPortSink.open()` (so the
    virtual ports exist).

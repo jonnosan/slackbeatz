@@ -360,8 +360,8 @@ def compose_from_text(
     shape.
 
     *seed_offset* is folded into the SHA-256 digest so the same phrase
-    produces a different song for each integer value — used by the REPL
-    ``/seed N`` command (and the GUI seed box) to spin variations on a
+    produces a different song for each integer value — used by the
+    GUI seed box (and the ↻ Re-roll button) to spin variations on a
     phrase without retyping.
 
     *style_override* — force a specific style name regardless of what

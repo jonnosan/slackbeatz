@@ -64,7 +64,7 @@ class BassReese(Generator):
 
         ticks_per_bar = ctx.ticks_per_bar
         # One sub hit per BAR (was every 2 bars — too sparse for tracks
-        # that only run 2-4 bars in the REPL). Each note holds for most
+        # that only run 2-4 bars in a preview). Each note holds for most
         # of the bar (gate=0.95 default for DnB) so it still feels like
         # a sustained sub, but every bar re-articulates so short songs
         # actually have audible bass.

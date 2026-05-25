@@ -89,9 +89,9 @@ OSC_CHANNELS: dict[str, tuple[int, str, str | None]] = {
 
 def sampler_port_banks(roles: tuple[str, ...] = ("voice", "fx")) -> dict[str, dict]:
     """Build an empty ``{port_name: {}}`` map for the sampler-backed
-    roles. Used by :func:`cmd_repl` / :func:`cmd_live` to construct a
-    fresh :class:`Sampler` instance — generators populate the bank
-    entries at resolve time via :meth:`Sampler.set_sample`."""
+    roles. Used by :func:`cmd_live` to construct a fresh
+    :class:`Sampler` instance — generators populate the bank entries
+    at resolve time via :meth:`Sampler.set_sample`."""
     return {
         OSC_CHANNELS[role][1]: {}
         for role in roles
