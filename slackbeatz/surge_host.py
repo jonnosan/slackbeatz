@@ -35,7 +35,7 @@ import subprocess
 import sys
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -70,6 +70,11 @@ class SynthRoleConfig:
     initial-patch path format. The OSC ports are pre-allocated so they
     don't clash with anything else; pairs of (in, out) sit two apart
     per role.
+
+    ``audio_device`` + ``audio_channels`` are populated only under
+    ``ableton-blackhole`` mode (via :func:`audio_routing_for`); under
+    ``surge-standalone`` they stay ``None`` and surge picks the OS
+    default output — preserving today's behaviour.
     """
 
     role: str                  # 'lead' / 'bass' / 'pad' / 'candy' / 'sub'
@@ -78,6 +83,47 @@ class SynthRoleConfig:
     initial_patch: str         # path relative to _SURGE_FACTORY for now
     osc_in_port: int           # slackbeatz → headless synth
     osc_recv_port: int         # headless synth → slackbeatz (we listen here)
+    audio_device: Optional[str] = None    # device name (resolved to index at spawn)
+    audio_channels: Optional[tuple[int, int]] = None  # 0-indexed (lo, hi) pair
+
+
+# Per-role BlackHole channel assignment used when mode == ableton-blackhole.
+# Pairs are zero-indexed, matching surge-xt-cli's --audio-ports format.
+# Layout reserves 1/2 for drums (FluidSynth) and gives each pitched role
+# its own pair so Ableton sees a clean per-voice routing:
+#   1/2  = drums (FluidSynth on ch 10)   ← not in this table
+#   3/4  = lead
+#   5/6  = bass
+#   7/8  = pad
+#   9/10 = candy
+#   11/12= sub
+# See [[reference_blackhole_routing_gotchas]] for the verified setup.
+_BLACKHOLE_DEVICE_NAME = "BlackHole 16ch"
+_BLACKHOLE_PAIRS_BY_ROLE: dict[str, tuple[int, int]] = {
+    "lead":  (2, 3),
+    "bass":  (4, 5),
+    "pad":   (6, 7),
+    "candy": (8, 9),
+    "sub":   (10, 11),
+}
+
+
+def audio_routing_for(
+    role: str, mode: str,
+) -> tuple[Optional[str], Optional[tuple[int, int]]]:
+    """Return (device, channel pair) for *role* under *mode*.
+
+    For ``ableton-blackhole`` mode returns the BlackHole device + the
+    role's reserved channel pair from :data:`_BLACKHOLE_PAIRS_BY_ROLE`.
+    For any other mode returns ``(None, None)`` so the spawn helper
+    leaves the audio flags off (surge picks the OS default).
+    """
+    if mode != "ableton-blackhole":
+        return None, None
+    pair = _BLACKHOLE_PAIRS_BY_ROLE.get(role)
+    if pair is None:
+        return None, None
+    return _BLACKHOLE_DEVICE_NAME, pair
 
 
 # Default role assignments — match the ``gm`` setup's channel layout.
@@ -392,6 +438,20 @@ def patch_category_for_role(role: str) -> Optional[str]:
     return _PATCH_CATEGORY_FOR_ROLE.get(role)
 
 
+def _list_devices_raw() -> str:
+    """Single shared --list-devices invocation; returns stdout+stderr."""
+    if not is_surge_cli_installed():
+        return ""
+    try:
+        result = subprocess.run(
+            [str(_SURGE_CLI_BIN), "--list-devices"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return ""
+    return result.stdout + result.stderr
+
+
 def list_midi_device_indices() -> dict[str, int]:
     """Query surge-xt-cli for its current MIDI input list and return a
     mapping of port name → device index.
@@ -405,21 +465,30 @@ def list_midi_device_indices() -> dict[str, int]:
     must already exist (i.e. ``MultiPortSink.open()`` must have been
     called) for them to show up.
     """
-    if not is_surge_cli_installed():
-        return {}
-    try:
-        result = subprocess.run(
-            [str(_SURGE_CLI_BIN), "--list-devices"],
-            capture_output=True, text=True, timeout=10,
-        )
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        return {}
-    out: dict[str, int] = {}
     pattern = re.compile(r"MIDI Device:\s*\[(\d+)\]\s*:\s*(.+?)\s*$")
-    for line in (result.stdout + result.stderr).splitlines():
+    out: dict[str, int] = {}
+    for line in _list_devices_raw().splitlines():
         m = pattern.search(line)
         if m:
             out[m.group(2).strip()] = int(m.group(1))
+    return out
+
+
+def list_audio_output_indices() -> dict[str, str]:
+    """Return surge's ``{device_name: --audio-interface index}`` map.
+
+    Output looks like ``Output Audio Device: [0.0] : CoreAudio.BlackHole 16ch``.
+    Strips the ``CoreAudio.`` prefix so callers can look up by the same
+    name macOS shows in Audio MIDI Setup.
+    """
+    pattern = re.compile(
+        r"Output Audio Device:\s*\[([\d.]+)\]\s*:\s*(?:CoreAudio\.)?(.+?)\s*$"
+    )
+    out: dict[str, str] = {}
+    for line in _list_devices_raw().splitlines():
+        m = pattern.search(line)
+        if m:
+            out[m.group(2).strip()] = m.group(1)
     return out
 
 
@@ -629,6 +698,19 @@ class SurgeInstance:
             "--osc-out-ipaddr=127.0.0.1",
             "--no-stdin",
         ]
+        # Ableton-blackhole mode populates audio_device + audio_channels
+        # on the role config; standalone leaves them None so surge picks
+        # the OS default output (today's behaviour).
+        if self.config.audio_device is not None:
+            # Resolve device name → surge's --audio-interface index
+            # (e.g. "BlackHole 16ch" → "0.0"). Done at spawn time so a
+            # device that wasn't plugged in at import time still works.
+            device_idx = list_audio_output_indices().get(self.config.audio_device)
+            if device_idx is not None:
+                args.append(f"--audio-interface={device_idx}")
+            if self.config.audio_channels is not None:
+                lo, hi = self.config.audio_channels
+                args.append(f"--audio-ports={lo},{hi}")
         patch_path = resolve_factory_patch(self.config.initial_patch)
         if patch_path is not None:
             args.append(f"--init-patch={patch_path}")
@@ -988,6 +1070,7 @@ class SurgeInstance:
 
 def spawn_surge_instances(
     *,
+    mode: str = "surge-standalone",
     on_progress: Optional[Callable[[str], None]] = None,
 ) -> list[SurgeInstance]:
     """Spawn the default quartet of surge-xt-cli instances bound to
@@ -997,6 +1080,14 @@ def spawn_surge_instances(
     :class:`MultiPortSink.open` has run) so the ports show up in
     surge-xt-cli's ``--list-devices`` output.
 
+    *mode* selects audio routing:
+
+    * ``"surge-standalone"`` (default) — no audio flags, surge picks
+      the OS default output. Matches pre-mode behaviour.
+    * ``"ableton-blackhole"`` — each role gets ``--audio-interface=
+      <BlackHole 16ch index>`` and its reserved channel pair from
+      :data:`_BLACKHOLE_PAIRS_BY_ROLE`.
+
     Returns the list of running :class:`SurgeInstance`. On failure
     (CLI not installed, port name missing) the failed instances are
     omitted from the result and a message is sent via *on_progress*.
@@ -1005,7 +1096,7 @@ def spawn_surge_instances(
     if not is_surge_cli_installed():
         if on_progress:
             on_progress(
-                f"--surge requested but surge-xt-cli not found. "
+                f"surge backend requested but surge-xt-cli not found. "
                 f"Install: {install_hint()}"
             )
         return instances
@@ -1018,15 +1109,35 @@ def spawn_surge_instances(
             f"{sorted(device_indices.keys())}"
         )
 
-    for cfg in SYNTH_ROLES:
-        idx = device_indices.get(cfg.midi_port_name)
+    # Pre-resolve BlackHole device index once for the whole spawn batch
+    # (ableton-blackhole mode only) so we can warn cleanly if it's missing.
+    if mode == "ableton-blackhole":
+        audio_outputs = list_audio_output_indices()
+        if _BLACKHOLE_DEVICE_NAME not in audio_outputs:
+            if on_progress:
+                on_progress(
+                    f"warning: mode=ableton-blackhole but surge-xt-cli "
+                    f"doesn't see {_BLACKHOLE_DEVICE_NAME!r}. "
+                    "Install: brew install --cask blackhole-16ch  "
+                    "(see [[reference_blackhole_routing_gotchas]])"
+                )
+
+    for base_cfg in SYNTH_ROLES:
+        idx = device_indices.get(base_cfg.midi_port_name)
         if idx is None:
             if on_progress:
                 on_progress(
-                    f"  skipping {cfg.role}: virtual port "
-                    f"{cfg.midi_port_name!r} not visible to surge-xt-cli"
+                    f"  skipping {base_cfg.role}: virtual port "
+                    f"{base_cfg.midi_port_name!r} not visible to surge-xt-cli"
                 )
             continue
+        # Apply mode-specific audio routing on top of the base config.
+        device, channels = audio_routing_for(base_cfg.role, mode)
+        cfg = replace(
+            base_cfg,
+            audio_device=device,
+            audio_channels=channels,
+        )
         inst = SurgeInstance(config=cfg, midi_input_index=idx)
         try:
             inst.spawn()
@@ -1035,9 +1146,15 @@ def spawn_surge_instances(
                 on_progress(f"  failed to spawn {cfg.role}: {e}")
             continue
         if on_progress:
+            audio_note = ""
+            if cfg.audio_device:
+                audio_note = (
+                    f", audio={cfg.audio_device}"
+                    + (f" ch={cfg.audio_channels}" if cfg.audio_channels else "")
+                )
             on_progress(
                 f"  {cfg.role}: midi-input={idx} ({cfg.midi_port_name!r}), "
-                f"osc-in={cfg.osc_in_port}, patch={cfg.initial_patch}"
+                f"osc-in={cfg.osc_in_port}, patch={cfg.initial_patch}{audio_note}"
             )
         instances.append(inst)
     return instances

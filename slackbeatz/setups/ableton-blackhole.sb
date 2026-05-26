@@ -1,0 +1,46 @@
+# ableton-blackhole.sb — Surge XT routed through BlackHole 16ch into Ableton.
+#
+# Same channel layout as `surge.sb` but the audio path goes through
+# BlackHole 16ch (a free virtual CoreAudio device) into an Ableton Live
+# Set that owns mixing / FX / master chain. Dual MIDI subscription is
+# free via CoreMIDI pub/sub — any Ableton MIDI track can subscribe to
+# the same `slackbeatz-<role>` virtual port surge is listening on, so
+# you can layer SB-driven Surge + a user-added instrument (e.g. SB-bass
+# + Ableton 303) without touching SB.
+#
+# Channel layout (BlackHole 16ch input pairs → Ableton audio tracks):
+#   1/2  = drums (FluidSynth on ch 10)
+#   3/4  = lead   (ch 1)
+#   5/6  = bass   (ch 2)
+#   7/8  = pad    (ch 3)
+#   9/10 = candy  (ch 4)
+#   11/12= sub    (ch 6)
+#
+# See [[reference_blackhole_routing_gotchas]] for setup notes:
+#   * `brew install --cask blackhole-16ch`
+#   * Audio MIDI Setup → BlackHole 16ch → set Format to 44100 Hz (the
+#     default is 8 kHz on a fresh install — drastically degrades audio)
+#   * In Ableton: Live → Settings → Audio → Input Config → enable
+#     channel pairs 3/4 through 11/12 (only 1/2 is enabled by default)
+
+setup "Ableton+BlackHole"
+
+mode ableton-blackhole
+
+# Pitched voices — Surge handles these (audio routed to BlackHole pairs).
+inst lead   ch=1
+inst bass   ch=2
+inst pad    ch=3
+inst candy  ch=4
+inst riser  ch=4   # alias for `candy`
+inst sub    ch=6
+
+# Drum voices on channel 10 (FluidSynth → BlackHole 1/2).
+inst kick   ch=10 note=36
+inst snare  ch=10 note=38
+inst clap   ch=10 note=39
+inst hats   ch=10 note=42
+inst ohats  ch=10 note=46
+
+# Full kit reference for `drums`-type gens.
+kit kit ch=10 preset=gm

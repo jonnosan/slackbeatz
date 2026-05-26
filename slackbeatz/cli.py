@@ -123,10 +123,14 @@ def cmd_play(args) -> int:
             song_path.unlink(missing_ok=True)
         return 2
 
-    backend = setup.backend
+    mode = setup.mode
+    backend = setup.backend  # derived: "external" or "surge"
     osc_routing_enabled = backend == "surge"
-    # FluidSynth still spawns for ch10 drums under the surge backend.
+    # FluidSynth still spawns for ch10 drums under any surge-* mode.
     need_fluidsynth = osc_routing_enabled and _setup_has_drum_channel(setup)
+    # In ableton-blackhole, FluidSynth's stereo output goes to BlackHole
+    # 1/2 so Ableton's drum track receives it; otherwise OS default.
+    fluidsynth_device = "BlackHole 16ch" if mode == "ableton-blackhole" else None
 
     fs_proc = None
     port_name: Optional[str] = None
@@ -141,6 +145,7 @@ def cmd_play(args) -> int:
         try:
             fs_proc, new_port, spawn_err = _spawn_fluidsynth(
                 soundfont, gain=0.6, reverb=0.8,
+                audio_device=fluidsynth_device,
             )
         except MissingToolError as e:
             print(f"error: {e}", file=sys.stderr)
@@ -206,8 +211,11 @@ def cmd_play(args) -> int:
                 file=sys.stderr,
             )
         else:
-            print("\nslackbeatz: spawning headless surge-xt-cli instances:")
-            surge_instances = spawn_surge_instances(on_progress=print)
+            print(
+                f"\nslackbeatz: spawning headless surge-xt-cli instances "
+                f"(mode={mode}):"
+            )
+            surge_instances = spawn_surge_instances(mode=mode, on_progress=print)
         sampler = _start_sampler_if_enabled(osc_routing_enabled)
 
     player.play()
@@ -416,30 +424,37 @@ def cmd_audio(args) -> int:
     return 0
 
 
-def _spawn_fluidsynth(soundfont: Path, *, gain: float, reverb: float) -> tuple[subprocess.Popen[bytes] | None, str | None, str | None]:
+def _spawn_fluidsynth(
+    soundfont: Path, *,
+    gain: float, reverb: float,
+    audio_device: Optional[str] = None,
+) -> tuple[subprocess.Popen[bytes] | None, str | None, str | None]:
     """Spawn a CoreAudio + CoreMIDI FluidSynth and wait for its MIDI port.
 
     Returns ``(proc, port_name, None)`` on success, or
     ``(None, None, error_message)`` on failure. Used by ``cmd_live`` to
-    bring up a FluidSynth backend on demand (``--fluidsynth``
-    / ``--surge``).
+    bring up a FluidSynth backend on demand for ch10 drums under any
+    surge-* mode.
 
-    See the inline comment about ``-n`` / ``-i`` for why we use
-    ``stdin=PIPE`` with no flag suppression.
+    *audio_device* selects the CoreAudio output device by name (e.g.
+    ``"BlackHole 16ch"`` under ableton-blackhole mode). ``None`` uses
+    the system default.
     """
     fluidsynth_bin = require_tool("fluidsynth")
     before_ports = set(available_ports())
+    fs_args = [
+        fluidsynth_bin,
+        "-a", "coreaudio",
+        "-m", "coremidi",
+        "-o", f"synth.gain={gain}",
+        "-o", f"synth.reverb.room-size={reverb}",
+        "-o", "synth.chorus.active=1",
+    ]
+    if audio_device:
+        fs_args += ["-o", f"audio.coreaudio.device={audio_device}"]
+    fs_args += ["-q", str(soundfont)]
     proc = subprocess.Popen(
-        [
-            fluidsynth_bin,
-            "-a", "coreaudio",
-            "-m", "coremidi",
-            "-o", f"synth.gain={gain}",
-            "-o", f"synth.reverb.room-size={reverb}",
-            "-o", "synth.chorus.active=1",
-            "-q",
-            str(soundfont),
-        ],
+        fs_args,
         stdin=subprocess.PIPE,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,

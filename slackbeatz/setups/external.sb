@@ -12,7 +12,7 @@
 
 setup "External MIDI"
 
-backend external
+mode external
 
 # Drum voices on channel 10 at their GM notes.
 inst kick   ch=10 note=36

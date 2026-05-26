@@ -384,6 +384,8 @@ class _Parser:
             self._handle_kit_header(tail, ln.line_no)
         elif kw == "backend":
             self._handle_backend(tail, ln.line_no)
+        elif kw == "mode":
+            self._handle_mode(tail, ln.line_no)
         elif kw == "gen":
             self._handle_gen(tail, ln.line_no)
         elif kw == "part":
@@ -422,9 +424,34 @@ class _Parser:
                 line_no,
                 f"unknown backend {name!r} (allowed: surge, external)",
             )
-        if self.file.setup.backend is not None:
-            raise ParseError(line_no, "more than one backend directive in setup")
+        if self.file.setup.backend is not None or self.file.setup.mode is not None:
+            raise ParseError(
+                line_no,
+                "setup may only have one of `mode` / `backend` directives",
+            )
         self.file.setup.backend = name
+
+    def _handle_mode(self, tail: list[str], line_no: int) -> None:
+        if self.file.setup is None:
+            raise ParseError(line_no, "mode outside of a setup block")
+        if len(tail) != 1:
+            raise ParseError(
+                line_no,
+                "expected: mode <external|surge-standalone|ableton-blackhole>",
+            )
+        name = tail[0]
+        allowed = ("external", "surge-standalone", "ableton-blackhole")
+        if name not in allowed:
+            raise ParseError(
+                line_no,
+                f"unknown mode {name!r} (allowed: {', '.join(allowed)})",
+            )
+        if self.file.setup.mode is not None or self.file.setup.backend is not None:
+            raise ParseError(
+                line_no,
+                "setup may only have one of `mode` / `backend` directives",
+            )
+        self.file.setup.mode = name
 
     def _handle_song_header(self, tail: list[str], line_no: int) -> None:
         if self.file.song is not None:

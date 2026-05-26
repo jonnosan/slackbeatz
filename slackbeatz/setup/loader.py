@@ -20,7 +20,7 @@ from slackbeatz.drums.presets import PRESETS, preset_map
 from slackbeatz.dsl.ast import KitDecl, InstDecl, SetupAST
 from slackbeatz.dsl.parser import parse_file
 
-from .model import Backend, Instrument, Kit, Setup
+from .model import Instrument, Kit, Mode, Setup
 
 
 class SetupError(Exception):
@@ -106,12 +106,21 @@ def setup_from_ast(ast: SetupAST) -> Setup:
             )
         kits[kdecl.name] = _kit_from_decl(kdecl)
 
-    backend: Backend = ast.backend if ast.backend in ("surge", "external") else "external"  # type: ignore[assignment]
+    # Resolve mode: explicit `mode` wins; otherwise translate legacy
+    # `backend` (surge → surge-standalone, external → external); fall back
+    # to "external" so setups with neither directive keep pre-redesign
+    # behaviour.
+    if ast.mode in ("external", "surge-standalone", "ableton-blackhole"):
+        mode: Mode = ast.mode  # type: ignore[assignment]
+    elif ast.backend == "surge":
+        mode = "surge-standalone"
+    else:
+        mode = "external"
     return Setup(
         name=ast.name,
         instruments=instruments,
         kits=kits,
-        backend=backend,
+        mode=mode,
     )
 
 

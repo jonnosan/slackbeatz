@@ -1,8 +1,8 @@
-"""Setup editor screen — instruments + kits + backend picker.
+"""Setup editor screen — instruments + kits + mode picker.
 
 Reads the resolved song's setup, lets the user inspect channel
-routing, and exposes the backend choice (`surge` vs `external`) as a
-radio. Edit-and-save round-trip uses
+routing, and exposes the mode choice (external / surge-standalone /
+ableton-blackhole) as a radio. Edit-and-save round-trip uses
 :func:`slackbeatz.setup.serialize.emit_setup` — but the actual writes
 go via the GUI's Save action on the Arrangement screen (which writes
 the whole .sb).
@@ -47,22 +47,24 @@ class SetupScreen(tk.Frame):
                  font=("TkDefaultFont", 11, "bold"),
                  anchor="w").pack(fill="x")
 
-        # Backend picker.
-        backend_row = tk.Frame(body)
-        backend_row.pack(fill="x", pady=8)
-        tk.Label(backend_row, text="Backend:").pack(side="left")
-        # Setup may not have `backend` (older bundled sets); default
-        # to "external".
-        current = getattr(setup, "backend", "external")
-        self.backend_var = tk.StringVar(value=current)
-        for label, value in (("surge", "surge"), ("external", "external")):
+        # Mode picker.
+        mode_row = tk.Frame(body)
+        mode_row.pack(fill="x", pady=8)
+        tk.Label(mode_row, text="Mode:").pack(side="left")
+        current = getattr(setup, "mode", "external")
+        self.mode_var = tk.StringVar(value=current)
+        for label, value in (
+            ("external", "external"),
+            ("surge-standalone", "surge-standalone"),
+            ("ableton-blackhole", "ableton-blackhole"),
+        ):
             ttk.Radiobutton(
-                backend_row, text=label, value=value,
-                variable=self.backend_var,
-                command=self._on_backend_change,
+                mode_row, text=label, value=value,
+                variable=self.mode_var,
+                command=self._on_mode_change,
             ).pack(side="left", padx=4)
         tk.Label(
-            backend_row,
+            mode_row,
             text=" (takes effect on next Play)",
             fg="gray",
         ).pack(side="left", padx=8)
@@ -107,15 +109,15 @@ class SetupScreen(tk.Frame):
         txt.config(state="disabled")
         txt.pack(fill="both", expand=True, padx=12, pady=4)
 
-    def _on_backend_change(self) -> None:
-        """Mutate the in-memory Setup's backend. Save action picks it up."""
+    def _on_mode_change(self) -> None:
+        """Mutate the in-memory Setup's mode. Save action picks it up."""
         resolved = self._resolved()
         if resolved is None:
             return
         # Setup is frozen at the class level; use object.__setattr__
-        # to write the new backend.
+        # to write the new mode.
         try:
-            object.__setattr__(resolved.setup, "backend", self.backend_var.get())
+            object.__setattr__(resolved.setup, "mode", self.mode_var.get())
         except Exception:
             pass
 

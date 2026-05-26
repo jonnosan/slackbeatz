@@ -27,11 +27,12 @@ from .model import Instrument, Kit, Setup
 
 
 def emit_setup(setup: Setup) -> str:
-    """Return the ``.sb`` source for *setup* — header + insts + kits.
+    """Return the ``.sb`` source for *setup* — header + mode + insts + kits.
 
     Output shape::
 
         setup "<name>"
+        mode <mode>          (omitted when mode == "external" — the default)
         inst <name> ch=<N> [note=<M>]
         ...
         kit <name> ch=<N>
@@ -45,6 +46,8 @@ def emit_setup(setup: Setup) -> str:
     round-trip preserves the source order.
     """
     lines: list[str] = [f'setup "{setup.name}"']
+    if setup.mode != "external":
+        lines.append(f"mode {setup.mode}")
     for inst in setup.instruments.values():
         lines.append(_emit_instrument(inst))
     for kit in setup.kits.values():

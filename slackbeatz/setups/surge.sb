@@ -1,20 +1,23 @@
 # surge.sb — Surge XT for pitched voices, FluidSynth for ch10 drums.
 #
-# The default setup for new songs when the user picks the `surge` backend
-# in the Welcome dialog (or whenever `--setup surge` is passed). Channel
-# layout matches :data:`slackbeatz.surge_host.SYNTH_ROLES` so every
-# pitched voice gets its own headless surge-xt-cli instance.
+# Default setup for new songs in surge-standalone mode (audio writes
+# direct to CoreAudio; SB owns the mixer with no cross-bus / master
+# FX — that's the accepted limit of this mode; for cross-bus + DAW
+# FX use `ableton-blackhole.sb` instead).
+#
+# Channel layout matches :data:`slackbeatz.surge_host.SYNTH_ROLES` so
+# every pitched voice gets its own headless surge-xt-cli instance.
 #
 #   ch 1 = lead       (melody)
 #   ch 2 = bass       (bass)
 #   ch 3 = pad        (chords)
 #   ch 4 = candy      (candy / FX / riser)
 #   ch 6 = sub        (subbass)
-#   ch 10 = drum kit  (rhythm; rendered via FluidSynth in surge backend)
+#   ch 10 = drum kit  (rhythm; rendered via FluidSynth)
 
 setup "Surge"
 
-backend surge
+mode surge-standalone
 
 # Pitched voices — Surge handles these.
 inst lead   ch=1

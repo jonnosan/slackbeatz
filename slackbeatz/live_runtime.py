@@ -112,6 +112,7 @@ def _setup_has_drum_channel(setup) -> bool:
 
 def _spawn_fluidsynth_port(
     *, gain: float = 0.6, reverb: float = 0.8,
+    audio_device: Optional[str] = None,
 ) -> tuple[subprocess.Popen, str]:
     """Spawn a CoreAudio + CoreMIDI FluidSynth and return its MIDI port.
 
@@ -122,6 +123,12 @@ def _spawn_fluidsynth_port(
     bootstrap can share it. Identical wait + diff-the-port-list
     technique — FluidSynth doesn't name its CoreMIDI port up front
     so we snapshot before/after and take the new entry.
+
+    *audio_device* selects the CoreAudio output device. ``None`` uses
+    the system default (today's behaviour, matches surge-standalone
+    mode). Pass ``"BlackHole 16ch"`` in ableton-blackhole mode so the
+    drum bus lands on BlackHole channels 1/2 — which Ableton's Audio
+    track 1 reads from to apply DAW FX.
     """
     import time
     from slackbeatz.audio import MissingToolError, require_tool
@@ -136,17 +143,19 @@ def _spawn_fluidsynth_port(
         raise LiveRuntimeError(str(e)) from e
 
     before_ports = set(available_ports())
+    fs_args = [
+        fluidsynth_bin,
+        "-a", "coreaudio",
+        "-m", "coremidi",
+        "-o", f"synth.gain={gain}",
+        "-o", f"synth.reverb.room-size={reverb}",
+        "-o", "synth.chorus.active=1",
+    ]
+    if audio_device:
+        fs_args += ["-o", f"audio.coreaudio.device={audio_device}"]
+    fs_args += ["-q", str(soundfont)]
     proc = subprocess.Popen(
-        [
-            fluidsynth_bin,
-            "-a", "coreaudio",
-            "-m", "coremidi",
-            "-o", f"synth.gain={gain}",
-            "-o", f"synth.reverb.room-size={reverb}",
-            "-o", "synth.chorus.active=1",
-            "-q",
-            str(soundfont),
-        ],
+        fs_args,
         stdin=subprocess.PIPE,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
@@ -215,22 +224,31 @@ def build_live_runtime(
     except (ParseError, ResolveError, SetupError) as e:
         raise LiveRuntimeError(str(e)) from e
 
-    backend = setup.backend
+    mode = setup.mode
+    backend = setup.backend  # derived: "external" or "surge"
     osc_routing_enabled = backend == "surge"
     need_fluidsynth = osc_routing_enabled and _setup_has_drum_channel(setup)
+    # In ableton-blackhole mode, drums route through BlackHole 1/2 so
+    # Ableton can apply FX. Other modes leave FluidSynth on the OS
+    # default output.
+    fluidsynth_device = (
+        "BlackHole 16ch" if mode == "ableton-blackhole" else None
+    )
 
     # Reuse path — skip the FluidSynth + surge-xt-cli spawn and
     # transfer the previous runtime's children. Triggered when the
     # caller hands us a compatible ``reuse_from`` (same setup name +
-    # same backend) — typical when the user opens a different .sb
-    # file with the same bundled ``surge`` setup. Saves ~5s of
-    # surge-xt-cli boot per song switch.
+    # same mode) — typical when the user opens a different .sb
+    # file with the same bundled setup. Saves ~5s of surge-xt-cli boot
+    # per song switch. Reuse keys on mode (not backend) so a switch
+    # between surge-standalone and ableton-blackhole respawns surge
+    # with the new audio routing flags.
     if (
         reuse_from is not None
         and not reuse_from._transferred
         and not reuse_from._down
         and getattr(reuse_from.setup, "name", None) == getattr(setup, "name", None)
-        and reuse_from.backend == backend
+        and getattr(reuse_from.setup, "mode", None) == mode
     ):
         on_progress(
             f"slackbeatz: reusing existing surge instances "
@@ -280,8 +298,9 @@ def build_live_runtime(
 
     if need_fluidsynth:
         on_progress("slackbeatz: spawning FluidSynth for ch10 drums…")
-        fs_proc, port_name = _spawn_fluidsynth_port()
-        on_progress(f"  ch10 → FluidSynth on {port_name!r}")
+        fs_proc, port_name = _spawn_fluidsynth_port(audio_device=fluidsynth_device)
+        device_note = f" → {fluidsynth_device} ch 1/2" if fluidsynth_device else ""
+        on_progress(f"  ch10 → FluidSynth on {port_name!r}{device_note}")
     else:
         # Non-surge backend, or surge with no drums. Use first
         # available MIDI port — or create a virtual one.
@@ -336,8 +355,11 @@ def build_live_runtime(
                 f"pitched channels will be silent."
             )
         else:
-            on_progress("slackbeatz: spawning headless surge-xt-cli…")
+            on_progress(
+                f"slackbeatz: spawning headless surge-xt-cli (mode={mode})…"
+            )
             runtime.surge_instances = spawn_surge_instances(
+                mode=mode,
                 on_progress=on_progress,
             )
         # Sampler enables the voice / fx channels regardless of

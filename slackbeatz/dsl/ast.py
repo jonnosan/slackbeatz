@@ -43,15 +43,22 @@ class KitDecl:
 class SetupAST:
     """A `setup "name"` block plus all `inst`/`kit` lines that belong to it.
 
-    ``backend`` carries the `backend NAME` directive (``"surge"`` or
-    ``"external"``); ``None`` when the directive is absent — the
-    loader picks the default in that case.
+    ``mode`` carries the ``mode NAME`` directive — one of
+    ``"external"`` / ``"surge-standalone"`` / ``"ableton-blackhole"``.
+    ``None`` when no mode directive is present.
+
+    ``backend`` carries the legacy ``backend NAME`` directive
+    (``"surge"`` or ``"external"``) for older `.sb` files. Only one
+    of ``mode`` / ``backend`` may be set per setup block; the loader
+    maps ``backend surge`` → mode ``surge-standalone`` and
+    ``backend external`` → mode ``external``.
     """
 
     name: str
     instruments: list[InstDecl] = field(default_factory=list)
     kits: list[KitDecl] = field(default_factory=list)
     backend: str | None = None
+    mode: str | None = None
     line: int = 0
 
 
