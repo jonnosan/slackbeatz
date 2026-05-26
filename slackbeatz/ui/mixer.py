@@ -164,21 +164,19 @@ class MixerScreen(tk.Frame):
                 state=("normal" if surge_inst is not None else "disabled"),
             ).pack(pady=2)
 
-        # Patch button — same picker the drilldown uses. Available in
-        # all modes that have a live surge instance (so the user can
-        # change sound design without leaving the Mixer).
-        if surge_inst is not None:
+        # Patch + FX buttons drive Surge XT directly — only meaningful
+        # in surge-standalone mode where SB owns the synth instances.
+        # ableton mode: instruments live in the user's Live Set (use
+        # Ableton's own preset browser). external mode: no synth at all.
+        if surge_inst is not None and self._mode() == "surge-standalone":
             ttk.Button(
                 strip, text="Patch…", width=8,
                 command=lambda inst=surge_inst: self._open_patch_picker(inst),
             ).pack(pady=1)
-            if not ableton_owns_mix:
-                # FX editor — Surge's per-instance FX slots. Skipped
-                # under ableton since FX lives in Ableton.
-                ttk.Button(
-                    strip, text="FX…", width=8,
-                    command=lambda inst=surge_inst: self._open_fx_editor(inst),
-                ).pack(pady=1)
+            ttk.Button(
+                strip, text="FX…", width=8,
+                command=lambda inst=surge_inst: self._open_fx_editor(inst),
+            ).pack(pady=1)
 
         # Mute / Solo toggles.
         player = self.app.player
