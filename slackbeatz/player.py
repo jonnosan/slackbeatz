@@ -1930,7 +1930,14 @@ class Player:
         indicators on the Mixer + Sound tabs — negligible cost per
         message (one dict write).
         """
-        base = RealtimeSink(port_name=self.port_name)
+        # port_name=None signals ableton-blackhole's all-channels-routed
+        # mode — use a NullSink as the default rather than failing on
+        # RealtimeSink's "no MIDI port" requirement.
+        if self.port_name is None:
+            from slackbeatz.sinks.null import NullSink
+            base = NullSink()
+        else:
+            base = RealtimeSink(port_name=self.port_name)
         if not self.osc_routing:
             return _ActivityTapSink(base, self)
         from slackbeatz.sinks.composite import CompositeSink

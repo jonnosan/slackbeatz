@@ -319,6 +319,13 @@ def build_live_runtime(
         fs_proc, port_name = _spawn_fluidsynth_port(audio_device=fluidsynth_device)
         device_note = f" → {fluidsynth_device} ch 1/2" if fluidsynth_device else ""
         on_progress(f"  ch10 → FluidSynth on {port_name!r}{device_note}")
+    elif mode == "ableton-blackhole":
+        # All routable channels go through MultiPortSink → dedicated
+        # virtual ports. No general MIDI destination is needed; the
+        # default sink becomes a NullSink that drops anything unrouted.
+        # Marker port_name=None tells Player._make_sink to skip
+        # RealtimeSink and use NullSink instead.
+        port_name = None
     else:
         # Non-surge backend, or surge with no drums. Use first
         # available MIDI port — or create a virtual one.
