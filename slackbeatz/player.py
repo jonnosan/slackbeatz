@@ -483,9 +483,21 @@ class Player:
 
         # MIDI Clock output. When True, the playback worker spawns a
         # ClockEmitter sibling thread that broadcasts 0xF8 pulses at
-        # 24 PPQN plus Start/Stop/Continue bytes so downstream MIDI
-        # gear can lock to slackbeatz's tempo.
+        # 24 PPQN plus Start/Stop/Continue/SPP bytes so downstream
+        # MIDI gear can lock to slackbeatz's tempo.
         self.emit_clock: bool = False
+        # Optional dedicated output port for the ClockEmitter. When
+        # ``None`` the emitter shares :attr:`port_name`. The
+        # ableton-blackhole runtime sets this to
+        # ``"slackbeatz-transport-out"`` so transport/clock land on
+        # a virtual port Ableton subscribes to via Sync IN — keeping
+        # them separate from per-channel note routing.
+        self.transport_port_name: Optional[str] = None
+        # Optional :class:`slackbeatz.sinks.transport_in.TransportListener`
+        # for echo suppression. When set, the ClockEmitter calls
+        # ``note_outbound_event`` on every transport byte it sends so
+        # the listener can suppress the Ableton-reflected echo.
+        self.transport_listener = None
 
         # Currently-loaded source. Either a phrase (composed) or a path
         # to a .sb file (live mode). One of these is non-None when a
@@ -1973,10 +1985,11 @@ class Player:
                 if self.emit_clock:
                     from slackbeatz.clock_emitter import ClockEmitter
                     emitter = ClockEmitter(
-                        port_name=self.port_name,
+                        port_name=self.transport_port_name or self.port_name,
                         tempo_map=tempo_map,
                         stop_event=self._stop_event,
                         start_at_tick=first_iteration_from_tick,
+                        transport_listener=self.transport_listener,
                     )
                     emitter.start()
                 try:

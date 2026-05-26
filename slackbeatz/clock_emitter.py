@@ -11,6 +11,9 @@ The emitter also fires the transport bytes that gate that pulse:
 * ``start``    (0xFA) — when playback begins at tick 0
 * ``continue`` (0xFB) — when playback begins at a non-zero tick (seek)
 * ``stop``     (0xFC) — when playback ends
+* ``songpos``  (0xF2) — Song Position Pointer; sent before Start/Continue
+  and on seek so the slave knows where in the song we are. Quantised
+  to 16th-notes per the MIDI spec.
 
 Implementation notes:
 
@@ -20,9 +23,11 @@ Implementation notes:
 * The interval is recomputed from the current tempo each tick, so
   per-part tempo changes (and live ``/tempo N`` slider moves) are
   reflected without restarting the emitter.
-* We open a *separate* :class:`RealtimeSink` from the scheduler's so
-  the two threads don't have to share a mido port (rtmidi's port-send
-  thread-safety is platform-dependent on macOS CoreMIDI).
+* We open a *separate* MIDI port from the scheduler's so the two
+  threads don't have to share a mido port (rtmidi's port-send
+  thread-safety is platform-dependent on macOS CoreMIDI). When the
+  target port doesn't exist (e.g. ``slackbeatz-transport-out`` in
+  ableton-blackhole mode), we create it as a virtual CoreMIDI port.
 """
 
 from __future__ import annotations
@@ -34,11 +39,19 @@ from typing import Optional
 import mido
 
 from slackbeatz.engine.clock import PPQ, TempoMap
-from slackbeatz.sinks.realtime import RealtimeSink
+from slackbeatz.sinks.realtime import RealtimeSink, available_ports
 
 
 # MIDI Clock spec: 24 pulses per quarter note.
 CLOCK_PPQN = 24
+
+# Song Position Pointer unit = 1/16th note = PPQ/4 ticks.
+_SPP_TICK_UNIT = PPQ // 4
+
+
+def _tick_to_spp_value(tick: int) -> int:
+    """Convert song-tick → 14-bit SPP value (clamped to spec max)."""
+    return max(0, min(16383, tick // _SPP_TICK_UNIT))
 
 
 class ClockEmitter:
@@ -51,50 +64,98 @@ class ClockEmitter:
         stop_event: threading.Event,
         *,
         start_at_tick: int = 0,
+        transport_listener=None,
     ) -> None:
         self.port_name = port_name
         self.tempo_map = tempo_map
         self.stop_event = stop_event
         self.start_at_tick = start_at_tick
+        self.transport_listener = transport_listener
         self._thread: Optional[threading.Thread] = None
-        self._sink: Optional[RealtimeSink] = None
+        self._port: Optional[mido.ports.BaseOutput] = None
+        self._sink: Optional[RealtimeSink] = None  # legacy path; None when virtual
+
+    def _open_port(self) -> None:
+        """Open ``port_name`` for output.
+
+        Tries the existing-port path first (RealtimeSink with
+        all-notes-off-on-close). If the named port doesn't exist,
+        creates it as a virtual CoreMIDI source — that's how the
+        ableton-blackhole mode's ``slackbeatz-transport-out`` port
+        comes into being (Ableton subscribes to it as a Sync source).
+        """
+        ports = available_ports()
+        if self.port_name in ports:
+            self._sink = RealtimeSink(port_name=self.port_name)
+            try:
+                self._sink.open()
+            except Exception:
+                self._sink = None
+                return
+            self._port = self._sink._port  # type: ignore[union-attr]
+            return
+        # Virtual port path: open with virtual=True so Ableton (or any
+        # other subscriber) can listen to it.
+        try:
+            self._port = mido.open_output(self.port_name, virtual=True)
+        except Exception:
+            self._port = None
 
     def start(self) -> None:
-        """Open the port, send Start/Continue, kick off the daemon thread."""
-        self._sink = RealtimeSink(port_name=self.port_name)
-        try:
-            self._sink.open()
-        except Exception:
+        """Open the port, send SPP + Start/Continue, kick off the daemon."""
+        self._open_port()
+        if self._port is None:
             # Port unavailable — silently no-op. Errors here would
             # otherwise abort the whole playback worker; downstream
             # gear simply won't sync.
-            self._sink = None
             return
-        # Transport byte. Continue (0xFB) signals "resume from previous
-        # position"; some gear interprets it via the most recent SPP.
-        opening = "continue" if self.start_at_tick > 0 else "start"
+        # SPP first — Per MIDI spec, slaves use the most recent SPP
+        # at the next Start/Continue to locate. Always emit so a
+        # mid-song Continue lands on the right beat.
+        self._note_outbound("songpos")
         try:
-            self._sink._port.send(mido.Message(opening))  # type: ignore[union-attr]
+            self._port.send(
+                mido.Message("songpos", pos=_tick_to_spp_value(self.start_at_tick))
+            )
+        except Exception:
+            pass
+        # Transport byte. Continue (0xFB) signals "resume from previous
+        # position".
+        opening = "continue" if self.start_at_tick > 0 else "start"
+        self._note_outbound(opening)
+        try:
+            self._port.send(mido.Message(opening))
         except Exception:
             pass
 
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
+    def _note_outbound(self, kind: str) -> None:
+        """Tell the paired TransportListener we just sent *kind*."""
+        if self.transport_listener is not None:
+            try:
+                self.transport_listener.note_outbound_event(kind)
+            except Exception:
+                pass
+
     def stop(self) -> None:
         """Send Stop and close the port. Idempotent."""
-        # The thread sees stop_event via its own caller; we just close
-        # the port + send the byte. Caller may also set stop_event.
-        if self._sink is None:
+        if self._port is None:
             return
+        self._note_outbound("stop")
         try:
-            self._sink._port.send(mido.Message("stop"))  # type: ignore[union-attr]
+            self._port.send(mido.Message("stop"))
         except Exception:
             pass
         try:
-            self._sink.close()
+            if self._sink is not None:
+                self._sink.close()
+            else:
+                self._port.close()
         except Exception:
             pass
+        self._port = None
         self._sink = None
         # Don't join the thread here — it'll exit when stop_event is
         # set by the caller, and we're a daemon so interpreter exit
@@ -102,9 +163,9 @@ class ClockEmitter:
 
     def _run(self) -> None:
         """Emit 0xF8 ticks at 24 PPQN using absolute-target scheduling."""
-        if self._sink is None:
+        if self._port is None:
             return
-        port = self._sink._port  # type: ignore[union-attr]
+        port = self._port
 
         # Wall-clock origin: now corresponds to tick start_at_tick.
         start_perf = time.perf_counter()

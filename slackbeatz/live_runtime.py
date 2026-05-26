@@ -64,6 +64,7 @@ class LiveRuntime:
     fs_proc: Optional[subprocess.Popen] = None
     surge_instances: list = field(default_factory=list)
     sampler: object | None = None
+    transport_listener: object | None = None  # TransportListener in ableton mode
     _down: bool = False
     _transferred: bool = False
 
@@ -81,6 +82,11 @@ class LiveRuntime:
             pass
         if self._transferred:
             return
+        if self.transport_listener is not None:
+            try:
+                self.transport_listener.stop()
+            except Exception:
+                pass
         for inst in self.surge_instances:
             try:
                 inst.shutdown()
@@ -282,6 +288,13 @@ def build_live_runtime(
         # this is already set.
         if prev_sink is not None:
             player._shared_routing_sink = prev_sink
+        # Carry the transport plumbing across the song-switch reuse so
+        # Ableton stays bound to the same virtual ports + the existing
+        # TransportListener thread keeps running.
+        if reuse_from.transport_listener is not None:
+            player.transport_port_name = "slackbeatz-transport-out"
+            player.transport_listener = reuse_from.transport_listener
+            player.emit_clock = True
         player.load_file(song_path)
 
         return LiveRuntime(
@@ -291,6 +304,7 @@ def build_live_runtime(
             fs_proc=reuse_from.fs_proc,
             surge_instances=list(reuse_from.surge_instances),
             sampler=reuse_from.sampler,
+            transport_listener=reuse_from.transport_listener,
         )
 
     fs_proc: Optional[subprocess.Popen] = None
@@ -335,11 +349,56 @@ def build_live_runtime(
     player.seed_offset = seed_offset
     player.load_file(song_path)
 
+    # Bidirectional MIDI transport in ableton-blackhole mode. SB stays
+    # the clock master (emit_clock=True → ClockEmitter on
+    # slackbeatz-transport-out); a TransportListener on
+    # slackbeatz-transport-in lets Ableton drive Start/Stop/Continue/SPP.
+    # Echo suppression is wired via Player.transport_listener so the
+    # emitter notes outbound events before the listener sees them
+    # reflected. Configure Ableton: Live → Settings → Link/MIDI →
+    # MIDI input: Sync = On for slackbeatz-transport-out; MIDI output:
+    # Sync = On for slackbeatz-transport-in.
+    transport_listener = None
+    if mode == "ableton-blackhole":
+        from slackbeatz.sinks.transport_in import TransportListener
+
+        def _on_play(from_tick: int) -> None:
+            try:
+                player.play(from_tick=from_tick)
+            except Exception:
+                pass
+
+        def _on_stop() -> None:
+            try:
+                player.stop()
+            except Exception:
+                pass
+
+        def _on_seek(tick: int) -> None:
+            if player.is_playing:
+                try:
+                    player.seek_to_tick(tick)
+                except Exception:
+                    pass
+
+        transport_listener = TransportListener(
+            on_play=_on_play, on_stop=_on_stop, on_seek=_on_seek,
+        )
+        transport_listener.start()
+        player.transport_port_name = "slackbeatz-transport-out"
+        player.transport_listener = transport_listener
+        player.emit_clock = True
+        on_progress(
+            "slackbeatz: transport sync wired (Ableton: Sync IN from "
+            "slackbeatz-transport-out, Sync OUT to slackbeatz-transport-in)"
+        )
+
     runtime = LiveRuntime(
         player=player,
         setup=setup,
         backend=backend,
         fs_proc=fs_proc,
+        transport_listener=transport_listener,
     )
 
     if osc_routing_enabled:
