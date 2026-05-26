@@ -25,9 +25,15 @@ import mido
 from slackbeatz.engine.clock import PPQ, TempoMap, TempoSegment, bars_to_ticks
 from slackbeatz.engine.event import CC, Note, PitchBend, validate
 from slackbeatz.engine.feel_apply import apply_feel
+from slackbeatz.engine.lfo_apply import (
+    gen_matches_lfo_scope,
+    lfo_value_to_knob,
+    parse_feel_pattern_ref,
+)
 from slackbeatz.generators.feel import FEEL_KNOB_NAMES
 from slackbeatz.generators.registry import REGISTRY
 from slackbeatz.model.context import PartContext
+from slackbeatz.model.lfo import lfo_value_at
 from slackbeatz.model.song import ResolvedSong
 
 if TYPE_CHECKING:
@@ -265,19 +271,41 @@ def render_events(song: ResolvedSong) -> list[tuple[int, mido.Message]]:
                 effective_overrides = {**voice_knobs, **part_knobs}
             else:
                 effective_overrides = None
-            algo = _instantiate_algorithm(
-                gen_resolved,
-                algorithm=algorithm,
-                knob_overrides=effective_overrides,
-            )
             bucket = events_by_gen.setdefault(gen_handle, [])
-            # Future hoist (see slackbeatz/engine/feel_apply.py): generators
-            # stop calling humanize_hit / apply_gate_jitter / etc. themselves
-            # and the post-emit apply_feel pass mutates events uniformly per
-            # the universal Feel knob set. apply_feel is a no-op pass-through
-            # today so byte-identical output is preserved.
-            feel = _feel_for_gen(gen_resolved)
-            for event in apply_feel(algo.generate(ctx), feel, ctx.rng, ctx):
+            # LFO-modulated feel/pattern knob detection. If any apply
+            # line on this part targets a knob on this gen, switch to
+            # per-bar re-emission (lfo_apply module). Otherwise the
+            # normal one-call-per-part path runs.
+            modulating_apps = _lfo_modulations_for_gen(
+                part.lfo_applications, gen_resolved,
+            )
+            if modulating_apps:
+                events_iter = _events_for_gen_per_bar(
+                    song=song,
+                    part_name=part_name,
+                    part=part,
+                    gen_resolved=gen_resolved,
+                    gen_handle=gen_handle,
+                    algorithm=algorithm,
+                    effective_overrides=effective_overrides,
+                    cursor=cursor,
+                    base_ctx=ctx,
+                    modulating_apps=modulating_apps,
+                )
+            else:
+                algo = _instantiate_algorithm(
+                    gen_resolved,
+                    algorithm=algorithm,
+                    knob_overrides=effective_overrides,
+                )
+                # Future hoist (see slackbeatz/engine/feel_apply.py): generators
+                # stop calling humanize_hit / apply_gate_jitter / etc. themselves
+                # and the post-emit apply_feel pass mutates events uniformly per
+                # the universal Feel knob set. apply_feel is a no-op pass-through
+                # today so byte-identical output is preserved.
+                feel = _feel_for_gen(gen_resolved)
+                events_iter = apply_feel(algo.generate(ctx), feel, ctx.rng, ctx)
+            for event in events_iter:
                 validate(event)
                 if isinstance(event, Note):
                     on_tick = cursor + event.tick
@@ -373,6 +401,126 @@ def render_events(song: ResolvedSong) -> list[tuple[int, mido.Message]]:
     timed = [t for events in events_by_gen.values() for t in events]
     timed.sort(key=lambda t: (t[0], t[1]))
     return [(tick, msg) for tick, _key, msg in timed]
+
+
+def _lfo_modulations_for_gen(lfo_applications, gen_resolved):
+    """Filter *lfo_applications* to those modulating Feel/Pattern knobs
+    on *gen_resolved*. Returns a list of LfoApplication, or [] if none.
+    """
+    if not lfo_applications:
+        return []
+    out = []
+    for app in lfo_applications:
+        kind = app.target.kind
+        if kind not in ("feel_knob", "pattern_knob"):
+            continue
+        parsed = parse_feel_pattern_ref(app.target.ref)
+        if parsed is None:
+            continue
+        scope, _knob = parsed
+        if gen_matches_lfo_scope(
+            gen_resolved.type_, gen_resolved.handle, kind, scope,
+        ):
+            out.append(app)
+    return out
+
+
+def _events_for_gen_per_bar(
+    *,
+    song,
+    part_name,
+    part,
+    gen_resolved,
+    gen_handle,
+    algorithm,
+    effective_overrides,
+    cursor: int,
+    base_ctx,
+    modulating_apps,
+):
+    """Render *gen_handle* one bar at a time, mutating knobs from LFO samples.
+
+    Used when at least one LFO application on this part targets a Feel
+    or Pattern knob on this gen (see :mod:`slackbeatz.engine.lfo_apply`).
+    Per-bar PRNG seeding makes the output deterministic across runs
+    while still differing per bar (because each bar's knobs differ).
+
+    Yields :class:`Event` instances with tick offsets RELATIVE to the
+    part start (the caller adds *cursor* once before turning them into
+    mido messages — same convention as the non-modulated path).
+    """
+    bars = base_ctx.bars
+    if bars <= 0:
+        return
+    gen_ticks_per_bar = base_ctx.ticks_per_bar
+    # Pre-resolve each LFO spec + its scope/knob for fast per-bar lookup.
+    scheduled: list[tuple[object, str, bool]] = []  # (spec, knob_name, is_feel)
+    for app in modulating_apps:
+        spec = song.lfos.get(app.lfo_name)
+        if spec is None:
+            continue
+        parsed = parse_feel_pattern_ref(app.target.ref)
+        if parsed is None:
+            continue
+        _scope, knob_name = parsed
+        scheduled.append((spec, knob_name, app.target.kind == "feel_knob"))
+    if not scheduled:
+        return  # nothing to do — caller will skip the part
+
+    base_overrides = dict(effective_overrides) if effective_overrides else {}
+    for bar_idx in range(bars):
+        # Bar start in absolute song-ticks; the LFO phase model is
+        # absolute (see render_events) so a long-period LFO sweeps
+        # across part boundaries correctly.
+        bar_start_abs = cursor + bar_idx * gen_ticks_per_bar
+        bar_lfo_rng = random.Random(derive_seed(
+            song.seed, part_name, f"__lfo_bar_rng_{gen_handle}_{bar_idx}",
+        ))
+        # Per-bar mutated knob dict.
+        bar_overrides = dict(base_overrides)
+        for spec, knob_name, is_feel in scheduled:
+            period_ticks = max(1, int(spec.period_bars * base_ctx.meter.ticks_per_bar(PPQ)))
+            phase = (bar_start_abs % period_ticks) / period_ticks
+            value_unit = lfo_value_at(spec, phase, bar_lfo_rng)
+            mutated = lfo_value_to_knob(knob_name, value_unit, is_feel=is_feel)
+            if mutated is not None:
+                bar_overrides[knob_name] = mutated
+        # Per-bar deterministic seed so re-runs produce the same output.
+        per_bar_seed = derive_seed(
+            song.seed, part_name, f"{gen_handle}__bar_{bar_idx}",
+        )
+        bar_ctx = PartContext(
+            name=base_ctx.name, role=base_ctx.role, bars=1,
+            tempo=base_ctx.tempo, key=base_ctx.key, ppq=base_ctx.ppq,
+            arrangement_index=base_ctx.arrangement_index,
+            arrangement_total=base_ctx.arrangement_total,
+            prev_role=base_ctx.prev_role, next_role=base_ctx.next_role,
+            rng=random.Random(per_bar_seed),
+            scale_override=base_ctx.scale_override,
+            transpose_semitones=base_ctx.transpose_semitones,
+            tension=base_ctx.tension, meter=base_ctx.meter,
+        )
+        algo = _instantiate_algorithm(
+            gen_resolved, algorithm=algorithm,
+            knob_overrides=bar_overrides if bar_overrides else None,
+        )
+        feel = _feel_for_gen(gen_resolved)
+        # Apply the LFO-mutated Feel values too so apply_feel sees them.
+        for _, knob_name, is_feel in scheduled:
+            if is_feel and knob_name in bar_overrides:
+                feel[knob_name] = bar_overrides[knob_name]
+        bar_offset = bar_idx * gen_ticks_per_bar
+        for event in apply_feel(algo.generate(bar_ctx), feel, bar_ctx.rng, bar_ctx):
+            # Shift the event's tick to the bar's position within the part.
+            yield _event_with_tick_offset(event, bar_offset)
+
+
+def _event_with_tick_offset(event, offset: int):
+    """Return *event* with its tick shifted by *offset*. Event types
+    use dataclass `replace`-style; we recreate to avoid mutation.
+    """
+    from dataclasses import replace
+    return replace(event, tick=event.tick + offset)
 
 
 def _lfo_event_for_target(target, value: float):
