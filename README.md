@@ -289,8 +289,19 @@ part build 16
 Shapes: `sine`, `sawtooth`, `square`, `pulse`, `noise`. Targets:
 
 - `midi:ch:N/cc:M` — MIDI CC stream on channel N, controller M
-- `surge:/param/...` — Surge XT OSC parameter (engine-level placeholder today)
-- `pattern:HANDLE:KNOB` / `feel:TYPE:KNOB` — accepted by the parser, engine support coming with knob-modulation per LFO tick
+- `surge:/param/...` — Surge XT OSC parameter (parser-only; future via AbletonOSC)
+- `pattern:HANDLE:KNOB` — per-bar re-emit of an algorithm's pattern knob (e.g. `pattern:bass:density`)
+- `feel:TYPE:KNOB` — per-bar re-emit of a Feel knob across all gens of a type (e.g. `feel:bass:humanize`)
+- `root:SCOPE[:LO:HI[:MODE]]` — scale-quantized root-note transposition (e.g. `root:global:36:60:degree`). `MODE` is `degree` (LFO 0..1 indexes scale tones) or `snap` (chromatic mapping then snap-to-scale).
+
+### Harmonic broadcast on ch15 + ch16
+
+Every render also emits a steady stream of harmonic-context MIDI on two reserved channels, intended for external listener tools (Ableton arps / triad builders / chord-aware FX) to lock onto the song's current chord without parsing SB internals:
+
+- **ch16 — root note** — single pitch on every quarter note. Follows the bass gen's `progression=` knob if set, then the chord gen's `progression=` knob, then falls back to holding the part's tonic.
+- **ch15 — chord (Imaj7-style)** — four simultaneous pitches built from scale degrees 1/3/5/7 above the current chord root (mode-appropriate: minor-7 over minor scale, maj-7 over major). Triggers at the same quarter-note grid as ch16.
+
+Drum-only parts emit nothing on these channels. Channels 15 + 16 are reserved — if you need them for instruments, mute the corresponding strips in SB's Mixer.
 
 ### Per-gen knobs
 

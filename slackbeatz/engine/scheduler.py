@@ -38,6 +38,8 @@ from slackbeatz.generators.registry import REGISTRY
 from slackbeatz.model.context import PartContext
 from slackbeatz.model.lfo import lfo_value_at
 from slackbeatz.model.song import ResolvedSong
+from slackbeatz.theory.keys import parse_key
+from slackbeatz.theory.scales import SCALES
 
 if TYPE_CHECKING:
     from slackbeatz.engine.clock_source import ClockSource
@@ -374,6 +376,20 @@ def render_events(song: ResolvedSong) -> list[tuple[int, mido.Message]]:
                         bucket.append((abs_tick, 0, msg))
                     local_tick += tick_step
 
+        # Per-part root-note emission on ch16 — a steady stream of
+        # quarter-note root pitches following the chord progression,
+        # intended for external MIDI-listener tools (Ableton arps /
+        # triad builders / etc) to lock onto the current harmonic
+        # centre without parsing slackbeatz internals. Derived from
+        # the bass gen's progression (per [[backend_is_setup]] —
+        # there's no shared "current root" notion yet so we pick the
+        # bass voice). Falls back to the part's tonic when no bass
+        # progression is set (or no bass voice at all). No emission
+        # when the part has no pitched gens — a drum-only part has no
+        # harmonic centre worth broadcasting.
+        for ev in _emit_root_notes_for_part(song, part, cursor, bars):
+            events_by_gen.setdefault("__root_emit__", []).append(ev)
+
         cursor += bars_to_ticks(bars, meter=part.meter)
 
     # Harmonize pass: for each gen with harmonize_with=H, emit
@@ -566,6 +582,195 @@ def _event_with_tick_offset(event, offset: int):
     """
     from dataclasses import replace
     return replace(event, tick=event.tick + offset)
+
+
+# Channels reserved for the harmonic broadcast (1-indexed for human
+# reference; converted to mido's 0-indexed at emission time).
+#
+#   ch16 — single quarter-note pitch following the current chord root.
+#          Derived from the bass gen's progression (or part tonic when
+#          no bass / no progression). Drives external arp/triad tools.
+#   ch15 — 4-note chord (1-3-5-7 scale degrees of the chord built on
+#          the same root). All four notes start on the same quarter-
+#          note tick so a listener tool sees a polyphonic chord clearly.
+ROOT_EMIT_CHANNEL_1IDX = 16
+CHORD_EMIT_CHANNEL_1IDX = 15
+# Quarter-note grid. Same units as the rest of the scheduler (PPQ).
+_ROOT_EMIT_GRID_TICKS = PPQ
+# Octave for emitted roots — mid-keyboard so external arp/triad tools
+# have headroom in both directions.
+_ROOT_EMIT_OCTAVE = 3
+# Octave for the chord broadcast on ch15 — one above the root octave
+# so even a triad voicing doesn't overlap the ch16 root pitch.
+_CHORD_EMIT_OCTAVE = 4
+# Velocity for emitted root + chord notes — moderate so listener tools
+# have a velocity reading without slamming any patch.
+_ROOT_EMIT_VELOCITY = 96
+# Scale-degree offsets for the chord broadcast — 1, 3, 5, 7 (= 0, 2,
+# 4, 6 zero-indexed). Same as the "seventh" entry in
+# :data:`slackbeatz.generators._shared.VOICINGS`. m7 over minor scale,
+# maj7 over major — mode-appropriate by construction.
+_CHORD_DEGREE_OFFSETS = (0, 2, 4, 6)
+
+
+def _emit_root_notes_for_part(song, part, cursor: int, bars: int):
+    """Yield per-bar quarter-note root-note events for *part* on ch16.
+
+    Inputs:
+      * *song* — the :class:`ResolvedSong` (for gen lookup by handle).
+      * *part* — the :class:`ResolvedPart` for this arrangement slot.
+      * *cursor* — absolute song-tick where the part starts.
+      * *bars* — number of bars in this part instance (post bars=N..M
+        roll, matches the value used elsewhere in render_events).
+
+    Yields ``(abs_tick, sort_key, mido.Message)`` tuples ready to drop
+    into the scheduler's events_by_gen aggregator.
+
+    Source-of-truth hierarchy for the root:
+
+    1. If the part has a pitched bass gen with a progression knob (or
+       a style-default progression via :func:`bass_progression_for`),
+       walk that progression bar-by-bar.
+    2. Otherwise, hold the part's tonic for the whole part — every
+       quarter-note emits the same root.
+
+    Drum-only parts are skipped (no pitched content → no useful root).
+    """
+    if bars <= 0:
+        return
+    # Find pitched gens in the part. If there are none (drum-only),
+    # don't bother emitting — there's no harmonic centre to broadcast.
+    has_pitched = False
+    bass_gen_resolved = None
+    chord_gen_resolved = None
+    for handle in part.gen_handles:
+        gen = song.gens.get(handle)
+        if gen is None:
+            continue
+        inst = gen.instrument
+        if inst is None or inst.is_drum:
+            continue
+        has_pitched = True
+        if gen.type_ == "bass" and bass_gen_resolved is None:
+            bass_gen_resolved = gen
+        elif gen.type_ == "chords" and chord_gen_resolved is None:
+            chord_gen_resolved = gen
+    if not has_pitched:
+        return
+
+    # Resolve the progression once per part. Source-of-truth hierarchy:
+    #   1. bass gen with an explicit progression knob (user-set)
+    #   2. chord gen with an explicit progression knob (user-set)
+    #   3. None → hold the part's tonic for the whole part
+    # We DON'T currently consult chord-gen *style-default* progressions
+    # (e.g. atmos_pad defaults to "i-iv" internally) because the style
+    # default lives inside generate() and isn't introspectable without
+    # instantiation. A user wanting ch15/16 to follow the style
+    # progression can copy it onto a `progression=NAME` knob on the
+    # bass or chord line.
+    progression = None
+    from slackbeatz.generators.defaults import (
+        bass_progression_for, progression_for,
+    )
+    if bass_gen_resolved is not None:
+        try:
+            progression = bass_progression_for(
+                _ResolvedGenAsGenShim(bass_gen_resolved),
+                default_name=None,
+                default_bars=4,
+            )
+        except Exception:
+            progression = None
+    if progression is None and chord_gen_resolved is not None:
+        try:
+            # progression_for requires a default_name; passing the
+            # chord gen's knobs through it returns None if no explicit
+            # knob is set (rather than the default we pass), because
+            # we want USER intent only here, not the algorithm's
+            # internal default.
+            user_name = chord_gen_resolved.knobs.get("progression")
+            if isinstance(user_name, str):
+                progression = progression_for(
+                    _ResolvedGenAsGenShim(chord_gen_resolved),
+                    default_name=user_name, default_bars=4,
+                )
+        except Exception:
+            progression = None
+
+    # Resolve key → tonic + scale intervals.
+    try:
+        tonic_pc, default_scale = parse_key(part.key)
+    except Exception:
+        return
+    scale_name = part.scale_override or default_scale
+    intervals = SCALES.get(scale_name) or SCALES.get(default_scale)
+    if not intervals:
+        return
+
+    bar_ticks = part.meter.ticks_per_bar(PPQ)
+    part_ticks = bars * bar_ticks
+    note_gap_ticks = 10  # small gap so consecutive same-pitch quarter notes retrigger cleanly
+    note_dur = max(1, _ROOT_EMIT_GRID_TICKS - note_gap_ticks)
+    root_channel = ROOT_EMIT_CHANNEL_1IDX - 1   # 0-indexed for mido
+    chord_channel = CHORD_EMIT_CHANNEL_1IDX - 1
+
+    local_tick = 0
+    n_intervals = len(intervals)
+    while local_tick < part_ticks:
+        local_bar = local_tick // bar_ticks
+        if progression is not None:
+            chord_root_degree = progression.degree_at_bar(local_bar)
+        else:
+            chord_root_degree = 0  # tonic
+        # Root pitch on ch16 — single voice, octave 3.
+        root_semitone = intervals[chord_root_degree % n_intervals]
+        root_pitch = tonic_pc + 12 * (_ROOT_EMIT_OCTAVE + 1) + root_semitone
+        on_abs = cursor + local_tick
+        off_abs = on_abs + note_dur
+        if 0 <= root_pitch <= 127:
+            yield (on_abs, 1, mido.Message(
+                "note_on", channel=root_channel, note=root_pitch,
+                velocity=_ROOT_EMIT_VELOCITY,
+            ))
+            yield (off_abs, 0, mido.Message(
+                "note_off", channel=root_channel, note=root_pitch, velocity=0,
+            ))
+        # Chord on ch15 — 1/3/5/7 scale degrees STARTING FROM the
+        # chord's root degree (so a iv chord built in C minor lands
+        # F-Ab-C-Eb, not C-Eb-G-Bb). Each chord-degree offset is added
+        # to the chord-root degree before lookup; octave bumps fall
+        # out of divmod the same way scale_note() handles them.
+        for off in _CHORD_DEGREE_OFFSETS:
+            d = chord_root_degree + off
+            oct_bump, scale_idx = divmod(d, n_intervals)
+            chord_semitone = intervals[scale_idx]
+            chord_pitch = (
+                tonic_pc
+                + 12 * (_CHORD_EMIT_OCTAVE + 1 + oct_bump)
+                + chord_semitone
+            )
+            if 0 <= chord_pitch <= 127:
+                yield (on_abs, 1, mido.Message(
+                    "note_on", channel=chord_channel, note=chord_pitch,
+                    velocity=_ROOT_EMIT_VELOCITY,
+                ))
+                yield (off_abs, 0, mido.Message(
+                    "note_off", channel=chord_channel, note=chord_pitch, velocity=0,
+                ))
+        local_tick += _ROOT_EMIT_GRID_TICKS
+
+
+class _ResolvedGenAsGenShim:
+    """Adapter so :func:`bass_progression_for` (which reads
+    ``gen.knobs``) accepts a :class:`ResolvedGen` directly.
+
+    The defaults module's helpers were written against the
+    :class:`Generator` runtime class but only ever touch ``.knobs``.
+    A 4-line shim avoids restructuring those helpers just for this
+    metadata-only use case.
+    """
+    def __init__(self, resolved_gen):
+        self.knobs = resolved_gen.knobs
 
 
 def _lfo_event_for_target(target, value: float):
