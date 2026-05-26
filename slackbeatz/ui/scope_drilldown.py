@@ -612,22 +612,24 @@ class ScopeDrilldown(tk.Frame):
     def _on_algo_change(self) -> None:
         """Algorithm picker selection. Always goes to part scope today
         — voice-block algorithm overrides aren't supported by the
-        cascade (voice carries knobs, not algorithm names)."""
+        cascade (voice carries knobs, not algorithm names).
+
+        Routes through ``Player.set_part_algorithm_override`` (not a
+        direct mutation) so the per-resolve override registration AND
+        the bar-aligned restart fire — without the restart, the
+        scheduler's pre-rendered events keep playing with the old
+        algorithm until the current part ends.
+        """
         new_algo = self.algo_var.get()
-        # Mutate the resolved part in place (the Player.save_state
-        # path round-trips part.algorithm_overrides explicitly).
+        # Mutate the resolved part in place for instant visual feedback
+        # (drilldown badges update on the next grid-rebuild); the
+        # restart below re-resolves from source and produces the
+        # canonical state.
         self.part.algorithm_overrides[self.voice_handle] = new_algo
-        # Track on Player so it survives re-resolves.
-        if self.voice_handle in self.app.player._part_algorithm_overrides.setdefault(
-            self.part_name, {},
-        ):
-            self.app.player._part_algorithm_overrides[self.part_name][
-                self.voice_handle
-            ] = new_algo
-        else:
-            self.app.player._part_algorithm_overrides[self.part_name][
-                self.voice_handle
-            ] = new_algo
+        if self.app.player is not None:
+            self.app.player.set_part_algorithm_override(
+                self.part_name, self.voice_handle, new_algo,
+            )
         self.on_change()
 
     def _on_knob_change(self, knob_name: str, value) -> None:

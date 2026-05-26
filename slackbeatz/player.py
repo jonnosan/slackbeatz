@@ -1669,6 +1669,26 @@ class Player:
                     except Exception:
                         pass
 
+        # Re-inject any user-added voices (via Arrangement → + Voice).
+        # `_added_gens` survives across re-resolves; without this loop
+        # the new gens disappear on the very next parameter change
+        # because _resolve_current rebuilds from source.
+        added = getattr(self, "_added_gens", None) or []
+        for (handle, voice_type, algorithm, channel) in added:
+            if handle in resolved.gens:
+                continue  # already in source — nothing to inject
+            from slackbeatz.model.song import ResolvedGen
+            from slackbeatz.setup.model import Instrument
+            note = 36 if voice_type == "rhythm" else None
+            inst = Instrument(name=handle, channel=channel, note=note)
+            resolved.gens[handle] = ResolvedGen(
+                handle=handle, type_=voice_type, style=algorithm,
+                knobs={}, instrument=inst, kit=None, meter=None,
+            )
+            for part in resolved.parts.values():
+                if handle not in part.gen_handles:
+                    part.gen_handles.append(handle)
+
         # Phase 4 — per-(part, handle) algorithm overrides. The
         # ResolvedPart.algorithm_overrides dict is mutable even on
         # the frozen dataclass; mutate in place so the scheduler
