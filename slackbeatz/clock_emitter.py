@@ -27,7 +27,7 @@ Implementation notes:
   threads don't have to share a mido port (rtmidi's port-send
   thread-safety is platform-dependent on macOS CoreMIDI). When the
   target port doesn't exist (e.g. ``slackbeatz-transport-out`` in
-  ableton-blackhole mode), we create it as a virtual CoreMIDI port.
+  ``ableton`` mode), we create it as a virtual CoreMIDI port.
 """
 
 from __future__ import annotations
@@ -81,7 +81,7 @@ class ClockEmitter:
         Tries the existing-port path first (RealtimeSink with
         all-notes-off-on-close). If the named port doesn't exist,
         creates it as a virtual CoreMIDI source — that's how the
-        ableton-blackhole mode's ``slackbeatz-transport-out`` port
+        ``ableton`` mode's ``slackbeatz-transport-out`` port
         comes into being (Ableton subscribes to it as a Sync source).
         """
         ports = available_ports()

@@ -15,9 +15,11 @@ from typing import Literal
 # Three peer setup modes (see [[backend_is_setup]]):
 #   external          — raw MIDI on virtual ports; no synth spawned
 #   surge-standalone  — surge-xt-cli per role, audio direct to CoreAudio
-#   ableton-blackhole — surge-xt-cli per role, audio routed via BlackHole
-#                       channels into an external Ableton Live Set
-Mode = Literal["external", "surge-standalone", "ableton-blackhole"]
+#   ableton           — pure MIDI to Ableton; no Surge/BlackHole/FluidSynth.
+#                       Ableton hosts every instrument (template-defined),
+#                       SB just emits notes on per-role virtual ports +
+#                       per-drum-inst virtual ports for splittable kits.
+Mode = Literal["external", "surge-standalone", "ableton"]
 
 # Legacy alias — kept so any pinned `setup.backend == "surge"` check
 # keeps working (both surge-standalone and ableton-blackhole spawn surge).
@@ -67,18 +69,19 @@ class Setup:
       directly to CoreAudio; FluidSynth handles ch10 drums. SB owns
       mixing (no cross-bus / master FX — that's the accepted limit
       of this mode).
-    * ``"ableton-blackhole"`` — surge-xt-cli per pitched channel routed
-      through BlackHole channels into a fixed Ableton Live Set that
-      owns mixing/FX/master. Dual MIDI subscription comes for free
-      via CoreMIDI's pub/sub model (Ableton can subscribe to the
-      same virtual port surge is listening on).
+    * ``"ableton"`` — pure MIDI to Ableton, no Surge / BlackHole /
+      FluidSynth processes. Ableton hosts every instrument (the user
+      sets up the template once; SB just emits notes). Per-role
+      virtual ports + per-drum-inst virtual ports for splittable
+      drum tracks (kick / snare / hats each on their own Ableton
+      track).
 
     Defaults to ``"external"`` so existing setups with no explicit
     mode directive keep their pre-redesign behaviour.
 
     ``backend`` is a derived property kept for backward compatibility:
-    ``"external" → "external"``; surge-standalone and ableton-blackhole
-    both → ``"surge"`` (both spawn surge-xt-cli).
+    ``"external" / "ableton" → "external"`` (no surge-xt-cli spawn);
+    ``"surge-standalone" → "surge"``.
     """
 
     name: str
@@ -88,8 +91,9 @@ class Setup:
 
     @property
     def backend(self) -> Backend:
-        """Legacy view — surge-standalone + ableton-blackhole both → "surge"."""
-        return "external" if self.mode == "external" else "surge"
+        """Legacy view — only surge-standalone spawns surge-xt-cli now;
+        external + ableton (MIDI-only modes) report ``"external"``."""
+        return "surge" if self.mode == "surge-standalone" else "external"
 
     def find(self, handle: str) -> Instrument | Kit | None:
         """Return the entry named *handle*, or ``None`` if not present.

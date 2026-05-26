@@ -43,6 +43,18 @@ _DEFAULT_ABLETON_TEMPLATE = Path(
 ).expanduser()
 
 
+def _per_style_template(style: str | None) -> Path:
+    """Resolve the per-style template path, if any.
+
+    Returns ``Slackbeatz-<style>.als`` next to the default template.
+    Caller checks ``.is_file()`` and falls back to the default if not
+    present — so users build templates only for styles they care about.
+    """
+    if not style:
+        return _DEFAULT_ABLETON_TEMPLATE
+    return _DEFAULT_ABLETON_TEMPLATE.with_name(f"Slackbeatz-{style}.als")
+
+
 class MixerScreen(tk.Frame):
     def __init__(self, app: "GuiApp") -> None:
         super().__init__(app.root)
@@ -269,44 +281,69 @@ class MixerScreen(tk.Frame):
             return "external"
         return getattr(resolved.setup, "mode", "external")
 
-    def _open_ableton_template(self) -> None:
-        """Open the user's Slackbeatz Ableton template (or instruct).
+    def _current_style(self) -> str | None:
+        """Style override on the current song, if any."""
+        player = self.app.player
+        if player is None:
+            return None
+        return getattr(player, "style_override", None)
 
-        If the template exists at the default path, opens it (which
-        launches Ableton + loads it). If not, shows a dialog with the
-        steps to create one — first-time users see the path + the
-        BlackHole channel layout they need to wire up.
+    def _open_ableton_template(self) -> None:
+        """Open the per-style Ableton template (falling back to default).
+
+        Lookup order:
+          1. ``Slackbeatz-<style>.als`` next to the default — if the
+             song has an explicit style and the file exists.
+          2. ``Slackbeatz.als`` — the catch-all default template.
+
+        If neither exists, shows the first-time setup instructions
+        explaining the new ableton mode (pure MIDI; one MIDI track per
+        role + per-drum split tracks).
         """
-        if _DEFAULT_ABLETON_TEMPLATE.is_file():
+        style = self._current_style()
+        style_path = _per_style_template(style)
+        # Prefer per-style template when present.
+        target = style_path if style_path.is_file() else _DEFAULT_ABLETON_TEMPLATE
+        if target.is_file():
             try:
-                subprocess.Popen(["open", str(_DEFAULT_ABLETON_TEMPLATE)])
+                subprocess.Popen(["open", str(target)])
             except OSError as e:
                 messagebox.showerror(
                     "Couldn't open Ableton template",
-                    f"open {_DEFAULT_ABLETON_TEMPLATE}\n\n{e}",
+                    f"open {target}\n\n{e}",
                 )
             return
-        # Not present yet — explain how to set one up.
+        # Neither default nor style-specific exists.
+        style_hint = (
+            f"For per-style templates, save as Slackbeatz-{style}.als.\n"
+            if style else ""
+        )
         msg = (
             f"No Slackbeatz template found at:\n  {_DEFAULT_ABLETON_TEMPLATE}\n\n"
-            "Set one up once and Slackbeatz will reopen it each time:\n\n"
+            f"{style_hint}"
+            "Set up the default template once and SB reopens it each time:\n\n"
             "1. Open Ableton Live, create a new Live Set.\n"
-            "2. Audio prefs: Audio Input Device = BlackHole 16ch.\n"
-            "3. Input Config: enable channel pairs 3/4, 5/6, 7/8, 9/10, 11/12.\n"
-            "4. Add 5 Audio tracks with Audio From → Ext. In:\n"
-            "     Track 1 (audio): 3/4  = lead\n"
-            "     Track 2 (audio): 5/6  = bass\n"
-            "     Track 3 (audio): 7/8  = pad\n"
-            "     Track 4 (audio): 9/10 = candy\n"
-            "     Track 5 (audio): 11/12= sub\n"
-            "5. Add 1 MIDI track for drums:\n"
-            "     MIDI From: slackbeatz-drums (Channel: All)\n"
-            "     Add any Drum Rack / sampler instrument\n"
-            "     Monitor: In, arm the track\n"
-            "6. Set Monitor = In on all audio tracks; drop FX as desired.\n"
-            "7. (Optional) MIDI tracks subscribed to slackbeatz-chord /\n"
+            "2. Add 5 MIDI tracks for the synth voices:\n"
+            "     Track 1: MIDI From = slackbeatz-lead\n"
+            "     Track 2: MIDI From = slackbeatz-bass\n"
+            "     Track 3: MIDI From = slackbeatz-pad\n"
+            "     Track 4: MIDI From = slackbeatz-candy\n"
+            "     Track 5: MIDI From = slackbeatz-sub\n"
+            "   Drop any Ableton instrument on each (Wavetable, Operator,\n"
+            "   Bass, Analog, third-party AU/VST, etc.).\n"
+            "3. Add MIDI tracks for splittable drums (one per drum):\n"
+            "     Track: MIDI From = slackbeatz-drum-kick   + Drum Rack\n"
+            "     Track: MIDI From = slackbeatz-drum-snare  + Drum Rack\n"
+            "     Track: MIDI From = slackbeatz-drum-hats   + Drum Rack\n"
+            "     Track: MIDI From = slackbeatz-drum-other  + Drum Rack\n"
+            "     (also slackbeatz-drum-clap, -ohats if you've defined them)\n"
+            "4. Set MIDI To on each track to a unique track destination\n"
+            "   so the instruments actually sound. Arm each track.\n"
+            "5. (Optional) MIDI tracks subscribed to slackbeatz-chord /\n"
             "   slackbeatz-root for arp / triad-builder tools.\n"
-            "8. File → Save Live Set As… save to:\n"
+            "6. Settings → Link/MIDI: Sync IN from slackbeatz-transport-out,\n"
+            "   Sync OUT to slackbeatz-transport-in for press-play-in-either.\n"
+            "7. File → Save Live Set As… save to:\n"
             f"     {_DEFAULT_ABLETON_TEMPLATE.parent}/Slackbeatz.als\n\n"
             "Open Templates folder in Finder now?"
         )

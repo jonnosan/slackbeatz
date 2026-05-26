@@ -437,11 +437,17 @@ class _Parser:
         if len(tail) != 1:
             raise ParseError(
                 line_no,
-                "expected: mode <external|surge-standalone|ableton-blackhole>",
+                "expected: mode <external|surge-standalone|ableton>",
             )
         name = tail[0]
-        allowed = ("external", "surge-standalone", "ableton-blackhole")
-        if name not in allowed:
+        allowed = ("external", "surge-standalone", "ableton")
+        # Legacy alias — ableton-blackhole (the Surge+BlackHole+Ableton
+        # mode shipped in early Phase 1) was superseded by `ableton`
+        # (pure MIDI; Ableton hosts every instrument). Old setup files
+        # still parse — they map to the new mode automatically.
+        if name == "ableton-blackhole":
+            name = "ableton"
+        elif name not in allowed:
             raise ParseError(
                 line_no,
                 f"unknown mode {name!r} (allowed: {', '.join(allowed)})",

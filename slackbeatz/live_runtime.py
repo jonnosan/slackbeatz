@@ -118,7 +118,6 @@ def _setup_has_drum_channel(setup) -> bool:
 
 def _spawn_fluidsynth_port(
     *, gain: float = 0.6, reverb: float = 0.8,
-    audio_device: Optional[str] = None,
 ) -> tuple[subprocess.Popen, str]:
     """Spawn a CoreAudio + CoreMIDI FluidSynth and return its MIDI port.
 
@@ -130,11 +129,9 @@ def _spawn_fluidsynth_port(
     technique — FluidSynth doesn't name its CoreMIDI port up front
     so we snapshot before/after and take the new entry.
 
-    *audio_device* selects the CoreAudio output device. ``None`` uses
-    the system default (today's behaviour, matches surge-standalone
-    mode). Pass ``"BlackHole 16ch"`` in ableton-blackhole mode so the
-    drum bus lands on BlackHole channels 1/2 — which Ableton's Audio
-    track 1 reads from to apply DAW FX.
+    Only ``surge-standalone`` mode reaches this code today (``ableton``
+    mode sends drums to a virtual MIDI port for an Ableton Drum Rack
+    to consume; ``external`` has no FluidSynth).
     """
     import time
     from slackbeatz.audio import MissingToolError, require_tool
@@ -149,19 +146,17 @@ def _spawn_fluidsynth_port(
         raise LiveRuntimeError(str(e)) from e
 
     before_ports = set(available_ports())
-    fs_args = [
-        fluidsynth_bin,
-        "-a", "coreaudio",
-        "-m", "coremidi",
-        "-o", f"synth.gain={gain}",
-        "-o", f"synth.reverb.room-size={reverb}",
-        "-o", "synth.chorus.active=1",
-    ]
-    if audio_device:
-        fs_args += ["-o", f"audio.coreaudio.device={audio_device}"]
-    fs_args += ["-q", str(soundfont)]
     proc = subprocess.Popen(
-        fs_args,
+        [
+            fluidsynth_bin,
+            "-a", "coreaudio",
+            "-m", "coremidi",
+            "-o", f"synth.gain={gain}",
+            "-o", f"synth.reverb.room-size={reverb}",
+            "-o", "synth.chorus.active=1",
+            "-q",
+            str(soundfont),
+        ],
         stdin=subprocess.PIPE,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
@@ -232,17 +227,17 @@ def build_live_runtime(
 
     mode = setup.mode
     backend = setup.backend  # derived: "external" or "surge"
-    osc_routing_enabled = backend == "surge"
+    # MIDI-only modes (external + ableton) don't spawn Surge — but
+    # ableton still uses the MultiPortSink routing path so each role
+    # / drum / harmonic-broadcast channel emits on its dedicated
+    # virtual port for Ableton to consume.
+    osc_routing_enabled = backend == "surge" or mode == "ableton"
+    surge_spawn_enabled = backend == "surge"  # only surge-standalone now
     # FluidSynth spawns for ch10 drums only in surge-standalone mode.
-    # In ableton-blackhole, drums emit on the slackbeatz-drums virtual
-    # MIDI port for an Ableton Drum Rack to subscribe to (the user
-    # picks the kit, not us).
+    # In ableton mode the user hosts a Drum Rack themselves.
     need_fluidsynth = (
-        osc_routing_enabled
-        and mode != "ableton-blackhole"
-        and _setup_has_drum_channel(setup)
+        surge_spawn_enabled and _setup_has_drum_channel(setup)
     )
-    fluidsynth_device = None  # FluidSynth never targets BlackHole now
 
     # Reuse path — skip the FluidSynth + surge-xt-cli spawn and
     # transfer the previous runtime's children. Triggered when the
@@ -250,7 +245,7 @@ def build_live_runtime(
     # same mode) — typical when the user opens a different .sb
     # file with the same bundled setup. Saves ~5s of surge-xt-cli boot
     # per song switch. Reuse keys on mode (not backend) so a switch
-    # between surge-standalone and ableton-blackhole respawns surge
+    # between surge-standalone and ableton respawns surge
     # with the new audio routing flags.
     if (
         reuse_from is not None
@@ -316,10 +311,9 @@ def build_live_runtime(
 
     if need_fluidsynth:
         on_progress("slackbeatz: spawning FluidSynth for ch10 drums…")
-        fs_proc, port_name = _spawn_fluidsynth_port(audio_device=fluidsynth_device)
-        device_note = f" → {fluidsynth_device} ch 1/2" if fluidsynth_device else ""
-        on_progress(f"  ch10 → FluidSynth on {port_name!r}{device_note}")
-    elif mode == "ableton-blackhole":
+        fs_proc, port_name = _spawn_fluidsynth_port()
+        on_progress(f"  ch10 → FluidSynth on {port_name!r}")
+    elif mode == "ableton":
         # All routable channels go through MultiPortSink → dedicated
         # virtual ports. No general MIDI destination is needed; the
         # default sink becomes a NullSink that drops anything unrouted.
@@ -359,14 +353,14 @@ def build_live_runtime(
     )
     player.seed_offset = seed_offset
     # Mode drives mode-aware routing decisions inside Player
-    # (e.g. ch10 drums → MIDI in ableton-blackhole vs FluidSynth in
+    # (e.g. ch10 drums → MIDI in ableton vs FluidSynth in
     # surge-standalone). Must be set BEFORE load_file so the first
     # render uses the right channel routing.
     player.mode = mode
     player.load_file(song_path)
 
-    # Bidirectional MIDI transport in ableton-blackhole mode. SB stays
-    # the clock master (emit_clock=True → ClockEmitter on
+    # Bidirectional MIDI transport in ableton mode. SB stays the
+    # clock master (emit_clock=True → ClockEmitter on
     # slackbeatz-transport-out); a TransportListener on
     # slackbeatz-transport-in lets Ableton drive Start/Stop/Continue/SPP.
     # Echo suppression is wired via Player.transport_listener so the
@@ -375,7 +369,7 @@ def build_live_runtime(
     # MIDI input: Sync = On for slackbeatz-transport-out; MIDI output:
     # Sync = On for slackbeatz-transport-in.
     transport_listener = None
-    if mode == "ableton-blackhole":
+    if mode == "ableton":
         from slackbeatz.sinks.transport_in import TransportListener
 
         def _on_play(from_tick: int) -> None:
@@ -418,28 +412,43 @@ def build_live_runtime(
     )
 
     if osc_routing_enabled:
+        # Open virtual MIDI ports regardless of mode so Ableton (or
+        # any other listener) can subscribe.
         player.ensure_osc_routing_ready()
-        from slackbeatz.surge_host import (
-            install_hint, is_surge_cli_installed, spawn_surge_instances,
-        )
-        if not is_surge_cli_installed():
-            on_progress(
-                f"warning: setup {setup.name!r} wants backend=surge but "
-                f"surge-xt-cli isn't installed.\n  install with: "
-                f"{install_hint()}\n  continuing without Surge XT — "
-                f"pitched channels will be silent."
+        # ableton mode: open the per-drum virtual MIDI ports too so
+        # Ableton sees them in its MIDI From dropdown immediately
+        # (without needing a play first). Setup must be set on the
+        # player by now since we computed `mode` from it above.
+        if mode == "ableton":
+            # current_setup is normally populated by _resolve_current;
+            # set it explicitly here so the drum splitter has access.
+            player.current_setup = setup
+            player._ensure_drum_split_ready()
+        # Surge spawn only in surge-standalone — pure-MIDI modes
+        # (ableton, external) leave the synth entirely to the user's
+        # downstream rig.
+        if surge_spawn_enabled:
+            from slackbeatz.surge_host import (
+                install_hint, is_surge_cli_installed, spawn_surge_instances,
             )
-        else:
-            on_progress(
-                f"slackbeatz: spawning headless surge-xt-cli (mode={mode})…"
-            )
-            runtime.surge_instances = spawn_surge_instances(
-                mode=mode,
-                on_progress=on_progress,
-            )
-        # Sampler enables the voice / fx channels regardless of
-        # whether surge-xt-cli is up.
-        from slackbeatz.cli import _start_sampler_if_enabled
-        runtime.sampler = _start_sampler_if_enabled(osc_routing_enabled)
+            if not is_surge_cli_installed():
+                on_progress(
+                    f"warning: setup {setup.name!r} wants backend=surge but "
+                    f"surge-xt-cli isn't installed.\n  install with: "
+                    f"{install_hint()}\n  continuing without Surge XT — "
+                    f"pitched channels will be silent."
+                )
+            else:
+                on_progress(
+                    f"slackbeatz: spawning headless surge-xt-cli (mode={mode})…"
+                )
+                runtime.surge_instances = spawn_surge_instances(
+                    mode=mode,
+                    on_progress=on_progress,
+                )
+            # Sampler is part of the surge-standalone in-process audio
+            # chain (voice / fx channels). Skipped in ableton mode.
+            from slackbeatz.cli import _start_sampler_if_enabled
+            runtime.sampler = _start_sampler_if_enabled(True)
 
     return runtime

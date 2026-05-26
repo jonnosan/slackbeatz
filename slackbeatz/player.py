@@ -483,12 +483,17 @@ class Player:
 
         # Setup mode — drives mode-aware routing decisions
         # (e.g. ch10 drums → slackbeatz-drums virtual port in
-        # ableton-blackhole vs → default sink / FluidSynth in
+        # ``ableton`` mode vs → default sink / FluidSynth in
         # surge-standalone). Set explicitly by the live runtime
         # after Player construction; defaults to "external" so
         # standalone Player use (tests, headless renders) doesn't
         # break.
         self.mode: str = "external"
+
+        # Shared DrumSplitSink across runs (ableton mode only). Created
+        # lazily by :meth:`_ensure_drum_split_ready`; owns per-drum
+        # virtual MIDI ports for splittable Ableton drum tracks.
+        self._shared_drum_split_sink = None
 
         # MIDI Clock output. When True, the playback worker spawns a
         # ClockEmitter sibling thread that broadcasts 0xF8 pulses at
@@ -1874,22 +1879,19 @@ class Player:
 
     def _routing_map(self) -> dict[int, str]:
         """Build the 0-indexed channel → virtual port name map for
-        the active mode.
+        every channel served by :class:`MultiPortSink`.
 
-        ableton-blackhole includes ch9 (drums) → slackbeatz-drums
-        so the user can host a Drum Rack in Ableton. All other modes
-        omit ch9 so drums fall through to the default sink (FluidSynth
-        in surge-standalone). Always creates the virtual port — only
-        the routing inclusion differs.
+        Drums (ch10) are NEVER in this map. In ``surge-standalone``
+        ch10 falls through to the default sink (FluidSynth); in
+        ``ableton`` mode it's handled by a :class:`DrumSplitSink`
+        override that fans out per drum-inst note to its own virtual
+        ports — see :meth:`_make_sink`.
         """
         from slackbeatz.synthhost import OSC_CHANNELS
-        out: dict[int, str] = {}
-        for (ch_1idx, port_name, _patch) in OSC_CHANNELS.values():
-            # Drums (ch10) are mode-gated.
-            if ch_1idx == 10 and self.mode != "ableton-blackhole":
-                continue
-            out[ch_1idx - 1] = port_name
-        return out
+        return {
+            ch_1idx - 1: port_name
+            for (ch_1idx, port_name, _patch) in OSC_CHANNELS.values()
+        }
 
     def ensure_osc_routing_ready(self) -> None:
         """Eagerly create + open the shared MultiPortSink so its
@@ -1930,8 +1932,8 @@ class Player:
         indicators on the Mixer + Sound tabs — negligible cost per
         message (one dict write).
         """
-        # port_name=None signals ableton-blackhole's all-channels-routed
-        # mode — use a NullSink as the default rather than failing on
+        # port_name=None signals ableton mode's all-channels-routed
+        # state — use a NullSink as the default rather than failing on
         # RealtimeSink's "no MIDI port" requirement.
         if self.port_name is None:
             from slackbeatz.sinks.null import NullSink
@@ -1941,23 +1943,64 @@ class Player:
         if not self.osc_routing:
             return _ActivityTapSink(base, self)
         from slackbeatz.sinks.composite import CompositeSink
-        # Mode-aware routing — surge-standalone keeps ch10 → default
-        # sink (FluidSynth); ableton-blackhole adds ch9 → MultiPortSink
-        # → slackbeatz-drums for Ableton's Drum Rack.
         ch_to_port = self._routing_map()
         if self._shared_routing_sink is None:
-            # First time — create + open every port (full set, not
-            # mode-filtered), so subscribers can attach on demand.
+            # First time — create + open every port, so subscribers
+            # can attach on demand.
             self.ensure_osc_routing_ready()
         overrides = {ch: self._shared_routing_sink for ch in ch_to_port}
+        # ableton mode: ch10 drums get a DrumSplitSink that routes
+        # per-note to slackbeatz-drum-<inst> virtual ports so each
+        # drum (kick / snare / hats / …) lands on its own Ableton
+        # track. surge-standalone leaves ch10 falling through to
+        # the default sink (FluidSynth) as before.
+        if self.mode == "ableton":
+            self._ensure_drum_split_ready()
+            if self._shared_drum_split_sink is not None:
+                overrides[9] = self._shared_drum_split_sink
         # manage_overrides=False so the per-playback open()/close()
-        # cycle doesn't touch the shared MultiPortSink.
+        # cycle doesn't touch the shared sinks.
         composite = CompositeSink(
             default=base,
             channel_overrides=overrides,
             manage_overrides=False,
         )
         return _ActivityTapSink(composite, self)
+
+    def _ensure_drum_split_ready(self) -> None:
+        """Lazily create the shared DrumSplitSink + per-drum virtual ports.
+
+        Built from the current setup's ch10 ``inst`` declarations —
+        one virtual port per drum-inst plus a catch-all
+        ``slackbeatz-drum-other`` for unmapped notes. Persisted across
+        playback runs so Ableton subscribers stay attached.
+        """
+        if self._shared_drum_split_sink is not None:
+            return
+        if self.current_setup is None:
+            return  # setup hasn't resolved yet — _make_sink retries on next play
+        import mido
+        from slackbeatz.sinks.drum_split import (
+            DRUM_OTHER_PORT, DrumSplitSink, build_drum_note_map,
+        )
+        from slackbeatz.sinks.null import NullSink
+
+        note_map = build_drum_note_map(self.current_setup)
+        port_names = sorted(set(note_map.values()) | {DRUM_OTHER_PORT})
+        drum_ports: dict[str, mido.ports.BaseOutput] = {}
+        for name in port_names:
+            try:
+                drum_ports[name] = mido.open_output(name, virtual=True)
+            except Exception:
+                continue
+        # DrumSplitSink wraps a NullSink as 'underlying' — ch10 events
+        # never reach it (DrumSplit intercepts), but the Sink contract
+        # requires one to exist.
+        self._shared_drum_split_sink = DrumSplitSink(
+            underlying=NullSink(),
+            drum_ports=drum_ports,
+            note_to_port=note_map,
+        )
 
     def is_channel_active(self, channel_1idx: int, window_ms: float = 150.0) -> bool:
         """True if *channel_1idx* has notes currently sounding —

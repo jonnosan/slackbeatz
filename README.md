@@ -234,31 +234,31 @@ inst bass ch=2
 |---|---|---|
 | `external` | Raw MIDI to a port — no synth spawned. Wire to a DAW or external hardware yourself. | You already have an audio chain set up and just want SB's notes. |
 | `surge-standalone` | Headless `surge-xt-cli` per pitched channel + FluidSynth for ch10 drums; audio writes direct to CoreAudio. SB's Mixer tab owns per-channel volume + FX. Single-screen workflow, no DAW. | Quick iteration; you're OK without master-bus FX or cross-instance reverb sends. |
-| `ableton-blackhole` | Same Surge + FluidSynth spawn, but audio routes through [BlackHole 16ch](https://github.com/ExistentialAudio/BlackHole) channels into an Ableton Live Set that owns mixing / FX / master chain. Dual MIDI emission is free via CoreMIDI pub/sub: any Ableton MIDI track can subscribe to the same `slackbeatz-<role>` virtual port surge is listening on — so you can layer SB-driven Surge bass + a hand-added 303 in Ableton on the same channel. | macOS only. You want bus FX, EQ on the master, or cross-instance reverb sends. You already use Ableton. |
+| `ableton` | Pure MIDI to Ableton. SB spawns no synth processes — Ableton hosts every instrument. Per-role virtual MIDI ports (`slackbeatz-lead`, `-bass`, etc) for the synth voices; per-drum virtual ports (`slackbeatz-drum-kick`, `-snare`, `-hats`, `-other`) for splittable Ableton drum tracks; harmonic broadcast on `-chord` / `-root`; bidirectional transport sync via `-transport-in` / `-out`. | You own Ableton Suite and want to use its instruments + mixing for everything. Cleanest workflow once the template's set up. |
 
-The legacy `backend surge` / `backend external` directive still parses (maps to `surge-standalone` and `external` respectively).
+The legacy `backend surge` / `backend external` directive still parses (maps to `surge-standalone` and `external` respectively). The legacy `mode ableton-blackhole` also parses and maps to `ableton` (no more BlackHole audio routing — Ableton sees MIDI directly and hosts the instruments).
 
-#### Ableton+BlackHole setup
+#### Ableton setup
 
-One-time setup for `mode ableton-blackhole`:
+One-time setup for `mode ableton`. No BlackHole, no audio routing — Ableton hosts every instrument and SB just sends MIDI to its virtual ports.
 
-1. `brew install --cask blackhole-16ch` then `sudo killall coreaudiod` (or reboot). Driver lands at `/Library/Audio/Plug-Ins/HAL/`.
-2. **Audio MIDI Setup → BlackHole 16ch → Format → 44100 Hz** for both Input and Output (the default on a fresh install is 8 kHz — drastically degrades audio).
-3. In Ableton: **Live → Settings → Audio → Audio Input Device** = BlackHole 16ch. **Input Config** — enable channel pairs 3/4 through 11/12.
-4. Add 5 audio tracks in the Live Set with `Audio From → Ext. In`:
-   - Track 1 — `3/4`  = lead
-   - Track 2 — `5/6`  = bass
-   - Track 3 — `7/8`  = pad
-   - Track 4 — `9/10` = candy
-   - Track 5 — `11/12`= sub
-   - Monitor = `In` on each track; drop FX (EQ Eight, Glue Compressor, etc) as desired.
-5. **Drums on a MIDI track** — `ableton-blackhole` doesn't spawn FluidSynth; ch10 drum notes emit to a `slackbeatz-drums` virtual MIDI port. Add a MIDI track, set **MIDI From** = `slackbeatz-drums` (Channel = All), drop any Drum Rack / sampler on it, set Monitor = In, arm it. (BlackHole 1/2 is left free; repurpose if useful.)
-6. For bidirectional transport: **Live → Settings → Link/MIDI**:
-   - MIDI Input row for `slackbeatz-transport-out`: **Sync = On** (SB drives Ableton's clock + Start/Stop/SPP).
-   - MIDI Output row for `slackbeatz-transport-in`: **Sync = On** (Ableton's transport buttons drive SB).
-7. (Optional) For per-voice MIDI layering: on any Ableton MIDI track, set **MIDI From** to `slackbeatz-bass` (or `-lead` / etc.) — Ableton instruments on that track receive the same notes Surge does. Mute/unmute either side to layer.
-8. (Optional) Add MIDI tracks subscribed to `slackbeatz-chord` / `slackbeatz-root` for arp / triad-builder tools.
-9. Save as `~/Music/Ableton/User Library/Templates/Slackbeatz.als` — SB's Mixer tab "Open Ableton template" button will reopen this set each session.
+1. Open Ableton Live, create a new Live Set.
+2. **Add 5 MIDI tracks for synth voices**. On each, set **MIDI From** to one of:
+   - `slackbeatz-lead`, `slackbeatz-bass`, `slackbeatz-pad`, `slackbeatz-candy`, `slackbeatz-sub`
+   - Drop your preferred Ableton instrument on each (Wavetable, Operator, Bass, Analog, Drum Rack, third-party AU/VST, etc.). Set Monitor = In, arm the track.
+3. **Add drum-split MIDI tracks**. SB emits each drum to its own virtual port so you can host them on separate tracks:
+   - `slackbeatz-drum-kick` → Drum Rack with your kick of choice
+   - `slackbeatz-drum-snare` → Drum Rack with snare
+   - `slackbeatz-drum-hats` → Drum Rack with closed hats
+   - `slackbeatz-drum-ohats` → open hats (optional)
+   - `slackbeatz-drum-clap` → clap (optional)
+   - `slackbeatz-drum-other` → catch-all for any ch10 note that's not in the setup's drum inst list
+4. **Bidirectional transport sync** — **Live → Settings → Link, Tempo & MIDI**:
+   - MIDI Inputs row for `slackbeatz-transport-out`: **Sync = On** (SB drives Ableton's clock + Start/Stop/SPP).
+   - MIDI Outputs row for `slackbeatz-transport-in`: **Sync = On** (Ableton's transport buttons drive SB).
+5. (Optional) Add MIDI tracks subscribed to `slackbeatz-chord` / `slackbeatz-root` for arp / triad-builder tools.
+6. Save as `~/Music/Ableton/User Library/Templates/Slackbeatz.als`. SB's Mixer tab "Open Ableton template" button reopens it each session.
+7. **Per-style templates** (optional) — save additional templates named `Slackbeatz-<style>.als` (e.g. `Slackbeatz-acid.als`, `Slackbeatz-vaporwave.als`). When you compose a song with that style, SB opens the matching template instead of the default. Build per-style templates incrementally for the styles you actually use.
 
 ### Scene block — mixer state round-trip
 

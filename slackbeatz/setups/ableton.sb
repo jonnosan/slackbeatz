@@ -1,0 +1,55 @@
+# ableton.sb — Pure MIDI to Ableton; Ableton hosts every instrument.
+#
+# No Surge XT spawn, no BlackHole, no FluidSynth. SB is purely a MIDI
+# generator + driver. You set up the Ableton template once with your
+# preferred instrument per role; subsequent songs reuse that template.
+#
+# Per-role virtual MIDI ports (Ableton MIDI track subscribes via
+# MIDI From = slackbeatz-<role>):
+#   ch 1 = lead       → slackbeatz-lead
+#   ch 2 = bass       → slackbeatz-bass
+#   ch 3 = pad        → slackbeatz-pad
+#   ch 4 = candy      → slackbeatz-candy
+#   ch 6 = sub        → slackbeatz-sub
+#
+# Per-drum virtual ports for splittable kits (one Ableton track per
+# drum; each subscribes to its own port). The drum splitter routes
+# ch10 notes to the right port by note number — see Phase 4b:
+#   slackbeatz-drum-kick   (note 36)
+#   slackbeatz-drum-snare  (note 38)
+#   slackbeatz-drum-clap   (note 39)
+#   slackbeatz-drum-hats   (note 42)
+#   slackbeatz-drum-ohats  (note 46)
+#   slackbeatz-drum-other  (anything else on ch10)
+#
+# Plus harmonic broadcast (Phase 3):
+#   slackbeatz-chord (ch15) — 1/3/5/7 chord on the current root
+#   slackbeatz-root  (ch16) — single root note, quarter-note grid
+#
+# Plus transport sync (Phase 1c):
+#   slackbeatz-transport-out — SB → Ableton (clock + Start/Stop/SPP)
+#   slackbeatz-transport-in  — Ableton → SB (lets you press play in
+#                              either app)
+
+setup "Ableton"
+
+mode ableton
+
+# Pitched voices — Ableton hosts these.
+inst lead   ch=1
+inst bass   ch=2
+inst pad    ch=3
+inst candy  ch=4
+inst riser  ch=4   # alias for `candy`
+inst sub    ch=6
+
+# Drum voices on channel 10. The drum splitter creates a per-inst
+# virtual port for each — kick, snare, clap, hats, ohats.
+inst kick   ch=10 note=36
+inst snare  ch=10 note=38
+inst clap   ch=10 note=39
+inst hats   ch=10 note=42
+inst ohats  ch=10 note=46
+
+# Full kit reference for `drums`-type gens.
+kit kit ch=10 preset=gm

@@ -109,9 +109,11 @@ def setup_from_ast(ast: SetupAST) -> Setup:
     # Resolve mode: explicit `mode` wins; otherwise translate legacy
     # `backend` (surge → surge-standalone, external → external); fall back
     # to "external" so setups with neither directive keep pre-redesign
-    # behaviour.
-    if ast.mode in ("external", "surge-standalone", "ableton-blackhole"):
+    # behaviour. ableton-blackhole (legacy) maps to ableton.
+    if ast.mode in ("external", "surge-standalone", "ableton"):
         mode: Mode = ast.mode  # type: ignore[assignment]
+    elif ast.mode == "ableton-blackhole":
+        mode = "ableton"
     elif ast.backend == "surge":
         mode = "surge-standalone"
     else:
