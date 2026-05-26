@@ -1,9 +1,9 @@
 """AbletonOSC client — small wrapper around the bits SB actually uses.
 
 [AbletonOSC](https://github.com/ideoforms/AbletonOSC) is a free
-Max-for-Live device that exposes Live's Object Model over OSC. SB
-uses it to push macro values into the Instrument Racks the user has
-built on each role-track.
+Remote Script (Control Surface) that exposes Live's Object Model
+over OSC. SB uses it to push macro values into the Instrument Racks
+the user has built on each role-track.
 
 Today's surface (all that's needed for the macro-preset push):
 
@@ -12,12 +12,14 @@ Today's surface (all that's needed for the macro-preset push):
 * :meth:`AbletonOscClient.set_device_parameter` — fire-and-forget
   ``/live/device/set/parameter/value <track> <device> <param> <value>``.
 
-AbletonOSC default port: 11000 send / 11001 receive (matches
-the device's default config).
+AbletonOSC default ports: SB sends to 11000 (Live's listener);
+AbletonOSC replies on 11001 (SB listens here).
 
-Connection model: fire-and-forget UDP. If AbletonOSC isn't running,
-sends silently disappear — the caller surfaces "couldn't reach
-AbletonOSC" by checking the track-name query reply.
+Connection model: fire-and-forget UDP. If AbletonOSC isn't running
+(Live not open, or the Remote Script not selected in Preferences →
+Link, Tempo & MIDI → Control Surface), sends silently disappear —
+the caller surfaces "couldn't reach AbletonOSC" by checking the
+track-name query reply.
 """
 
 from __future__ import annotations

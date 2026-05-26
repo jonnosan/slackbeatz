@@ -77,8 +77,11 @@ def push_macro_presets(
     track_names = client.get_track_names(timeout_s=1.5)
     if not track_names:
         warnings.append(
-            "couldn't reach AbletonOSC — check Live is running and the "
-            "AbletonOSC Max-for-Live device is loaded on the master track"
+            "couldn't reach AbletonOSC — check Live is running and "
+            "AbletonOSC is selected in Live → Preferences → "
+            "Link, Tempo & MIDI → Control Surface. Live should display "
+            "\"AbletonOSC: Listening for OSC on port 11000\" in its "
+            "status bar when it's active."
         )
         return 0, 0, warnings
     on_progress(f"Ableton sees {len(track_names)} tracks")

@@ -266,7 +266,11 @@ Optional but recommended for `ableton` mode: SB can morph the sound of each role
 
 **One-time setup:**
 
-1. Install [AbletonOSC](https://github.com/ideoforms/AbletonOSC) — a free Max-for-Live device. Drop it onto Live's master track.
+1. Install [AbletonOSC](https://github.com/ideoforms/AbletonOSC) — a free Remote Script (Control Surface), not a Max-for-Live device:
+   - Download the repo zip, extract, rename the folder from `AbletonOSC-master` → `AbletonOSC`.
+   - Copy the folder to `~/Music/Ableton/User Library/Remote Scripts/` (macOS) or `Documents\Ableton\User Library\Remote Scripts\` (Windows).
+   - Restart Live, then **Preferences → Link, Tempo & MIDI** → set one of the **Control Surface** dropdowns to `AbletonOSC`.
+   - Live should display `AbletonOSC: Listening for OSC on port 11000` in its status bar to confirm it's active.
 2. Wrap each role-track's instrument in an **Instrument Rack** (right-click the instrument → Group). Name the track so it contains the role keyword (`lead`, `bass`, `pad`, `candy`, `sub`) — case-insensitive substring match (e.g. "Bass — Analog Acid" matches `bass`).
 3. Map the rack's 8 macros to your preferred underlying parameters per the **macro contract**:
 
