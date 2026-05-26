@@ -506,7 +506,24 @@ class LfoEditDialog:
 
 
 class ApplyAddDialog:
-    """Modal Toplevel — pick which part to attach an LFO to."""
+    """Modal Toplevel — pick which part + target an LFO drives.
+
+    Layout is mode-aware (see [[backend_is_setup]]):
+
+    * ``external`` — keep the legacy MIDI ch/CC editor; user wires
+      target to their external synth's CC map.
+    * ``surge-standalone`` / ``ableton-blackhole`` — replace MIDI
+      with a Group / Scope / Knob dropdown picker covering
+      Pattern + Feel + Root targets. Each group reveals its own
+      controls (scope+knob for Pattern/Feel; scope+lo+hi+mode for
+      Root). A raw target field stays as the escape hatch for
+      power users (surge:/param/... or anything else).
+    """
+
+    GROUP_PATTERN = "Pattern knob"
+    GROUP_FEEL = "Feel knob"
+    GROUP_ROOT = "Root note"
+    GROUP_MIDI = "MIDI CC"
 
     def __init__(
         self, app: "GuiApp", *,
@@ -514,6 +531,8 @@ class ApplyAddDialog:
     ) -> None:
         self.app = app
         self.on_apply = on_apply
+        self.lfo_name = lfo_name
+        self.part_names = part_names
         self.win = tk.Toplevel(app.root)
         self.win.title(f"Apply {lfo_name}")
         self.win.transient(app.root)
@@ -523,10 +542,10 @@ class ApplyAddDialog:
         tk.Label(
             self.win,
             text=f"Bind LFO '{lfo_name}' to a part target.",
-            anchor="w", wraplength=320, justify="left",
+            anchor="w", wraplength=420, justify="left",
         ).pack(padx=12, pady=(12, 6))
 
-        # Part picker.
+        # Part picker — always shown.
         part_row = tk.Frame(self.win)
         part_row.pack(padx=12, pady=2, fill="x")
         tk.Label(part_row, text="Part:", width=10, anchor="w").pack(side="left")
@@ -535,37 +554,89 @@ class ApplyAddDialog:
             part_row, textvariable=self.part_var, state="readonly",
             values=part_names, width=18,
         ).pack(side="left")
+        self.part_var.trace_add("write", lambda *_: self._refresh_scope_choices())
 
-        # MIDI channel + CC inputs (MVP — other target kinds via raw target field below).
-        ch_row = tk.Frame(self.win)
-        ch_row.pack(padx=12, pady=2, fill="x")
-        tk.Label(ch_row, text="MIDI Ch:", width=10, anchor="w").pack(side="left")
+        # Group picker — drives which control row is interactive.
+        mode = self._setup_mode()
+        if mode == "external":
+            groups = [self.GROUP_MIDI]
+        else:
+            groups = [
+                self.GROUP_PATTERN, self.GROUP_FEEL,
+                self.GROUP_ROOT, self.GROUP_MIDI,
+            ]
+        group_row = tk.Frame(self.win)
+        group_row.pack(padx=12, pady=(8, 2), fill="x")
+        tk.Label(group_row, text="Group:", width=10, anchor="w").pack(side="left")
+        self.group_var = tk.StringVar(value=groups[0])
+        ttk.Combobox(
+            group_row, textvariable=self.group_var, state="readonly",
+            values=groups, width=14,
+        ).pack(side="left")
+        self.group_var.trace_add("write", lambda *_: self._refresh_visibility())
+
+        # Scope / Knob row — populated dynamically per group.
+        self.scope_row = tk.Frame(self.win)
+        self.scope_row.pack(padx=12, pady=2, fill="x")
+        tk.Label(self.scope_row, text="Scope:", width=10, anchor="w").pack(side="left")
+        self.scope_var = tk.StringVar(value="")
+        self.scope_combo = ttk.Combobox(
+            self.scope_row, textvariable=self.scope_var, state="readonly",
+            values=[], width=18,
+        )
+        self.scope_combo.pack(side="left")
+        tk.Label(self.scope_row, text="  Knob:").pack(side="left")
+        self.knob_var = tk.StringVar(value="")
+        self.knob_combo = ttk.Combobox(
+            self.scope_row, textvariable=self.knob_var, state="readonly",
+            values=[], width=18,
+        )
+        self.knob_combo.pack(side="left")
+        self.scope_var.trace_add("write", lambda *_: self._refresh_knob_choices())
+
+        # Root-only controls (lo / hi / mode), packed/forgotten as needed.
+        self.root_row = tk.Frame(self.win)
+        tk.Label(self.root_row, text="Range:", width=10, anchor="w").pack(side="left")
+        self.root_lo_var = tk.StringVar(value="36")
+        ttk.Entry(self.root_row, textvariable=self.root_lo_var, width=5).pack(side="left")
+        tk.Label(self.root_row, text="..").pack(side="left")
+        self.root_hi_var = tk.StringVar(value="72")
+        ttk.Entry(self.root_row, textvariable=self.root_hi_var, width=5).pack(side="left")
+        tk.Label(self.root_row, text="  Mode:").pack(side="left")
+        self.root_mode_var = tk.StringVar(value="degree")
+        ttk.Combobox(
+            self.root_row, textvariable=self.root_mode_var, state="readonly",
+            values=["degree", "snap"], width=8,
+        ).pack(side="left")
+
+        # MIDI-only controls (ch + cc), packed/forgotten per group.
+        self.midi_row = tk.Frame(self.win)
+        tk.Label(self.midi_row, text="MIDI Ch:", width=10, anchor="w").pack(side="left")
         self.ch_var = tk.StringVar(value="2")
         ttk.Combobox(
-            ch_row, textvariable=self.ch_var, state="readonly",
+            self.midi_row, textvariable=self.ch_var, state="readonly",
             values=[str(i) for i in range(1, 17)], width=4,
         ).pack(side="left")
-        tk.Label(ch_row, text="  CC:").pack(side="left")
+        tk.Label(self.midi_row, text="  CC:").pack(side="left")
         self.cc_var = tk.StringVar(value="74")
-        ttk.Entry(ch_row, textvariable=self.cc_var, width=6).pack(side="left")
+        ttk.Entry(self.midi_row, textvariable=self.cc_var, width=6).pack(side="left")
         tk.Label(
-            ch_row, text="  (74=cutoff, 71=resonance, 7=volume)",
+            self.midi_row, text="  (74=cutoff, 71=resonance, 7=volume)",
             fg="gray", font=("TkDefaultFont", 9),
         ).pack(side="left")
 
-        # Raw target override — for non-midi_cc targets.
-        raw_row = tk.Frame(self.win)
+        # Raw target override — for power users / unknown formats.
+        # Kept as a self attribute so the toggle helper can pack other
+        # rows before it via the `before=` argument.
+        self.raw_row = raw_row = tk.Frame(self.win)
         raw_row.pack(padx=12, pady=(8, 2), fill="x")
-        tk.Label(
-            raw_row, text="Or raw target=", width=14, anchor="w",
-        ).pack(side="left")
+        tk.Label(raw_row, text="Or raw:", width=10, anchor="w").pack(side="left")
         self.raw_var = tk.StringVar(value="")
-        ttk.Entry(raw_row, textvariable=self.raw_var, width=30).pack(side="left")
+        ttk.Entry(raw_row, textvariable=self.raw_var, width=42).pack(side="left")
         tk.Label(
             self.win,
-            text="(blank uses the midi:ch/cc above; otherwise paste a "
-                 "full target string e.g. surge:/param/a/filter/1/cutoff)",
-            fg="gray", wraplength=350, justify="left",
+            text="(raw overrides the picker; e.g. surge:/param/a/filter/1/cutoff)",
+            fg="gray", wraplength=420, justify="left",
         ).pack(padx=12)
 
         btns = tk.Frame(self.win)
@@ -575,20 +646,163 @@ class ApplyAddDialog:
         self.win.bind("<Return>", lambda _e: self._apply())
         self.win.bind("<Escape>", lambda _e: self.win.destroy())
 
+        # Initial population.
+        self._refresh_scope_choices()
+        self._refresh_visibility()
+
+    # -- helpers ---------------------------------------------------------
+
+    def _setup_mode(self) -> str:
+        try:
+            return getattr(self.app.player.current_resolved.setup, "mode", "external")
+        except Exception:
+            return "external"
+
+    def _resolved(self):
+        try:
+            return self.app.player.current_resolved
+        except Exception:
+            return None
+
+    def _gen_handles_in_part(self, part_name: str) -> list[str]:
+        resolved = self._resolved()
+        if resolved is None or part_name not in getattr(resolved, "parts", {}):
+            return []
+        part = resolved.parts[part_name]
+        handles = list(getattr(part, "gen_handles", []))
+        # Exclude drum handles for root_note + most pattern/feel work.
+        return handles
+
+    def _gen_types_in_part(self, part_name: str) -> list[str]:
+        resolved = self._resolved()
+        if resolved is None:
+            return []
+        types: list[str] = []
+        seen: set[str] = set()
+        for h in self._gen_handles_in_part(part_name):
+            t = getattr(resolved.gens.get(h), "type_", None)
+            if t and t not in seen:
+                types.append(t)
+                seen.add(t)
+        return types
+
+    def _knobs_for_handle(self, handle: str) -> list[str]:
+        """Pattern-knob names relevant for the gen's type. We use the
+        full KNOB_SPECS set since the picker doesn't know per-gen
+        knob lists; the runtime will silently ignore knobs the gen
+        doesn't actually use."""
+        from slackbeatz.ui.knob_specs import KNOB_SPECS
+        return sorted(KNOB_SPECS.keys())
+
+    def _refresh_scope_choices(self) -> None:
+        group = self.group_var.get() if hasattr(self, "group_var") else self.GROUP_PATTERN
+        part = self.part_var.get().strip()
+        scopes: list[str] = []
+        if group == self.GROUP_PATTERN:
+            scopes = self._gen_handles_in_part(part)
+        elif group == self.GROUP_FEEL:
+            scopes = self._gen_types_in_part(part)
+        elif group == self.GROUP_ROOT:
+            scopes = ["global"] + self._gen_handles_in_part(part)
+        self.scope_combo.config(values=scopes)
+        if scopes and (not self.scope_var.get() or self.scope_var.get() not in scopes):
+            self.scope_var.set(scopes[0])
+        self._refresh_knob_choices()
+
+    def _refresh_knob_choices(self) -> None:
+        group = self.group_var.get() if hasattr(self, "group_var") else self.GROUP_PATTERN
+        knobs: list[str] = []
+        if group == self.GROUP_PATTERN:
+            knobs = self._knobs_for_handle(self.scope_var.get())
+        elif group == self.GROUP_FEEL:
+            from slackbeatz.generators.feel import FEEL_KNOBS
+            knobs = [s.name for s in FEEL_KNOBS]
+        self.knob_combo.config(values=knobs)
+        if knobs and (not self.knob_var.get() or self.knob_var.get() not in knobs):
+            self.knob_var.set(knobs[0])
+
+    def _refresh_visibility(self) -> None:
+        """Show only the rows relevant to the chosen group.
+
+        Uses ``before=self.raw_row`` so repacks land in the original
+        order even after pack_forget/repack cycles.
+        """
+        group = self.group_var.get()
+        before = self.raw_row
+        # Scope/knob row is for Pattern + Feel + Root (Root keeps the
+        # scope dropdown but hides the knob).
+        if group == self.GROUP_MIDI:
+            self.scope_row.pack_forget()
+        else:
+            self.scope_row.pack(padx=12, pady=2, fill="x", before=before)
+        if group in (self.GROUP_PATTERN, self.GROUP_FEEL):
+            self.knob_combo.config(state="readonly")
+        else:
+            self.knob_var.set("")
+            self.knob_combo.config(state="disabled")
+        if group == self.GROUP_ROOT:
+            self.root_row.pack(padx=12, pady=2, fill="x", before=before)
+        else:
+            self.root_row.pack_forget()
+        if group == self.GROUP_MIDI:
+            self.midi_row.pack(padx=12, pady=2, fill="x", before=before)
+        else:
+            self.midi_row.pack_forget()
+        self._refresh_scope_choices()
+
+    # -- apply -----------------------------------------------------------
+
+    def _build_target(self) -> str | None:
+        """Construct the target string from picker state, or None if invalid."""
+        raw = self.raw_var.get().strip()
+        if raw:
+            return raw
+        group = self.group_var.get()
+        scope = self.scope_var.get().strip()
+        knob = self.knob_var.get().strip()
+        if group == self.GROUP_PATTERN:
+            if not scope or not knob:
+                messagebox.showerror(
+                    "Apply", "Pattern target needs scope + knob.", parent=self.win,
+                )
+                return None
+            return f"pattern:{scope}:{knob}"
+        if group == self.GROUP_FEEL:
+            if not scope or not knob:
+                messagebox.showerror(
+                    "Apply", "Feel target needs scope + knob.", parent=self.win,
+                )
+                return None
+            return f"feel:{scope}:{knob}"
+        if group == self.GROUP_ROOT:
+            if not scope:
+                messagebox.showerror("Apply", "Root target needs a scope.", parent=self.win)
+                return None
+            try:
+                lo = int(self.root_lo_var.get())
+                hi = int(self.root_hi_var.get())
+            except ValueError:
+                messagebox.showerror(
+                    "Apply", "Range lo/hi must be integers 0..127.", parent=self.win,
+                )
+                return None
+            mode = self.root_mode_var.get().strip() or "degree"
+            return f"root:{scope}:{lo}:{hi}:{mode}"
+        # MIDI CC
+        ch = self.ch_var.get().strip()
+        cc = self.cc_var.get().strip()
+        if not ch or not cc:
+            messagebox.showerror("Apply", "MIDI ch + CC are required.", parent=self.win)
+            return None
+        return f"midi:ch:{ch}/cc:{cc}"
+
     def _apply(self) -> None:
         part = self.part_var.get().strip()
         if not part:
             messagebox.showerror("Apply", "pick a part", parent=self.win)
             return
-        raw = self.raw_var.get().strip()
-        if raw:
-            target = raw
-        else:
-            ch = self.ch_var.get().strip()
-            cc = self.cc_var.get().strip()
-            if not ch or not cc:
-                messagebox.showerror("Apply", "MIDI ch + CC are required", parent=self.win)
-                return
-            target = f"midi:ch:{ch}/cc:{cc}"
+        target = self._build_target()
+        if target is None:
+            return
         self.win.destroy()
         self.on_apply(part, target)
