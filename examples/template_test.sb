@@ -1,0 +1,61 @@
+# template_test.sb — exercises every track in the ableton-mode template.
+#
+# Uses every voice the bundled ableton.sb defines so all 13 tracks in
+# the recommended Ableton template (Slackbeatz.als) light up at once:
+#
+#   pitched (5 tracks):  lead, bass, pad, candy, sub
+#   drum-split (6):      kick, snare, clap, hats, ohats, drum-other
+#   harmonic (2):        chord (ch15), root (ch16)
+#
+# Pick this song from the Welcome screen to verify every track in your
+# template receives MIDI and triggers an instrument. Once verified,
+# switch to composing-from-text for actual songs.
+
+song "Template Test"
+  setup "ableton"
+  tempo 120
+  key   Cm
+  seed  1
+
+# Drums — five distinct ch10 notes so each per-drum virtual port
+# (slackbeatz-drum-kick / -snare / -clap / -hats / -ohats) fires.
+gen kick   rhythm euclid_drums  steps=16 pulses=4
+gen snare  rhythm euclid_drums  steps=16 pulses=4
+gen clap   rhythm euclid_drums  steps=16 pulses=2
+gen hats   rhythm euclid_drums  steps=16 pulses=8
+gen ohats  rhythm euclid_drums  steps=16 pulses=3
+
+# Pitched voices on ch 1..6 so all five synth tracks light up.
+gen bass   bass    rolling
+gen sub    subbass drone
+gen lead   melody  euclid_riff
+gen pad    chords  triad_sustain
+gen riser  candy   euclid_riser
+
+# Two parts so the candy riser fires (it gates on build / drop roles
+# — euclid_riser stays silent on a plain "main" part).
+part build 4
+  kick
+  snare
+  clap
+  hats
+  ohats
+  bass
+  sub
+  lead
+  pad
+  riser
+
+part drop 8
+  kick
+  snare
+  clap
+  hats
+  ohats
+  bass
+  sub
+  lead
+  pad
+  riser
+
+play build drop build drop
