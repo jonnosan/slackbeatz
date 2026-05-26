@@ -159,7 +159,11 @@ class ArrangementScreen(tk.Frame):
         # Right-aligned screen swap buttons.
         ttk.Button(bar, text="Setup", command=self._goto_setup).pack(side="right")
         ttk.Button(bar, text="LFOs", command=self._goto_lfos).pack(side="right")
-        ttk.Button(bar, text="Mixer", command=self._goto_mixer).pack(side="right")
+        # Mixer is only meaningful in surge-standalone where SB owns
+        # per-channel volume / FX / patches. In ableton + external
+        # modes the downstream rig owns mixing — hide the button.
+        if self._setup_mode() == "surge-standalone":
+            ttk.Button(bar, text="Mixer", command=self._goto_mixer).pack(side="right")
 
     def _build_header(self) -> None:
         head = tk.Frame(self)
@@ -789,9 +793,19 @@ class ArrangementScreen(tk.Frame):
 
     def _show_view_menu(self) -> None:
         menu = tk.Menu(self, tearoff=0)
-        menu.add_command(label="Mixer", command=self._goto_mixer)
+        # Mixer is only relevant in surge-standalone — see _build_menubar.
+        if self._setup_mode() == "surge-standalone":
+            menu.add_command(label="Mixer", command=self._goto_mixer)
         menu.add_command(label="Setup", command=self._goto_setup)
         menu.tk_popup(self.winfo_pointerx(), self.winfo_pointery())
+
+    def _setup_mode(self) -> str:
+        """Active Setup mode — drives Mixer button visibility etc.
+        Returns ``"external"`` if no resolved song is available."""
+        resolved = self._resolved()
+        if resolved is None:
+            return "external"
+        return getattr(resolved.setup, "mode", "external")
 
     def _new_song(self) -> None:
         # Stop the current player + return to Welcome to compose a new one.

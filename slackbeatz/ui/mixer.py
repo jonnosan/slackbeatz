@@ -1,21 +1,8 @@
 """Mixer screen — per-channel volume / mute / solo strips + activity LEDs.
 
-Shown when the user clicks the Mixer button in the Arrangement
-header. The mixer reads the resolved song's gens to enumerate active
-channels and wires each strip to ``Player.toggle_mute`` /
-``Player.toggle_solo``.
-
-Behaviour depends on the Setup's mode (see [[backend_is_setup]]):
-
-* ``surge-standalone`` — full strip: activity LED, volume slider
-  (Surge ``/param/a/amp/volume`` OSC), patch picker, FX editor,
-  mute/solo. Today's behaviour.
-* ``ableton`` — Ableton owns mixing/FX, so the strip drops
-  the volume slider + FX button. Patch picker, mute/solo, and the
-  activity LED stay. A toolbar "Open Ableton template" button opens
-  the user's starter Live Set.
-* ``external`` — no Surge instance; volume slider is disabled
-  (proper MIDI CC7 is a follow-up).
+Shown only in ``surge-standalone`` mode (see [[backend_is_setup]]) —
+ableton + external modes hide the Mixer button because the downstream
+rig (Ableton's mixer, the user's external setup) owns mixing.
 
 Activity LED per strip — gray when silent, green when sounding.
 Backed by :meth:`Player.is_channel_active` with the standard 150ms
@@ -24,35 +11,12 @@ grace window so both short hi-hats and long pads light up correctly.
 
 from __future__ import annotations
 
-import subprocess
 import tkinter as tk
-from pathlib import Path
-from tkinter import messagebox, ttk
+from tkinter import ttk
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from slackbeatz.ui.launcher import GuiApp
-
-
-# Default Ableton template path. Stored in the user's Ableton library
-# so it survives across SB upgrades (we don't overwrite it). The "Open
-# Ableton template" button targets this; if the file is missing the
-# button shows a dialog with setup instructions instead.
-_DEFAULT_ABLETON_TEMPLATE = Path(
-    "~/Music/Ableton/User Library/Templates/Slackbeatz.als"
-).expanduser()
-
-
-def _per_style_template(style: str | None) -> Path:
-    """Resolve the per-style template path, if any.
-
-    Returns ``Slackbeatz-<style>.als`` next to the default template.
-    Caller checks ``.is_file()`` and falls back to the default if not
-    present — so users build templates only for styles they care about.
-    """
-    if not style:
-        return _DEFAULT_ABLETON_TEMPLATE
-    return _DEFAULT_ABLETON_TEMPLATE.with_name(f"Slackbeatz-{style}.als")
 
 
 class MixerScreen(tk.Frame):
@@ -71,13 +35,6 @@ class MixerScreen(tk.Frame):
         tk.Label(bar, text="Mixer", font=("TkDefaultFont", 12, "bold")).pack(
             side="left", padx=12,
         )
-
-        # "Open Ableton template" — only shown in ableton mode.
-        if self._mode() == "ableton":
-            ttk.Button(
-                bar, text="Open Ableton template",
-                command=self._open_ableton_template,
-            ).pack(side="right", padx=4)
 
         body = tk.Frame(self)
         body.pack(fill="both", expand=True, padx=12, pady=12)
@@ -101,17 +58,14 @@ class MixerScreen(tk.Frame):
         ttk.Separator(self, orient="horizontal").pack(fill="x", pady=4)
         foot = tk.Frame(self)
         foot.pack(fill="x", padx=12, pady=8)
-        if self._mode() == "ableton":
-            hint = (
-                "LED green = channel sounding · Ableton owns volume/FX "
-                "(mute+solo + patch picker stay here)"
-            )
-        else:
-            hint = (
+        tk.Label(
+            foot,
+            text=(
                 "LED green = channel sounding · volume slider drives "
                 "Surge /param/a/amp/volume (FluidSynth ch10 drums TBD)"
-            )
-        tk.Label(foot, text=hint, fg="gray", anchor="w").pack(side="left")
+            ),
+            fg="gray", anchor="w",
+        ).pack(side="left")
 
         # Start the LED + volume polling loop.
         self._poll_active = True
@@ -135,40 +89,32 @@ class MixerScreen(tk.Frame):
                  fg="gray").pack()
 
         surge_inst = self._surge_instance_for_channel(channel)
-        # In ableton mode Ableton owns volume + FX — skip
-        # both strip controls. Patch picker + mute/solo stay because
-        # they're sound design / MIDI routing, not mixing.
-        ableton_owns_mix = self._mode() == "ableton"
+        # Volume slider — vertical, 0..127 like MIDI velocity range.
+        # Defaults to 100 (Surge global default ~= 0.79 normalised).
+        # Uses Scale ``command`` callback (fires on every drag move)
+        # so the user hears the level live while sliding.
+        vol_var = tk.IntVar(value=100)
+        last_pushed = [-1]
+        def _live_volume_callback(value_str, ch=channel):
+            try:
+                v = int(float(value_str))
+            except (TypeError, ValueError):
+                return
+            if v == last_pushed[0]:
+                return
+            last_pushed[0] = v
+            self._on_volume_change(ch, v)
+        tk.Scale(
+            strip, from_=127, to=0, resolution=1, length=140,
+            orient="vertical", showvalue=True, variable=vol_var,
+            command=_live_volume_callback if surge_inst is not None else None,
+            state=("normal" if surge_inst is not None else "disabled"),
+        ).pack(pady=2)
 
-        if not ableton_owns_mix:
-            # Volume slider — vertical, 0..127 like MIDI velocity range.
-            # Defaults to 100 (Surge global default ~= 0.79 normalised).
-            # Uses Scale ``command`` callback (fires on every drag move)
-            # so user hears the level live while sliding — required for
-            # auditioning.
-            vol_var = tk.IntVar(value=100)
-            last_pushed = [-1]
-            def _live_volume_callback(value_str, ch=channel):
-                try:
-                    v = int(float(value_str))
-                except (TypeError, ValueError):
-                    return
-                if v == last_pushed[0]:
-                    return
-                last_pushed[0] = v
-                self._on_volume_change(ch, v)
-            tk.Scale(
-                strip, from_=127, to=0, resolution=1, length=140,
-                orient="vertical", showvalue=True, variable=vol_var,
-                command=_live_volume_callback if surge_inst is not None else None,
-                state=("normal" if surge_inst is not None else "disabled"),
-            ).pack(pady=2)
-
-        # Patch + FX buttons drive Surge XT directly — only meaningful
-        # in surge-standalone mode where SB owns the synth instances.
-        # ableton mode: instruments live in the user's Live Set (use
-        # Ableton's own preset browser). external mode: no synth at all.
-        if surge_inst is not None and self._mode() == "surge-standalone":
+        # Patch + FX buttons drive Surge XT directly — always present
+        # in the Mixer because the Mixer itself is only shown in
+        # surge-standalone (other modes hide the Mixer entirely).
+        if surge_inst is not None:
             ttk.Button(
                 strip, text="Patch…", width=8,
                 command=lambda inst=surge_inst: self._open_patch_picker(inst),
@@ -272,83 +218,3 @@ class MixerScreen(tk.Frame):
             return None
         return self.app.player.current_resolved
 
-    def _mode(self) -> str:
-        """Current Setup mode — drives strip layout + toolbar buttons."""
-        resolved = self._resolved()
-        if resolved is None:
-            return "external"
-        return getattr(resolved.setup, "mode", "external")
-
-    def _current_style(self) -> str | None:
-        """Style override on the current song, if any."""
-        player = self.app.player
-        if player is None:
-            return None
-        return getattr(player, "style_override", None)
-
-    def _open_ableton_template(self) -> None:
-        """Open the per-style Ableton template (falling back to default).
-
-        Lookup order:
-          1. ``Slackbeatz-<style>.als`` next to the default — if the
-             song has an explicit style and the file exists.
-          2. ``Slackbeatz.als`` — the catch-all default template.
-
-        If neither exists, shows the first-time setup instructions
-        explaining the new ableton mode (pure MIDI; one MIDI track per
-        role + per-drum split tracks).
-        """
-        style = self._current_style()
-        style_path = _per_style_template(style)
-        # Prefer per-style template when present.
-        target = style_path if style_path.is_file() else _DEFAULT_ABLETON_TEMPLATE
-        if target.is_file():
-            try:
-                subprocess.Popen(["open", str(target)])
-            except OSError as e:
-                messagebox.showerror(
-                    "Couldn't open Ableton template",
-                    f"open {target}\n\n{e}",
-                )
-            return
-        # Neither default nor style-specific exists.
-        style_hint = (
-            f"For per-style templates, save as Slackbeatz-{style}.als.\n"
-            if style else ""
-        )
-        msg = (
-            f"No Slackbeatz template found at:\n  {_DEFAULT_ABLETON_TEMPLATE}\n\n"
-            f"{style_hint}"
-            "Set up the default template once and SB reopens it each time:\n\n"
-            "1. Open Ableton Live, create a new Live Set.\n"
-            "2. Add 5 MIDI tracks for the synth voices:\n"
-            "     Track 1: MIDI From = slackbeatz-lead\n"
-            "     Track 2: MIDI From = slackbeatz-bass\n"
-            "     Track 3: MIDI From = slackbeatz-pad\n"
-            "     Track 4: MIDI From = slackbeatz-candy\n"
-            "     Track 5: MIDI From = slackbeatz-sub\n"
-            "   Drop any Ableton instrument on each (Wavetable, Operator,\n"
-            "   Bass, Analog, third-party AU/VST, etc.).\n"
-            "3. Add MIDI tracks for splittable drums (one per drum):\n"
-            "     Track: MIDI From = slackbeatz-drum-kick   + Drum Rack\n"
-            "     Track: MIDI From = slackbeatz-drum-snare  + Drum Rack\n"
-            "     Track: MIDI From = slackbeatz-drum-hats   + Drum Rack\n"
-            "     Track: MIDI From = slackbeatz-drum-other  + Drum Rack\n"
-            "     (also slackbeatz-drum-clap, -ohats if you've defined them)\n"
-            "4. Set MIDI To on each track to a unique track destination\n"
-            "   so the instruments actually sound. Arm each track.\n"
-            "5. (Optional) MIDI tracks subscribed to slackbeatz-chord /\n"
-            "   slackbeatz-root for arp / triad-builder tools.\n"
-            "6. Settings → Link/MIDI: Sync IN from slackbeatz-transport-out,\n"
-            "   Sync OUT to slackbeatz-transport-in for press-play-in-either.\n"
-            "7. File → Save Live Set As… save to:\n"
-            f"     {_DEFAULT_ABLETON_TEMPLATE.parent}/Slackbeatz.als\n\n"
-            "Open Templates folder in Finder now?"
-        )
-        if messagebox.askyesno("Set up Ableton template", msg):
-            templates_dir = _DEFAULT_ABLETON_TEMPLATE.parent
-            templates_dir.mkdir(parents=True, exist_ok=True)
-            try:
-                subprocess.Popen(["open", str(templates_dir)])
-            except OSError:
-                pass

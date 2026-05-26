@@ -69,6 +69,25 @@ class SetupScreen(tk.Frame):
             fg="gray",
         ).pack(side="left", padx=8)
 
+        # "Open Ableton template" — only meaningful in ableton mode.
+        # Picks Slackbeatz-<style>.als first (per the current song's
+        # style_override) then falls back to Slackbeatz.als.
+        if current == "ableton":
+            ableton_row = tk.Frame(body)
+            ableton_row.pack(fill="x", pady=4)
+            ttk.Button(
+                ableton_row, text="Open Ableton template",
+                command=self._open_ableton_template,
+            ).pack(side="left")
+            tk.Label(
+                ableton_row,
+                text=(
+                    " — opens Slackbeatz-<style>.als if present,"
+                    " else Slackbeatz.als"
+                ),
+                fg="gray",
+            ).pack(side="left", padx=8)
+
         # Instruments table.
         ttk.Separator(body, orient="horizontal").pack(fill="x", pady=8)
         tk.Label(body, text="Instruments:", font=("TkDefaultFont", 10, "bold"),
@@ -108,6 +127,15 @@ class SetupScreen(tk.Frame):
         txt.insert("1.0", emit_setup(setup))
         txt.config(state="disabled")
         txt.pack(fill="both", expand=True, padx=12, pady=4)
+
+    def _open_ableton_template(self) -> None:
+        """Open the per-style Ableton template (falling back to default)."""
+        from slackbeatz.ui.ableton_template import open_ableton_template
+        style = (
+            getattr(self.app.player, "style_override", None)
+            if self.app.player is not None else None
+        )
+        open_ableton_template(self, style)
 
     def _on_mode_change(self) -> None:
         """Mutate the in-memory Setup's mode. Save action picks it up."""
