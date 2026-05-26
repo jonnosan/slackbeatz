@@ -298,10 +298,12 @@ Shapes: `sine`, `sawtooth`, `square`, `pulse`, `noise`. Targets:
 
 Every render also emits a steady stream of harmonic-context MIDI on two reserved channels, intended for external listener tools (Ableton arps / triad builders / chord-aware FX) to lock onto the song's current chord without parsing SB internals:
 
-- **ch16 — root note** — single pitch on every quarter note. Follows the bass gen's `progression=` knob if set, then the chord gen's `progression=` knob, then falls back to holding the part's tonic.
-- **ch15 — chord (Imaj7-style)** — four simultaneous pitches built from scale degrees 1/3/5/7 above the current chord root (mode-appropriate: minor-7 over minor scale, maj-7 over major). Triggers at the same quarter-note grid as ch16.
+- **ch16 — root note** — single pitch on every quarter note. Follows the bass gen's `progression=` knob if set, then the chord gen's `progression=` knob, then falls back to holding the part's tonic. Routed to the dedicated `slackbeatz-root` virtual MIDI port.
+- **ch15 — chord (Imaj7-style)** — four simultaneous pitches built from scale degrees 1/3/5/7 above the current chord root (mode-appropriate: minor-7 over minor scale, maj-7 over major). Triggers at the same quarter-note grid as ch16. Routed to the dedicated `slackbeatz-chord` virtual MIDI port.
 
-Drum-only parts emit nothing on these channels. Channels 15 + 16 are reserved — if you need them for instruments, mute the corresponding strips in SB's Mixer.
+In Ableton, add a MIDI track and set **MIDI From** to `slackbeatz-root` or `slackbeatz-chord` to feed an arp / triad builder / instrument. The streams don't reach Surge or FluidSynth — they live entirely on their own virtual ports so they can't pollute the audio mix.
+
+Drum-only parts emit nothing on these channels.
 
 ### Per-gen knobs
 

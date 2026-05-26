@@ -84,6 +84,14 @@ OSC_CHANNELS: dict[str, tuple[int, str, str | None]] = {
     # rhythm patterns live in slackbeatz/generators/subbass/.
     "sub":   (6,  "slackbeatz-sub",   "Basses/Sub 1.fxp"),
     "fx":    (11, "slackbeatz-fx",    None),
+    # Harmonic broadcast (Phase 3) — quarter-note streams of the
+    # current chord (ch15) and current root (ch16). Each gets its own
+    # virtual port so listener tools (Ableton arps, triad builders)
+    # can subscribe cleanly without going through FluidSynth (which
+    # would play them as GM piano). ``None`` patch_rel means no Surge
+    # spawn — the role exists purely as a MIDI routing destination.
+    "chord": (15, "slackbeatz-chord", None),
+    "root":  (16, "slackbeatz-root",  None),
 }
 
 
