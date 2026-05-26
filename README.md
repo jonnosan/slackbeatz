@@ -218,19 +218,46 @@ voice melody
 
 The cascade order is: engine default → style profile → song-level gen line → voice block → part override (last wins).
 
-### Setup backend directive
+### Setup mode directive
 
-Bundled setups (`surge` / `external` / `gm` / `808` / `909` / `multitimbral`) carry a backend choice:
+Bundled setups carry a `mode` directive that selects one of three peer render paths:
 
 ```text
 setup "Studio"
-backend surge          # or `backend external`
+mode surge-standalone     # or external / ableton-blackhole
 inst lead ch=1
 inst bass ch=2
 ...
 ```
 
-`backend surge` spawns headless `surge-xt-cli` instances for pitched channels and routes ch10 drums through FluidSynth. `backend external` sends raw MIDI to an external port. Existing setups without a `backend` directive default to `external`.
+| mode | What it does | When to pick |
+|---|---|---|
+| `external` | Raw MIDI to a port — no synth spawned. Wire to a DAW or external hardware yourself. | You already have an audio chain set up and just want SB's notes. |
+| `surge-standalone` | Headless `surge-xt-cli` per pitched channel + FluidSynth for ch10 drums; audio writes direct to CoreAudio. SB's Mixer tab owns per-channel volume + FX. Single-screen workflow, no DAW. | Quick iteration; you're OK without master-bus FX or cross-instance reverb sends. |
+| `ableton-blackhole` | Same Surge + FluidSynth spawn, but audio routes through [BlackHole 16ch](https://github.com/ExistentialAudio/BlackHole) channels into an Ableton Live Set that owns mixing / FX / master chain. Dual MIDI emission is free via CoreMIDI pub/sub: any Ableton MIDI track can subscribe to the same `slackbeatz-<role>` virtual port surge is listening on — so you can layer SB-driven Surge bass + a hand-added 303 in Ableton on the same channel. | macOS only. You want bus FX, EQ on the master, or cross-instance reverb sends. You already use Ableton. |
+
+The legacy `backend surge` / `backend external` directive still parses (maps to `surge-standalone` and `external` respectively).
+
+#### Ableton+BlackHole setup
+
+One-time setup for `mode ableton-blackhole`:
+
+1. `brew install --cask blackhole-16ch` then `sudo killall coreaudiod` (or reboot). Driver lands at `/Library/Audio/Plug-Ins/HAL/`.
+2. **Audio MIDI Setup → BlackHole 16ch → Format → 44100 Hz** for both Input and Output (the default on a fresh install is 8 kHz — drastically degrades audio).
+3. In Ableton: **Live → Settings → Audio → Audio Input Device** = BlackHole 16ch. **Input Config** — enable channel pairs 1/2 through 11/12 (only 1/2 is on by default).
+4. Add 6 audio tracks in the Live Set with `Audio From → Ext. In`:
+   - Track 1 — `1/2`  = drums (FluidSynth)
+   - Track 2 — `3/4`  = lead
+   - Track 3 — `5/6`  = bass
+   - Track 4 — `7/8`  = pad
+   - Track 5 — `9/10` = candy
+   - Track 6 — `11/12`= sub
+   - Monitor = `In` on each track; drop FX (EQ Eight, Glue Compressor, etc) as desired.
+5. For bidirectional transport: **Live → Settings → Link/MIDI**:
+   - MIDI Input row for `slackbeatz-transport-out`: **Sync = On** (SB drives Ableton's clock + Start/Stop/SPP).
+   - MIDI Output row for `slackbeatz-transport-in`: **Sync = On** (Ableton's transport buttons drive SB).
+6. (Optional) For per-voice MIDI layering: on any Ableton MIDI track, set **MIDI From** to `slackbeatz-bass` (or `-lead` / etc.) — Ableton instruments on that track receive the same notes Surge does. Mute/unmute either side to layer.
+7. Save as `~/Music/Ableton/User Library/Templates/Slackbeatz.als` — SB's Mixer tab "Open Ableton template" button will reopen this set each session.
 
 ### Scene block — mixer state round-trip
 
