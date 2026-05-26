@@ -260,6 +260,37 @@ One-time setup for `mode ableton`. No BlackHole, no audio routing — Ableton ho
 6. Save as `~/Music/Ableton/User Library/Templates/Slackbeatz.als`. SB's Mixer tab "Open Ableton template" button reopens it each session.
 7. **Per-style templates** (optional) — save additional templates named `Slackbeatz-<style>.als` (e.g. `Slackbeatz-acid.als`, `Slackbeatz-vaporwave.als`). When you compose a song with that style, SB opens the matching template instead of the default. Build per-style templates incrementally for the styles you actually use.
 
+#### Macro-preset push (AbletonOSC)
+
+Optional but recommended for `ableton` mode: SB can morph the sound of each role per song style via 8 standardised macros on each Instrument Rack.
+
+**One-time setup:**
+
+1. Install [AbletonOSC](https://github.com/ideoforms/AbletonOSC) — a free Max-for-Live device. Drop it onto Live's master track.
+2. Wrap each role-track's instrument in an **Instrument Rack** (right-click the instrument → Group). Name the track so it contains the role keyword (`lead`, `bass`, `pad`, `candy`, `sub`) — case-insensitive substring match (e.g. "Bass — Analog Acid" matches `bass`).
+3. Map the rack's 8 macros to your preferred underlying parameters per the **macro contract**:
+
+| Macro | Controls |
+|---|---|
+| 1 | Cutoff — filter brightness |
+| 2 | Resonance — filter peak |
+| 3 | Attack — envelope start |
+| 4 | Release — envelope tail |
+| 5 | Drive — saturation/distortion |
+| 6 | FX send — delay + reverb wet |
+| 7 | Character — detune / osc shape / wavetable position |
+| 8 | Glide / Mod — portamento or LFO depth |
+
+The contract is the macro **name** — SB sends "macro 1 = 0.7" and trusts your wiring. Macro 1 might map to Analog's Filter Freq on bass but to Wavetable's Filter Cutoff on lead; SB doesn't care.
+
+**Per-song push:**
+
+In the Setup tab (only visible in `ableton` mode), click **Set Ableton patches for style**. SB looks up the song's style + seed, samples the macro registry with per-song variance, and writes 8 macros per role-track. One-shot — you're free to tweak in Ableton afterwards; SB only pushes again when you click again.
+
+Two songs in the same style sound clearly distinct from each other (moderate per-macro variance, deterministic from the song seed) but share the style's signature character (resonance / envelope shape stays fixed).
+
+**Style coverage today**: `acid`, `deep_techno`. Other styles fall through to a neutral default — extend `slackbeatz/ableton/macro_presets.py` as you discover what each style should sound like.
+
 ### Scene block — mixer state round-trip
 
 GUI Save emits a `scene` block reflecting current mute / solo state per channel:
