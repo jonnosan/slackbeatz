@@ -244,20 +244,21 @@ One-time setup for `mode ableton-blackhole`:
 
 1. `brew install --cask blackhole-16ch` then `sudo killall coreaudiod` (or reboot). Driver lands at `/Library/Audio/Plug-Ins/HAL/`.
 2. **Audio MIDI Setup → BlackHole 16ch → Format → 44100 Hz** for both Input and Output (the default on a fresh install is 8 kHz — drastically degrades audio).
-3. In Ableton: **Live → Settings → Audio → Audio Input Device** = BlackHole 16ch. **Input Config** — enable channel pairs 1/2 through 11/12 (only 1/2 is on by default).
-4. Add 6 audio tracks in the Live Set with `Audio From → Ext. In`:
-   - Track 1 — `1/2`  = drums (FluidSynth)
-   - Track 2 — `3/4`  = lead
-   - Track 3 — `5/6`  = bass
-   - Track 4 — `7/8`  = pad
-   - Track 5 — `9/10` = candy
-   - Track 6 — `11/12`= sub
+3. In Ableton: **Live → Settings → Audio → Audio Input Device** = BlackHole 16ch. **Input Config** — enable channel pairs 3/4 through 11/12.
+4. Add 5 audio tracks in the Live Set with `Audio From → Ext. In`:
+   - Track 1 — `3/4`  = lead
+   - Track 2 — `5/6`  = bass
+   - Track 3 — `7/8`  = pad
+   - Track 4 — `9/10` = candy
+   - Track 5 — `11/12`= sub
    - Monitor = `In` on each track; drop FX (EQ Eight, Glue Compressor, etc) as desired.
-5. For bidirectional transport: **Live → Settings → Link/MIDI**:
+5. **Drums on a MIDI track** — `ableton-blackhole` doesn't spawn FluidSynth; ch10 drum notes emit to a `slackbeatz-drums` virtual MIDI port. Add a MIDI track, set **MIDI From** = `slackbeatz-drums` (Channel = All), drop any Drum Rack / sampler on it, set Monitor = In, arm it. (BlackHole 1/2 is left free; repurpose if useful.)
+6. For bidirectional transport: **Live → Settings → Link/MIDI**:
    - MIDI Input row for `slackbeatz-transport-out`: **Sync = On** (SB drives Ableton's clock + Start/Stop/SPP).
    - MIDI Output row for `slackbeatz-transport-in`: **Sync = On** (Ableton's transport buttons drive SB).
-6. (Optional) For per-voice MIDI layering: on any Ableton MIDI track, set **MIDI From** to `slackbeatz-bass` (or `-lead` / etc.) — Ableton instruments on that track receive the same notes Surge does. Mute/unmute either side to layer.
-7. Save as `~/Music/Ableton/User Library/Templates/Slackbeatz.als` — SB's Mixer tab "Open Ableton template" button will reopen this set each session.
+7. (Optional) For per-voice MIDI layering: on any Ableton MIDI track, set **MIDI From** to `slackbeatz-bass` (or `-lead` / etc.) — Ableton instruments on that track receive the same notes Surge does. Mute/unmute either side to layer.
+8. (Optional) Add MIDI tracks subscribed to `slackbeatz-chord` / `slackbeatz-root` for arp / triad-builder tools.
+9. Save as `~/Music/Ableton/User Library/Templates/Slackbeatz.als` — SB's Mixer tab "Open Ableton template" button will reopen this set each session.
 
 ### Scene block — mixer state round-trip
 

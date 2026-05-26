@@ -233,13 +233,16 @@ def build_live_runtime(
     mode = setup.mode
     backend = setup.backend  # derived: "external" or "surge"
     osc_routing_enabled = backend == "surge"
-    need_fluidsynth = osc_routing_enabled and _setup_has_drum_channel(setup)
-    # In ableton-blackhole mode, drums route through BlackHole 1/2 so
-    # Ableton can apply FX. Other modes leave FluidSynth on the OS
-    # default output.
-    fluidsynth_device = (
-        "BlackHole 16ch" if mode == "ableton-blackhole" else None
+    # FluidSynth spawns for ch10 drums only in surge-standalone mode.
+    # In ableton-blackhole, drums emit on the slackbeatz-drums virtual
+    # MIDI port for an Ableton Drum Rack to subscribe to (the user
+    # picks the kit, not us).
+    need_fluidsynth = (
+        osc_routing_enabled
+        and mode != "ableton-blackhole"
+        and _setup_has_drum_channel(setup)
     )
+    fluidsynth_device = None  # FluidSynth never targets BlackHole now
 
     # Reuse path — skip the FluidSynth + surge-xt-cli spawn and
     # transfer the previous runtime's children. Triggered when the
@@ -282,6 +285,7 @@ def build_live_runtime(
             osc_routing=osc_routing_enabled,
         )
         player.seed_offset = seed_offset
+        player.mode = mode  # mode-aware routing must match the reuse setup
         # Inherit the shared MultiPortSink so the new Player writes to
         # the SAME virtual MIDI ports the existing Surge instances are
         # subscribed to. ensure_osc_routing_ready short-circuits when
@@ -347,6 +351,11 @@ def build_live_runtime(
         osc_routing=osc_routing_enabled,
     )
     player.seed_offset = seed_offset
+    # Mode drives mode-aware routing decisions inside Player
+    # (e.g. ch10 drums → MIDI in ableton-blackhole vs FluidSynth in
+    # surge-standalone). Must be set BEFORE load_file so the first
+    # render uses the right channel routing.
+    player.mode = mode
     player.load_file(song_path)
 
     # Bidirectional MIDI transport in ableton-blackhole mode. SB stays

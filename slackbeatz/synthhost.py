@@ -92,6 +92,12 @@ OSC_CHANNELS: dict[str, tuple[int, str, str | None]] = {
     # spawn — the role exists purely as a MIDI routing destination.
     "chord": (15, "slackbeatz-chord", None),
     "root":  (16, "slackbeatz-root",  None),
+    # Drums (ch10) — virtual port for ableton-blackhole mode so the
+    # user can host their own Drum Rack in Ableton instead of being
+    # locked to FluidSynth's GM kit. In surge-standalone mode this
+    # port is created too but Player.mode filters ch9 out of the
+    # routing map so ch10 falls through to FluidSynth as before.
+    "drums": (10, "slackbeatz-drums", None),
 }
 
 

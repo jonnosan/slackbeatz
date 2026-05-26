@@ -140,7 +140,17 @@ class ClockEmitter:
                 pass
 
     def stop(self) -> None:
-        """Send Stop and close the port. Idempotent."""
+        """Send Stop and drop the port reference. Idempotent.
+
+        We send the Stop byte so downstream slaves get a clean shutdown
+        signal, but we do NOT explicitly close virtual MIDI ports
+        created via ``mido.open_output(..., virtual=True)``. CoreMIDI
+        via python-rtmidi can block port close when Ableton has the
+        port subscribed (Sync IN), which would freeze SB on exit.
+        Daemon-thread cleanup + process exit reap the port safely.
+        Existing-port path (RealtimeSink) is still close()d because
+        those subscribers attached to OUR port, not the other way.
+        """
         if self._port is None:
             return
         self._note_outbound("stop")
@@ -148,13 +158,14 @@ class ClockEmitter:
             self._port.send(mido.Message("stop"))
         except Exception:
             pass
-        try:
-            if self._sink is not None:
+        # Only call close() on existing-port sinks (no virtual=True
+        # involved). Virtual ports are dropped on the floor for
+        # process exit to clean up.
+        if self._sink is not None:
+            try:
                 self._sink.close()
-            else:
-                self._port.close()
-        except Exception:
-            pass
+            except Exception:
+                pass
         self._port = None
         self._sink = None
         # Don't join the thread here — it'll exit when stop_event is

@@ -481,6 +481,15 @@ class Player:
         # ``current_resolved`` on each _resolve_current.
         self.current_setup = None
 
+        # Setup mode — drives mode-aware routing decisions
+        # (e.g. ch10 drums → slackbeatz-drums virtual port in
+        # ableton-blackhole vs → default sink / FluidSynth in
+        # surge-standalone). Set explicitly by the live runtime
+        # after Player construction; defaults to "external" so
+        # standalone Player use (tests, headless renders) doesn't
+        # break.
+        self.mode: str = "external"
+
         # MIDI Clock output. When True, the playback worker spawns a
         # ClockEmitter sibling thread that broadcasts 0xF8 pulses at
         # 24 PPQN plus Start/Stop/Continue/SPP bytes so downstream
@@ -1863,6 +1872,25 @@ class Player:
         # need it, which is the right behaviour.
         return load_setup("gm", base_path=song_path)
 
+    def _routing_map(self) -> dict[int, str]:
+        """Build the 0-indexed channel → virtual port name map for
+        the active mode.
+
+        ableton-blackhole includes ch9 (drums) → slackbeatz-drums
+        so the user can host a Drum Rack in Ableton. All other modes
+        omit ch9 so drums fall through to the default sink (FluidSynth
+        in surge-standalone). Always creates the virtual port — only
+        the routing inclusion differs.
+        """
+        from slackbeatz.synthhost import OSC_CHANNELS
+        out: dict[int, str] = {}
+        for (ch_1idx, port_name, _patch) in OSC_CHANNELS.values():
+            # Drums (ch10) are mode-gated.
+            if ch_1idx == 10 and self.mode != "ableton-blackhole":
+                continue
+            out[ch_1idx - 1] = port_name
+        return out
+
     def ensure_osc_routing_ready(self) -> None:
         """Eagerly create + open the shared MultiPortSink so its
         virtual MIDI ports exist on the system. Required before
@@ -1873,11 +1901,16 @@ class Player:
             return
         from slackbeatz.sinks.multiport import MultiPortSink
         from slackbeatz.synthhost import OSC_CHANNELS
-        ch_to_port = {
+        # MultiPortSink needs every port we might eventually use to
+        # exist up-front so its open() succeeds and surge sees them
+        # in --list-devices. The full set (including drums in all
+        # modes) is the right thing to create; the routing-map step
+        # below decides which channels actually flow into them.
+        full_port_map = {
             ch_1idx - 1: port_name
             for (ch_1idx, port_name, _patch) in OSC_CHANNELS.values()
         }
-        multi = MultiPortSink(ch_to_port)
+        multi = MultiPortSink(full_port_map)
         multi.open()
         self._shared_routing_sink = multi
 
@@ -1901,22 +1934,14 @@ class Player:
         if not self.osc_routing:
             return _ActivityTapSink(base, self)
         from slackbeatz.sinks.composite import CompositeSink
-        from slackbeatz.sinks.multiport import MultiPortSink
-        from slackbeatz.synthhost import OSC_CHANNELS
-        # 0-indexed channel → virtual port name. Drums (channel 10 /
-        # 0-indexed 9) are NOT in this map — they fall through to the
-        # default sink (= FluidSynth).
-        ch_to_port = {
-            ch_1idx - 1: port_name
-            for (ch_1idx, port_name, _patch) in OSC_CHANNELS.values()
-        }
+        # Mode-aware routing — surge-standalone keeps ch10 → default
+        # sink (FluidSynth); ableton-blackhole adds ch9 → MultiPortSink
+        # → slackbeatz-drums for Ableton's Drum Rack.
+        ch_to_port = self._routing_map()
         if self._shared_routing_sink is None:
-            # Open once, lazily — the virtual ports stay alive across
-            # song restarts so each subscribed synth's MIDI input
-            # doesn't blink out every time the user nudges a slider.
-            multi = MultiPortSink(ch_to_port)
-            multi.open()
-            self._shared_routing_sink = multi
+            # First time — create + open every port (full set, not
+            # mode-filtered), so subscribers can attach on demand.
+            self.ensure_osc_routing_ready()
         overrides = {ch: self._shared_routing_sink for ch in ch_to_port}
         # manage_overrides=False so the per-playback open()/close()
         # cycle doesn't touch the shared MultiPortSink.

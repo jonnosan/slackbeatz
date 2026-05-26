@@ -97,15 +97,16 @@ class TransportListener:
         self._thread.start()
 
     def stop(self) -> None:
-        """Stop the reader thread + close the port. Idempotent."""
+        """Stop the reader thread + drop the port reference.
+
+        We do NOT call ``port.close()`` — python-rtmidi's CoreMIDI
+        backend can block on close when subscribers (e.g. Ableton's
+        Sync OUT) are still attached, causing SB's exit to hang.
+        Dropping the reference + daemon-thread cleanup + process
+        exit reaps the virtual port safely.
+        """
         self._stop_event.set()
-        port = self._port
         self._port = None
-        if port is not None:
-            try:
-                port.close()
-            except Exception:
-                pass
 
     def note_outbound_event(self, kind: str) -> None:
         """Record that we just SENT *kind* — suppresses inbound echo.

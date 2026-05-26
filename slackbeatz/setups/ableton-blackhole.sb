@@ -9,12 +9,16 @@
 # + Ableton 303) without touching SB.
 #
 # Channel layout (BlackHole 16ch input pairs → Ableton audio tracks):
-#   1/2  = drums (FluidSynth on ch 10)
 #   3/4  = lead   (ch 1)
 #   5/6  = bass   (ch 2)
 #   7/8  = pad    (ch 3)
 #   9/10 = candy  (ch 4)
 #   11/12= sub    (ch 6)
+#
+# Drums (ch10) in this mode emit MIDI to the slackbeatz-drums virtual
+# port — no FluidSynth — so you can host any Drum Rack / sampler in
+# Ableton. Add a MIDI track with MIDI From = slackbeatz-drums and your
+# preferred kit. (BlackHole 1/2 is left free; repurpose if useful.)
 #
 # See [[reference_blackhole_routing_gotchas]] for setup notes:
 #   * `brew install --cask blackhole-16ch`
