@@ -512,7 +512,7 @@ class ApplyAddDialog:
 
     * ``external`` — keep the legacy MIDI ch/CC editor; user wires
       target to their external synth's CC map.
-    * ``surge-standalone`` / ``ableton-blackhole`` — replace MIDI
+    * ``surge-standalone`` / ``ableton`` — replace MIDI
       with a Group / Scope / Knob dropdown picker covering
       Pattern + Feel + Root targets. Each group reveals its own
       controls (scope+knob for Pattern/Feel; scope+lo+hi+mode for

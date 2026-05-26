@@ -10,7 +10,7 @@ Behaviour depends on the Setup's mode (see [[backend_is_setup]]):
 * ``surge-standalone`` — full strip: activity LED, volume slider
   (Surge ``/param/a/amp/volume`` OSC), patch picker, FX editor,
   mute/solo. Today's behaviour.
-* ``ableton-blackhole`` — Ableton owns mixing/FX, so the strip drops
+* ``ableton`` — Ableton owns mixing/FX, so the strip drops
   the volume slider + FX button. Patch picker, mute/solo, and the
   activity LED stay. A toolbar "Open Ableton template" button opens
   the user's starter Live Set.
@@ -72,8 +72,8 @@ class MixerScreen(tk.Frame):
             side="left", padx=12,
         )
 
-        # "Open Ableton template" — only shown in ableton-blackhole mode.
-        if self._mode() == "ableton-blackhole":
+        # "Open Ableton template" — only shown in ableton mode.
+        if self._mode() == "ableton":
             ttk.Button(
                 bar, text="Open Ableton template",
                 command=self._open_ableton_template,
@@ -101,7 +101,7 @@ class MixerScreen(tk.Frame):
         ttk.Separator(self, orient="horizontal").pack(fill="x", pady=4)
         foot = tk.Frame(self)
         foot.pack(fill="x", padx=12, pady=8)
-        if self._mode() == "ableton-blackhole":
+        if self._mode() == "ableton":
             hint = (
                 "LED green = channel sounding · Ableton owns volume/FX "
                 "(mute+solo + patch picker stay here)"
@@ -135,10 +135,10 @@ class MixerScreen(tk.Frame):
                  fg="gray").pack()
 
         surge_inst = self._surge_instance_for_channel(channel)
-        # In ableton-blackhole mode Ableton owns volume + FX — skip
+        # In ableton mode Ableton owns volume + FX — skip
         # both strip controls. Patch picker + mute/solo stay because
         # they're sound design / MIDI routing, not mixing.
-        ableton_owns_mix = self._mode() == "ableton-blackhole"
+        ableton_owns_mix = self._mode() == "ableton"
 
         if not ableton_owns_mix:
             # Volume slider — vertical, 0..127 like MIDI velocity range.
@@ -174,7 +174,7 @@ class MixerScreen(tk.Frame):
             ).pack(pady=1)
             if not ableton_owns_mix:
                 # FX editor — Surge's per-instance FX slots. Skipped
-                # under ableton-blackhole since FX lives in Ableton.
+                # under ableton since FX lives in Ableton.
                 ttk.Button(
                     strip, text="FX…", width=8,
                     command=lambda inst=surge_inst: self._open_fx_editor(inst),

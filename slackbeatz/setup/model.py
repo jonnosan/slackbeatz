@@ -22,7 +22,7 @@ from typing import Literal
 Mode = Literal["external", "surge-standalone", "ableton"]
 
 # Legacy alias — kept so any pinned `setup.backend == "surge"` check
-# keeps working (both surge-standalone and ableton-blackhole spawn surge).
+# keeps working (both surge-standalone and ableton spawn surge).
 Backend = Literal["surge", "external"]
 
 

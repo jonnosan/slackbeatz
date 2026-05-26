@@ -1,6 +1,6 @@
 """No-op sink that drops every message.
 
-Used as :class:`CompositeSink`'s default in ableton-blackhole mode,
+Used as :class:`CompositeSink`'s default in ableton mode,
 where every relevant MIDI channel is routed through MultiPortSink to
 a dedicated virtual port and there's no general MIDI destination
 worth opening (no FluidSynth, no IAC). Channels that aren't in the

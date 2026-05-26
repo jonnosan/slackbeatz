@@ -502,7 +502,7 @@ class Player:
         self.emit_clock: bool = False
         # Optional dedicated output port for the ClockEmitter. When
         # ``None`` the emitter shares :attr:`port_name`. The
-        # ableton-blackhole runtime sets this to
+        # ableton runtime sets this to
         # ``"slackbeatz-transport-out"`` so transport/clock land on
         # a virtual port Ableton subscribes to via Sync IN — keeping
         # them separate from per-channel note routing.

@@ -2,7 +2,7 @@
 
 Reads the resolved song's setup, lets the user inspect channel
 routing, and exposes the mode choice (external / surge-standalone /
-ableton-blackhole) as a radio. Edit-and-save round-trip uses
+ableton) as a radio. Edit-and-save round-trip uses
 :func:`slackbeatz.setup.serialize.emit_setup` — but the actual writes
 go via the GUI's Save action on the Arrangement screen (which writes
 the whole .sb).
@@ -56,7 +56,7 @@ class SetupScreen(tk.Frame):
         for label, value in (
             ("external", "external"),
             ("surge-standalone", "surge-standalone"),
-            ("ableton-blackhole", "ableton-blackhole"),
+            ("ableton", "ableton"),
         ):
             ttk.Radiobutton(
                 mode_row, text=label, value=value,

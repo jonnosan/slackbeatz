@@ -27,5 +27,6 @@
   "file:examples/mall.sb": "7857c1881e4c367b5a3851737f05f531ba53fce2f3192fe9d93af1c1fadf52ca",
   "file:examples/phuture.sb": "cd42d3086c4d6e38336805e82986aa5d6b3218c383f84b9113fc5c4d5101d553",
   "file:examples/polymeter.sb": "cbe8ebb0020ef385989b1577cdb7d7682de3673b7249c021a287052b144f546e",
-  "file:examples/style_tour.sb": "3fb5cafe1bf8c16c96f26a408764810789e709631b1a9f2338ce2bf947dcb1b9"
+  "file:examples/style_tour.sb": "3fb5cafe1bf8c16c96f26a408764810789e709631b1a9f2338ce2bf947dcb1b9",
+  "file:examples/template_test.sb": "6b6e207977897f1d91357c6c5b25e98428df25427aab6e78beeba49c63a1f77d"
 }

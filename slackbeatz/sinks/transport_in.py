@@ -1,7 +1,7 @@
 """Inbound MIDI transport listener.
 
 Pairs with :class:`slackbeatz.clock_emitter.ClockEmitter` to make
-transport bidirectional in ableton-blackhole mode (see
+transport bidirectional in ableton mode (see
 [[backend_is_setup]]). SB stays the clock master — Ableton is
 synced *from* SB's clock — but Ableton (or any other slave) can
 still *initiate* Start/Stop/Continue/SPP and have it drive SB's
