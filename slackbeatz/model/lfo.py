@@ -72,15 +72,26 @@ class LfoTarget:
       Mapped 0..1 → 0..127 by the scheduler at emission time.
     * ``surge_param`` — ``ref`` is a Surge OSC address (e.g.
       ``"/param/a/filter_unison_a/cutoff/value"``). Mapped 0..1 → the
-      param's 0..1 normalised range; the SurgeInstance handles
-      converting that to the parameter's actual range.
+      param's 0..1 normalised range. Parser-only today — re-enabled
+      via AbletonOSC in a future commit.
     * ``pattern_knob`` — ``ref`` is ``"<voice_handle>:<knob_name>"``.
-      Deferred — engine support pending.
+      Re-emitted per bar by the scheduler with the swept knob value.
     * ``feel_knob`` — ``ref`` is ``"<voice_type>:<knob_name>"``.
-      Deferred — engine support pending.
+      Re-emitted per bar by the scheduler with the swept knob value.
+    * ``root_note`` — ``ref`` is ``"<scope>[:<lo>:<hi>[:<mode>]]"``
+      where scope is ``"global"`` (applies to every pitched gen in
+      the part) or a voice handle. Optional positional params:
+      lo / hi = MIDI note range (default 36..72); mode = ``degree``
+      (LFO 0..1 indexes scale degrees across the range — predictable
+      stepwise melody) or ``snap`` (LFO 0..1 maps chromatically into
+      the range, then snaps to nearest scale tone — random-feeling).
+      Default mode is ``degree``. The scheduler applies the resulting
+      semitone offset via ``PartContext.transpose_semitones`` per bar.
     """
 
-    kind: Literal["midi_cc", "surge_param", "pattern_knob", "feel_knob"]
+    kind: Literal[
+        "midi_cc", "surge_param", "pattern_knob", "feel_knob", "root_note",
+    ]
     ref: str
 
 
@@ -136,9 +147,12 @@ def parse_target(raw: str) -> LfoTarget:
     Accepted forms:
 
     * ``"midi:ch:N/cc:M"`` → MIDI CC target
-    * ``"surge:/param/..."`` → Surge OSC parameter
-    * ``"pattern:<handle>:<knob>"`` → pattern-knob (parser-only)
-    * ``"feel:<type>:<knob>"`` → feel-knob (parser-only)
+    * ``"surge:/param/..."`` → Surge OSC parameter (parser-only)
+    * ``"pattern:<handle>:<knob>"`` → pattern-knob (per-bar re-emit)
+    * ``"feel:<type>:<knob>"`` → feel-knob (per-bar re-emit)
+    * ``"root:<scope>[:<lo>:<hi>[:<mode>]]"`` → scale-quantized root
+      note. Scope is ``global`` or a voice handle; lo/hi are MIDI note
+      bounds (default 36/72); mode is ``degree`` (default) or ``snap``.
     """
     if raw.startswith("midi:"):
         return LfoTarget(kind="midi_cc", ref=raw[len("midi:"):])
@@ -148,7 +162,9 @@ def parse_target(raw: str) -> LfoTarget:
         return LfoTarget(kind="pattern_knob", ref=raw[len("pattern:"):])
     if raw.startswith("feel:"):
         return LfoTarget(kind="feel_knob", ref=raw[len("feel:"):])
+    if raw.startswith("root:"):
+        return LfoTarget(kind="root_note", ref=raw[len("root:"):])
     raise ValueError(
         f"unknown LFO target {raw!r} — expected midi:.. / surge:.. / "
-        "pattern:.. / feel:.."
+        "pattern:.. / feel:.. / root:.."
     )

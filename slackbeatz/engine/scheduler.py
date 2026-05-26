@@ -27,8 +27,11 @@ from slackbeatz.engine.event import CC, Note, PitchBend, validate
 from slackbeatz.engine.feel_apply import apply_feel
 from slackbeatz.engine.lfo_apply import (
     gen_matches_lfo_scope,
+    gen_matches_root_scope,
     lfo_value_to_knob,
     parse_feel_pattern_ref,
+    parse_root_ref,
+    root_note_semitones,
 )
 from slackbeatz.generators.feel import FEEL_KNOB_NAMES
 from slackbeatz.generators.registry import REGISTRY
@@ -404,24 +407,38 @@ def render_events(song: ResolvedSong) -> list[tuple[int, mido.Message]]:
 
 
 def _lfo_modulations_for_gen(lfo_applications, gen_resolved):
-    """Filter *lfo_applications* to those modulating Feel/Pattern knobs
-    on *gen_resolved*. Returns a list of LfoApplication, or [] if none.
+    """Filter *lfo_applications* to those modulating this gen per-bar.
+
+    Returns a list of LfoApplication entries that include any of:
+      * feel_knob / pattern_knob whose scope matches the gen
+      * root_note whose scope matches the gen (or is "global")
     """
     if not lfo_applications:
         return []
     out = []
     for app in lfo_applications:
         kind = app.target.kind
-        if kind not in ("feel_knob", "pattern_knob"):
-            continue
-        parsed = parse_feel_pattern_ref(app.target.ref)
-        if parsed is None:
-            continue
-        scope, _knob = parsed
-        if gen_matches_lfo_scope(
-            gen_resolved.type_, gen_resolved.handle, kind, scope,
-        ):
-            out.append(app)
+        if kind in ("feel_knob", "pattern_knob"):
+            parsed = parse_feel_pattern_ref(app.target.ref)
+            if parsed is None:
+                continue
+            scope, _knob = parsed
+            if gen_matches_lfo_scope(
+                gen_resolved.type_, gen_resolved.handle, kind, scope,
+            ):
+                out.append(app)
+        elif kind == "root_note":
+            cfg = parse_root_ref(app.target.ref)
+            if cfg is None:
+                continue
+            # Only pitched gens participate in root-note modulation.
+            # Drum kits + one-shot drums use absolute MIDI notes and
+            # shouldn't be transposed.
+            inst = gen_resolved.instrument
+            if inst is not None and inst.is_drum:
+                continue
+            if gen_matches_root_scope(gen_resolved.handle, cfg.scope):
+                out.append(app)
     return out
 
 
@@ -467,6 +484,20 @@ def _events_for_gen_per_bar(
     if not scheduled:
         return  # nothing to do — caller will skip the part
 
+    # Resolve root_note LFOs too — they don't go through scheduled[]
+    # because they mutate transpose_semitones, not knob_overrides.
+    root_apps: list[tuple[object, object]] = []  # (spec, RootNoteConfig)
+    for app in modulating_apps:
+        if app.target.kind != "root_note":
+            continue
+        cfg = parse_root_ref(app.target.ref)
+        spec = song.lfos.get(app.lfo_name)
+        if cfg is not None and spec is not None:
+            root_apps.append((spec, cfg))
+
+    if not scheduled and not root_apps:
+        return  # nothing to do — caller will skip the part
+
     base_overrides = dict(effective_overrides) if effective_overrides else {}
     for bar_idx in range(bars):
         # Bar start in absolute song-ticks; the LFO phase model is
@@ -485,6 +516,20 @@ def _events_for_gen_per_bar(
             mutated = lfo_value_to_knob(knob_name, value_unit, is_feel=is_feel)
             if mutated is not None:
                 bar_overrides[knob_name] = mutated
+
+        # Resolve root-note transpose offset for this bar (cumulative
+        # across multiple root-note LFOs on the same gen — additive in
+        # semitones; rare but well-defined).
+        bar_transpose = base_ctx.transpose_semitones
+        for spec, cfg in root_apps:
+            period_ticks = max(1, int(spec.period_bars * base_ctx.meter.ticks_per_bar(PPQ)))
+            phase = (bar_start_abs % period_ticks) / period_ticks
+            value_unit = lfo_value_at(spec, phase, bar_lfo_rng)
+            bar_transpose += root_note_semitones(
+                value_unit, cfg=cfg,
+                key_str=base_ctx.key,
+                scale_override=base_ctx.scale_override,
+            )
         # Per-bar deterministic seed so re-runs produce the same output.
         per_bar_seed = derive_seed(
             song.seed, part_name, f"{gen_handle}__bar_{bar_idx}",
@@ -497,7 +542,7 @@ def _events_for_gen_per_bar(
             prev_role=base_ctx.prev_role, next_role=base_ctx.next_role,
             rng=random.Random(per_bar_seed),
             scale_override=base_ctx.scale_override,
-            transpose_semitones=base_ctx.transpose_semitones,
+            transpose_semitones=bar_transpose,
             tension=base_ctx.tension, meter=base_ctx.meter,
         )
         algo = _instantiate_algorithm(
